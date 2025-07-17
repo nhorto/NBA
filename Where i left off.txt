@@ -1,0 +1,29 @@
+the last thing that i was trying to figure is was the rolling, derived, and cumulative funcitons
+in the preprocessing class (the py file). I know that i need to just do it the long way with a 
+for loop but i didnt get to finish doing it. 
+right now what it doesnt calcultat this correctly. for some reason when you try to use a group by, 
+it will calculate a teams first game based on the previous teams last game. which obviously causes
+problems in the calculations. I will have to figure this out another time. 
+
+Reminder for what the files in the folder are. 
+1. the advanced and traditoinal box scores with the years are the files that i started with. 
+    These are the raw files from the API
+2. the EDA wiht rolling data and ELO_test were just two CSVs that i was using to test stuff with.
+    you can ignore these 
+3. get_player_availability notebook is what i used to get what players were out of a game. I am 
+    really excited about this i think this is pretty cool and will add alot when building the model
+4. help csv is test you can ignore it
+5. NBA API Class: this notebook is what i use to get the raw data from the API
+6. player box scores 2023 is the raw player boxscore data from the API
+7. Predict games: this notebook is where i have the models that i was trying to set up. i was 
+    importing the output from the preprocessing script
+8. preprocess output. this is the output i was using to model with. 
+9. preprocess notebook: this was my initial noteboo to set up the preprocessing. and i still used 
+    it to test some things. its basically a scratch notebook at this point
+10. preprocess (the .py): this is the preprocessing class 
+11. preprocess 2: this notebook was where i was importing the class and running it
+12. steps txt file is a scratch text file 
+13. the next two csvs are just for testing things 
+14. same for the test notebook. this was to upload to Claude to look it over. 
+15. test notebook: this was the very first notebook i started with. i wouldnt ignore this 
+    its all over the place

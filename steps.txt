@@ -1,0 +1,75 @@
+rolling_window = 5
+
+# Raw stats for rolling averages
+rolling_raw_stats = [
+    'FGM', 'FGA', 'FG3M', 'FG3A', 'FTM', 'FTA', 'OREB', 'DREB', 'REB', 'AST',
+    'STL', 'BLK', 'TOV', 'PTS', 'PLUS_MINUS'
+]
+
+# Derived metrics for rolling recalculation
+rolling_derived_metrics = {
+    'FG_PCT': ('FGM', 'FGA'),
+    'FG3_PCT': ('FG3M', 'FG3A'),
+    'FT_PCT': ('FTM', 'FTA'),
+    'AST_TOV': ('AST', 'TOV'),
+    'REB_PCT': ('REB', 'OREB')
+}
+
+# Rolling averages for raw stats (with shift)
+for stat in rolling_raw_stats:
+    df[f'rolling_{stat}'] = df.groupby('TEAM_ID')[stat].transform(lambda x: x.shift(1).rolling(window=rolling_window, min_periods=1).mean())
+
+# Recalculate derived metrics using rolling sums (with shift)
+for metric, (numerator, denominator) in rolling_derived_metrics.items():
+    df[f'rolling_{metric}'] = (
+        df.groupby('TEAM_ID')[numerator].transform(lambda x: x.shift(1).rolling(window=rolling_window, min_periods=1).sum()) /
+        df.groupby('TEAM_ID')[denominator].transform(lambda x: x.shift(1).rolling(window=rolling_window, min_periods=1).sum())
+    )
+cumulative_stats = [
+    'FGM', 'FGA', 'FG3M', 'FG3A', 'FTM', 'FTA', 'OREB', 'DREB', 'REB', 'AST',
+    'STL', 'BLK', 'TOV', 'PTS'
+]
+
+# Cumulative sums for raw stats (with shift)
+for stat in cumulative_stats:
+    df[f'cumulative_{stat}'] = df.groupby('TEAM_ID')[stat].cumsum().shift(1)
+
+# Recalculate derived metrics using cumulative sums (with shift)
+for metric, (numerator, denominator) in rolling_derived_metrics.items():
+    df[f'cumulative_{metric}'] = df[f'cumulative_{numerator}'] / df[f'cumulative_{denominator}']
+
+df['HOME_FLAG'] = np.where(df['home_away'] == 'home', 1, 0)
+df['AWAY_FLAG'] = np.where(df['home_away'] == 'away', 1, 0)
+
+df['home_win'] = np.where((df['WL'] == 1) & (df['home_away'] == 'home'), 1, 0)
+df['away_win'] = np.where((df['WL'] == 1) & (df['home_away'] == 'away'), 1, 0)
+
+df['total_games_played'] = df.groupby('TEAM_ID')['GAME_DATE'].rank(ascending=True)
+df['total_wins'] = df.sort_values(by='GAME_DATE').groupby('TEAM_ID')['WL'].cumsum()
+df['total_win_percent'] = df['total_wins'] / df['total_games_played']
+df.drop(columns=['total_games_played', 'total_wins'], inplace=True)
+
+df['home_games_played'] = df.sort_values(by='GAME_DATE').groupby('TEAM_ID')['HOME_FLAG'].cumsum()
+df['home_wins'] = df.sort_values(by='GAME_DATE').groupby('TEAM_ID')['home_win'].cumsum()
+df['home_win_pctg'] = df['home_wins']/df['home_games_played']
+df.drop(columns=['home_games_played','home_wins'], inplace=True)
+
+df['away_games_played'] = df.sort_values(by='GAME_DATE').groupby('TEAM_ID')['AWAY_FLAG'].cumsum()
+df['away_wins'] = df.sort_values(by='GAME_DATE').groupby('TEAM_ID')['away_win'].cumsum()
+df['away_win_pctg'] = df['away_wins']/df['away_games_played']
+df.drop(columns=['away_games_played','away_wins'], inplace=True)
+
+df['last_game_home_win_percent'] = df.sort_values(by='GAME_DATE').groupby('TEAM_ID')['home_win_pctg'].shift(1)
+df['last_game_away_win_percent'] = df.sort_values(by='GAME_DATE').groupby('TEAM_ID')['away_win_pctg'].shift(1)
+
+### 4. Rest Days Between Games ###
+# Calculate rest days based on GAME_DATE
+df['previous_game_date'] = df.groupby('TEAM_ID')['GAME_DATE'].shift(1)
+df['rest_days'] = (df['GAME_DATE'] - df['previous_game_date']).dt.days.fillna(0)
+
+# Replace negative rest days (if any scheduling anomalies)
+df['rest_days'] = df['rest_days'].clip(lower=0)
+
+
+### Final Touch: Cleanup Temporary Columns ###
+df.drop(columns=['previous_game_date'], inplace=True)
