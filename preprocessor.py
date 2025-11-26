@@ -83,25 +83,24 @@ class DataProcessor:
         for metric_name, metric_info in self.config.derived_metrics.items():
             columns_needed = metric_info.columns
             formula = metric_info.formula
-            
             # For cumulative metrics
             cumulative_cols = [f'{col}_cumulative' for col in columns_needed]
             if all(col in df.columns for col in cumulative_cols):
                 # Create a dictionary of column_name -> column_data
-                col_data = {original_col: df[cum_col] 
+                col_data = {original_col: df[cum_col]
                         for original_col, cum_col in zip(columns_needed, cumulative_cols)}
-                
+
                 # Call the formula with keyword arguments
                 df[f'{metric_name}_cumulative'] = formula(**col_data)
                 print(f"✅ Calculated {metric_name}_cumulative (dynamic)")
-            
+
             # For rolling metrics
             rolling_cols = [f'{col}_rolling' for col in columns_needed]
             if all(col in df.columns for col in rolling_cols):
                 # Create a dictionary of column_name -> column_data
-                col_data = {original_col: df[roll_col] 
+                col_data = {original_col: df[roll_col]
                         for original_col, roll_col in zip(columns_needed, rolling_cols)}
-                
+
                 # Call the formula with keyword arguments
                 df[f'{metric_name}_rolling'] = formula(**col_data)
                 print(f"✅ Calculated {metric_name}_rolling (dynamic)")
@@ -195,7 +194,6 @@ class DataProcessor:
         for idx in df.index:
             home_team = df.loc[idx, 'TEAM_ID_home']
             away_team = df.loc[idx, 'TEAM_ID_away']
-            print(home_team, idx)
             home_score = df.loc[idx, 'PTS_home']
             away_score = df.loc[idx, 'PTS_away']
             margin = home_score - away_score  # <-- This is the margin!
@@ -228,34 +226,34 @@ class DataProcessor:
             df.loc[idx, 'HOME_ELO_POST'] = new_home_elo
             df.loc[idx, 'AWAY_ELO_POST'] = new_away_elo
 
-            for col in self.config.base_columns:
-                home = col + "_home"
-                away = col + "_away"
+        for col in self.config.base_columns:
+            home = col + "_home"
+            away = col + "_away"
 
-                if home in df.columns:
-                    df.drop(columns=home, inplace=True)
+            if home in df.columns:
+                df.drop(columns=home, inplace=True)
 
-                if away in df.columns:
-                    df.drop(columns=away, inplace=True)
+            if away in df.columns:
+                df.drop(columns=away, inplace=True)
 
-            df = df.drop(columns=['Unnamed: 0_x_home','Unnamed: 0_x_away','SEASON_ID_away','GAME_DATE_y','MATCHUP_away','MATCHUP_home','WL_y','home_away_away','Unnamed: 0_y_away','Unnamed: 0_y_home',
-                                'home_away_home'])
+        df = df.drop(columns=['Unnamed: 0_x_home','Unnamed: 0_x_away','SEASON_ID_away','GAME_DATE_y','MATCHUP_away','MATCHUP_home','WL_y','home_away_away','Unnamed: 0_y_away','Unnamed: 0_y_home',
+                            'home_away_home'])
 
-            df = df.rename(columns={
-                'GAME_DATE_x':'GAME_DATE',
-                'WL_x':'WL'})
+        df = df.rename(columns={
+            'GAME_DATE_x':'GAME_DATE',
+            'WL_x':'WL'})
 
-            drop_cols = ['FG_PCT','FG3_PCT','FT_PCT']
+        drop_cols = ['FG_PCT','FG3_PCT','FT_PCT']
 
-            for col in drop_cols:
-                home = col+"_home"
-                away = col+"_away"
+        for col in drop_cols:
+            home = col+"_home"
+            away = col+"_away"
 
-                if home in df.columns:
-                    df.drop(columns=home, inplace=True)
+            if home in df.columns:
+                df.drop(columns=home, inplace=True)
 
-                if away in df.columns:
-                    df.drop(columns=away, inplace=True)
+            if away in df.columns:
+                df.drop(columns=away, inplace=True)
         
         return df 
 
@@ -290,7 +288,7 @@ class DataProcessor:
             }
         
         # Clean minutes column for historical data
-        historical_data['MIN'] = historical_data['MIN'].astype(str).str.split('.').str[0]
+        historical_data['MIN'] = historical_data['MIN'].astype(str).str.split(':').str[0]
         historical_data['MIN'] = historical_data['MIN'].fillna(0)
         historical_data['MIN'] = pd.to_numeric(historical_data['MIN'], errors='coerce').fillna(0)
         
@@ -301,7 +299,7 @@ class DataProcessor:
             'PTS': 'mean',
             'AST': 'mean',
             'REB': 'mean',
-            'TEAM_ID': 'last'
+            'TEAM_ID': 'first'
         }).reset_index()
         
         # Calculate importance scores
@@ -431,34 +429,44 @@ class DataProcessor:
             # Game control
             "PLUS_MINUS", "PTS"
         ]
- 
-        # keep track of original cols we’ll remove
-        cols_to_drop = []         
-        for base in rolling_basenames:
-            home_col = f"{base}_rolling_home"
-            away_col = f"{base}_rolling_away"
-            diff_col = f"{base}_diff"
 
-            # Skip if either column is missing (protects against typos / schema drift)
-            if home_col in df.columns and away_col in df.columns:
-                df[diff_col] = df[home_col] - df[away_col]
-                cols_to_drop.extend([home_col, away_col])
-            else:
-                print(f"⚠️  Skipping {base}: expected columns not found in calculate difference metrics.")
-
-        elo_pairs = [
-            ("HOME_ELO_PRE", "AWAY_ELO_PRE", "ELO_DIFF"),   # pre-game
-            ("HOME_ELO_POST", "AWAY_ELO_POST", "ELO_POST_DIFF")  # optional
+        cols_to_drop = [
+            'AST_PCT_away','AST_PCT_home','AST_RATIO_away','AST_RATIO_home','AST_TOV_away','AST_TOV_home','DEF_RATING_away','DEF_RATING_home','DREB_PCT_away','DREB_PCT_home',
+            'EFG_PCT_away','EFG_PCT_home','E_DEF_RATING_away','E_DEF_RATING_home','E_NET_RATING_away','E_NET_RATING_home','E_OFF_RATING_away','E_OFF_RATING_home','E_PACE_away',
+            'E_PACE_home','E_TM_TOV_PCT_away','E_TM_TOV_PCT_home','E_USG_PCT_away','E_USG_PCT_home','NET_RATING_away','NET_RATING_home','OFF_RATING_away','OFF_RATING_home',
+            'OREB_PCT_away','OREB_PCT_home','PACE_PER40_away','PACE_PER40_home','PACE_away','PACE_home','REB_PCT_away','REB_PCT_home','TM_TOV_PCT_away','TM_TOV_PCT_home',
+            'TS_PCT_away','TS_PCT_home','USG_PCT_away','USG_PCT_home'
         ]
+        df = df.drop(columns=cols_to_drop)
 
-        for home_col, away_col, diff_col in elo_pairs:
-            if home_col in df.columns and away_col in df.columns:
-                df[diff_col] = df[home_col] - df[away_col]
-                cols_to_drop.extend([home_col, away_col])
-            else:
-                print(f"⚠️  Skipping ELO pair: {home_col}, {away_col} not found in calculate difference metrics.")
 
-        df.drop(columns=cols_to_drop, inplace=True)
+        # keep track of original cols we’ll remove
+        # cols_to_drop = []         
+        # for base in rolling_basenames:
+        #     home_col = f"{base}_rolling_home"
+        #     away_col = f"{base}_rolling_away"
+        #     diff_col = f"{base}_diff"
+
+        #     # Skip if either column is missing (protects against typos / schema drift)
+        #     if home_col in df.columns and away_col in df.columns:
+        #         df[diff_col] = df[home_col] - df[away_col]
+        #         cols_to_drop.extend([home_col, away_col])
+        #     else:
+        #         print(f"⚠️  Skipping {base}: expected columns not found in calculate difference metrics.")
+
+        # elo_pairs = [
+        #     ("HOME_ELO_PRE", "AWAY_ELO_PRE", "ELO_DIFF"),   # pre-game
+        #     ("HOME_ELO_POST", "AWAY_ELO_POST", "ELO_POST_DIFF")  # optional
+        # ]
+
+        # for home_col, away_col, diff_col in elo_pairs:
+        #     if home_col in df.columns and away_col in df.columns:
+        #         df[diff_col] = df[home_col] - df[away_col]
+        #         cols_to_drop.extend([home_col, away_col])
+        #     else:
+        #         print(f"⚠️  Skipping ELO pair: {home_col}, {away_col} not found in calculate difference metrics.")
+
+        # df.drop(columns=cols_to_drop, inplace=True)
 
         return df
 
@@ -484,8 +492,8 @@ class DataProcessor:
         # Process player availability
         df = self.process_player_availability(df)
 
-        print("Calculating derived metrics...")
-        # Calculate difference metrics
-        df = self.calculate_difference_metrics(df)
+        # print("Calculating derived metrics...")
+        # # Calculate difference metrics
+        # df = self.calculate_difference_metrics(df)
         
         return df
