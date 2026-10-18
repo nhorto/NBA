@@ -5,6 +5,7 @@ import pytest
 def data_dir(tmp_path, monkeypatch):
     d = tmp_path / "data"
     monkeypatch.setenv("COURTSIDE_DATA", str(d))
+    monkeypatch.setenv("COURTSIDE_NO_WRITER", "1")   # tests never call the LLM writer
     return d
 
 

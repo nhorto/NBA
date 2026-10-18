@@ -42,6 +42,7 @@ class Net:
         self.box_by_game: dict = {}
         self.fail: set[str] = set()
         self.box_404: set[str] = set()
+        self.backfills: list = []
 
     def _c(self, name):
         self.calls[name] += 1
@@ -75,6 +76,15 @@ def net(monkeypatch):
     mk(espn, "fetch_summary", lambda eid: n.summary)
     monkeypatch.setitem(sys.modules, "courtside.sources.injury_report", None)
     monkeypatch.delattr(sources_pkg, "injury_report", raising=False)
+
+    import courtside.backfill as backfill_mod
+
+    def fake_backfill(seasons, **kw):
+        n._c("backfill.backfill_gamelogs")
+        n.backfills.append((list(seasons), kw.get("season_types"), kw.get("force")))
+        return {"fetched": 4, "cached": 0, "failed": 0, "rows": {}, "errors": []}
+
+    monkeypatch.setattr(backfill_mod, "backfill_gamelogs", fake_backfill)
     return n
 
 
@@ -355,3 +365,108 @@ def test_postgame_espn_final_updates_game(net):
     assert s["steps"]["espn_scoreboard"]["matched"] == 3
     assert q("SELECT status, home_score, away_score FROM games WHERE espn_id=?", ev["id"]) \
         == [("final", 101, 99)]
+
+
+# ------------------------------------------------------------------ postgame: past dates, facts, brief
+
+def _seed_team_games_only():
+    """The game exists in team_games (historical log) but there is no `games` row for it."""
+    conn = db.connect()
+    base = dict(game_id=GID, season="2025-26", season_type="Regular Season",
+                game_date=PAST.isoformat(), min=265.0)
+    db.upsert_rows(conn, "team_games", [
+        {**base, "team": "OKC", "opp": "HOU", "is_home": 1, "wl": "W", "pts": 125},
+        {**base, "team": "HOU", "opp": "OKC", "is_home": 0, "wl": "L", "pts": 124}])
+    conn.close()
+
+
+def test_postgame_past_date_falls_back_to_team_games(net):
+    net.espn_sb = {"events": []}
+    _seed_team_games_only()
+    assert q("SELECT COUNT(*) FROM games WHERE nba_day=?", PAST.isoformat()) == [(0,)]
+    s = collect.run_postgame(PAST)
+    assert s["ok"], s["errors"]
+    assert s["archived"] == [GID] and s["fetched"] == [GID] and s["pending"] == []
+    assert s["steps"]["games"]["source"] == "team_games"
+    assert archive.exists_final("nba_cdn", "boxscore", PAST, GID)
+    assert archive.exists_final("nba_cdn", "playbyplay", PAST, GID)
+    assert not archive.exists_final("espn", "summary", PAST, GID)    # espn event id unknown
+    assert net.calls["espn.fetch_summary"] == 0
+    # facts were computed from the archived payloads and stored
+    ((nba_day, facts_json),) = q("SELECT nba_day, facts_json FROM game_facts WHERE game_id=?", GID)
+    facts = json.loads(facts_json)
+    assert nba_day == PAST.isoformat() and facts["game_id"] == GID
+    assert s["steps"]["game_facts"]["computed"] == 1
+    # past season: no game-log refresh; the morning-of Brief for day + 1 was built
+    assert s["steps"]["refresh_gamelogs"]["status"] == "skipped" and net.backfills == []
+    assert s["steps"]["brief"]["day"] == "2025-10-22"
+    assert q("SELECT nba_day FROM briefs") == [("2025-10-22",)]
+    assert (config.data_dir() / "briefs" / "2025-10-22.json").exists()
+    # idempotent: second run fetches nothing and keeps the facts
+    before = Counter(net.calls)
+    s2 = collect.run_postgame(PAST)
+    assert s2["ok"] and s2["fetched"] == [] and s2["archived"] == [GID]
+    assert s2["steps"]["game_facts"] == {"status": "ok", "computed": 0, "already": 1, "failed": {}}
+    assert net.calls["nba_cdn.fetch_boxscore"] == before["nba_cdn.fetch_boxscore"]
+
+
+def test_postgame_with_no_games_anywhere_is_clean(net):
+    net.espn_sb = {"events": []}
+    s = collect.run_postgame(PAST)
+    assert s["ok"] and s["archived"] == [] and s["steps"]["games"]["source"] == "games"
+    assert s["steps"]["game_facts"]["computed"] == 0
+
+
+def test_game_facts_failure_is_logged_not_fatal(post, monkeypatch):
+    from courtside.analytics import summarize
+
+    def boom(box, pbp):
+        raise ValueError("bad pbp")
+    monkeypatch.setattr(summarize, "game_facts", boom)
+    s = collect.run_postgame(PAST)
+    assert s["ok"], s["errors"]
+    assert s["archived"] == [GID]
+    assert list(s["steps"]["game_facts"]["failed"]) == [GID]
+    assert "bad pbp" in s["steps"]["game_facts"]["failed"][GID]
+    assert q("SELECT COUNT(*) FROM game_facts") == [(0,)]
+    assert s["steps"]["brief"]["status"] == "ok"          # the Brief is still built
+
+
+def test_gamelog_refresh_only_for_current_season(post):
+    collect.run_postgame(PAST)                              # 2025-26 vs today 2026-27
+    assert post.backfills == []
+    post.espn_sb = J("espn/scoreboard_20261020.json")
+    s = collect.run_postgame(date(2026, 10, 19))            # current season
+    assert post.backfills == [(["2026-27"], ("Regular Season",), True)]
+    assert s["steps"]["refresh_gamelogs"]["season"] == "2026-27"
+    assert s["steps"]["brief"]["day"] == "2026-10-20"       # the morning-of Brief for day + 1
+
+
+def test_gamelog_refresh_failure_is_reported_but_brief_still_built(post, monkeypatch):
+    import courtside.backfill as backfill_mod
+    monkeypatch.setattr(backfill_mod, "backfill_gamelogs",
+                        lambda seasons, **kw: {"fetched": 1, "cached": 0, "failed": 2,
+                                               "rows": {}, "errors": ["x", "y"]})
+    s = collect.run_postgame(date(2026, 10, 19))
+    assert not s["ok"] and s["steps"]["refresh_gamelogs"]["status"] == "error"
+    assert s["steps"]["brief"]["status"] == "ok"
+
+
+def test_pregame_ends_with_predictions_and_todays_brief(net):
+    s = collect.run_pregame(TODAY)
+    assert s["ok"], s["errors"]
+    assert s["steps"]["predict"]["status"] == "ok"
+    assert s["steps"]["brief"]["day"] == TODAY.isoformat()
+    assert q("SELECT nba_day FROM briefs") == [(TODAY.isoformat(),)]
+
+
+def test_injury_report_unnamed_placeholder_rows_do_not_break_the_step(net, monkeypatch):
+    rows = [{"team": "BOS", "player_name": "Jayson Tatum", "player_name_norm": "Jayson Tatum",
+             "status": "Out", "reason": "x", "source": "nba_official"},
+            {"team": "NYK", "player_name": None, "player_name_norm": None,
+             "status": None, "reason": "NOT YET SUBMITTED", "source": "nba_official"}]
+    fake_ir(monkeypatch, rows=rows)
+    s = collect.run_pregame(TODAY)
+    assert s["ok"], s["errors"]
+    assert s["steps"]["official_injury_report"]["rows"] == 1
+    assert s["steps"]["official_injury_report"]["skipped_unnamed"] == 1

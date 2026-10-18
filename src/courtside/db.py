@@ -117,6 +117,55 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (game_id, source)
     );
     """,
+    # 4: per-game analytics facts, prediction history, built Briefs
+    """
+    CREATE TABLE game_facts (
+        game_id TEXT PRIMARY KEY,
+        nba_day TEXT,
+        facts_json TEXT NOT NULL,
+        computed_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_game_facts_day ON game_facts(nba_day);
+
+    -- Append-only history: every run of a model inserts new rows (never updates). nba_day,
+    -- home and away are denormalised so past days with no `games` row (demo days built from
+    -- team_games) can still be joined to results.
+    CREATE TABLE predictions (
+        game_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        home_win_prob REAL,
+        home_margin REAL,
+        total REAL,
+        market_home_spread REAL,
+        market_total REAL,
+        market_home_prob REAL,
+        inputs_json TEXT,
+        nba_day TEXT,
+        home TEXT,
+        away TEXT,
+        PRIMARY KEY (game_id, model, created_at)
+    );
+    CREATE INDEX idx_predictions_day ON predictions(nba_day);
+
+    -- The prediction a reader should score: per (game, model) the newest row made at or
+    -- before tip-off (any row when tip-off is unknown, e.g. games with no `games` row).
+    CREATE VIEW latest_pretip_predictions AS
+    SELECT p.* FROM predictions p
+    WHERE p.created_at = (
+        SELECT MAX(p2.created_at) FROM predictions p2
+        LEFT JOIN games g ON g.game_id = p2.game_id
+        WHERE p2.game_id = p.game_id AND p2.model = p.model
+          AND (g.tipoff_utc IS NULL OR p2.created_at <= g.tipoff_utc)
+    );
+
+    CREATE TABLE briefs (
+        nba_day TEXT PRIMARY KEY,
+        brief_json TEXT NOT NULL,
+        built_at TEXT NOT NULL,
+        version TEXT
+    );
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",

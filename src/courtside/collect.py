@@ -11,9 +11,13 @@ Conventions
   A cached (older) schedule never regresses a game that is already live/final in the DB.
 * The ESPN summary is archived keyed by NBA game id (like the other per-game kinds):
   `raw/espn/summary/<nba_day>/<game_id>.json.gz`.
-* Postgame only works for days present in the loaded schedule (the current season). For
-  earlier days there are no `games` rows, so nothing is archived (ESPN events are reported
-  as `unmatched`); the NBA game id is not derivable from ESPN data.
+* Postgame for a day with no `games` rows (any past season) falls back to the game ids in
+  `team_games` (2000-01 onward): boxscore + play-by-play are archived for them (no ESPN summary:
+  the ESPN event id is unknown, so ESPN events are reported as `unmatched`).
+* After archiving, per-game analytics facts go to `game_facts`; for a day in the current season
+  the season's game logs are re-fetched (keeps `team_games`/`player_games` current for the model
+  and trends); finally the Brief for day + 1 (the morning-of Brief) is built. Pregame ends with
+  `predict_day` and a rebuild of today's Brief.
 * Official injury report: archived as `raw/nba_official/injury_report/<report_et_date>/
   Injury-Report_YYYY-MM-DD_HH_MMPM.pdf` (stable key => never re-downloaded). Rows are stored
   with `player_name = player_name_norm` and `captured_at = report publication time (UTC)`,
@@ -29,7 +33,7 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from . import archive, config, db
@@ -336,9 +340,10 @@ def _official_report_step(conn: sqlite3.Connection, day: date) -> dict:
     rows = [{"captured_at": captured, "source": OFFICIAL_SOURCE, "team": r["team"],
              "player_name": r.get("player_name_norm") or r["player_name"], "player_id": None,
              "status": r.get("status"), "reason": r.get("reason"), "raw_path": str(path)}
-            for r in parsed]
+            for r in parsed if r.get("player_name_norm") or r.get("player_name")]
+    # "NOT YET SUBMITTED" placeholder rows have no player; player_name is NOT NULL in the table
     n = db.insert_injury_snapshots(conn, rows) if rows else 0
-    return {**out, "parsed": True, "rows": n}
+    return {**out, "parsed": True, "rows": n, "skipped_unnamed": len(parsed) - len(rows)}
 
 
 def run_pregame(day: date) -> dict:
@@ -355,6 +360,8 @@ def run_pregame(day: date) -> dict:
         run.step("nba_odds", _nba_odds_step, conn, day, captured_at)
         run.step("espn_injuries", _espn_injuries_step, conn, day, captured_at)
         run.step("official_injury_report", _official_report_step, conn, day)
+        run.step("predict", _predict_step, conn, day)
+        run.step("brief", _brief_step, conn, day)
 
     return _run_job("pregame", day, body)
 
@@ -435,6 +442,10 @@ def _games_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
     games = conn.execute(
         "SELECT game_id, espn_id, status, tipoff_utc FROM games WHERE nba_day=? "
         "ORDER BY tipoff_utc, game_id", (day.isoformat(),)).fetchall()
+    from_team_games = False
+    if not games:
+        games = _team_games_fallback(conn, day)
+        from_team_games = bool(games)
     archived, fetched, pending, postponed = [], [], [], []
     for g in games:
         if g["status"] == "postponed":
@@ -455,7 +466,86 @@ def _games_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
     run.summary.update(archived=archived, fetched=fetched, pending=pending,
                        postponed=postponed)
     return {"games": len(games), "archived": len(archived), "fetched": len(fetched),
-            "pending": len(pending), "postponed": len(postponed)}
+            "pending": len(pending), "postponed": len(postponed),
+            "source": "team_games" if from_team_games else "games"}
+
+
+def _team_games_fallback(conn: sqlite3.Connection, day: date) -> list[dict]:
+    """Pseudo `games` rows for a day that has none, from `team_games` (finished games only:
+    the game log only lists played games). espn_id/tipoff are unknown."""
+    ids = [r[0] for r in conn.execute(
+        "SELECT DISTINCT game_id FROM team_games WHERE game_date=? ORDER BY game_id",
+        (day.isoformat(),))]
+    return [{"game_id": g, "espn_id": None, "status": "final", "tipoff_utc": None} for g in ids]
+
+
+def _facts_step(conn: sqlite3.Connection, run: _Run, day: date, *, force: bool = False) -> dict:
+    """game_facts for every archived final game of `day`. A failure on one game is logged and
+    recorded (never fatal, and does not mark the job failed)."""
+    from .analytics import summarize
+    ids = list(run.summary.get("archived", []))
+    fetched = set(run.summary.get("fetched", []))
+    have = {r[0] for r in conn.execute("SELECT game_id FROM game_facts WHERE nba_day=?",
+                                       (day.isoformat(),))}
+    done, failed, skipped = [], {}, []
+    for gid in ids:
+        if gid in have and gid not in fetched and not force:
+            skipped.append(gid)
+            continue
+        try:
+            box = archive.load_raw(archive.raw_path("nba_cdn", "boxscore", day, gid))
+            pbp = archive.load_raw(archive.raw_path("nba_cdn", "playbyplay", day, gid))
+            facts = summarize.game_facts(box, pbp)
+            payload = json.dumps(facts, allow_nan=False, default=str)
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO game_facts (game_id, nba_day, facts_json, "
+                    "computed_at) VALUES (?,?,?,?)",
+                    (gid, day.isoformat(), payload, _iso(datetime.now(timezone.utc))))
+            done.append(gid)
+        except Exception as e:  # noqa: BLE001 - one game's facts must never stop the job
+            log.exception("game_facts failed for %s", gid)
+            failed[gid] = f"{type(e).__name__}: {e}"
+    return {"computed": len(done), "already": len(skipped), "failed": failed}
+
+
+def _season_types_for(day: date) -> tuple[str, ...]:
+    """Only ask stats.nba.com for season types that can have games around `day`."""
+    types = ["Regular Season"]
+    if day.month in (4, 5, 6):
+        types += ["PlayIn", "Playoffs"]
+    return tuple(types)
+
+
+def _refresh_gamelogs_step(conn: sqlite3.Connection, day: date) -> dict:
+    """Re-fetch the current season's game logs (a handful of stats.nba.com calls) so
+    team_games / player_games include last night. No-op for days outside the current season."""
+    from . import backfill
+    from .trends.common import season_of
+    season = season_of(day)
+    if season != season_of(config.today_nba_day()):
+        return {"status": "skipped", "reason": "day is not in the current season",
+                "season": season}
+    res = backfill.backfill_gamelogs([season], season_types=_season_types_for(day), force=True,
+                                     conn=conn)
+    if res["failed"]:
+        raise RuntimeError(f"{res['failed']} gamelog fetches failed: {res['errors'][:3]}")
+    return {"season": season, "fetched": res["fetched"], "rows": res["rows"]}
+
+
+def _brief_step(conn: sqlite3.Connection, brief_day: date) -> dict:
+    from .brief import assemble
+    b = assemble.build_brief(conn, brief_day)
+    return {"day": brief_day.isoformat(), "path": b["meta"].get("path"),
+            "last_night_games": len(b["last_night"]["games"]),
+            "tonight_games": len(b["tonight"]["games"])}
+
+
+def _predict_step(conn: sqlite3.Connection, day: date) -> dict:
+    from . import predict
+    rows = predict.predict_day(conn, day)
+    return {"model": predict.PRODUCTION_MODEL, "games": len(rows),
+            "with_market": sum(1 for r in rows if r["market_home_prob"] is not None)}
 
 
 def run_postgame(day: date) -> dict:
@@ -465,5 +555,8 @@ def run_postgame(day: date) -> dict:
                  insert_odds=False, captured_at=_iso(datetime.now(timezone.utc)))
         run.summary.update(archived=[], fetched=[], pending=[], postponed=[])
         run.step("games", _games_step, conn, run, day)
+        run.step("game_facts", _facts_step, conn, run, day)
+        run.step("refresh_gamelogs", _refresh_gamelogs_step, conn, day)
+        run.step("brief", _brief_step, conn, day + timedelta(days=1))
 
     return _run_job("postgame", day, body)
