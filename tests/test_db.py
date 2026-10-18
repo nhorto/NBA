@@ -1,3 +1,5 @@
+import pytest
+
 from courtside import db
 
 
@@ -45,3 +47,38 @@ def test_odds_injuries_runs():
     db.finish_run(conn, rid, True, "ok")
     r = conn.execute("SELECT * FROM collect_runs WHERE id=?", (rid,)).fetchone()
     assert r["ok"] == 1 and r["detail"] == "ok" and r["finished_at"]
+
+
+def test_migration_2_on_top_of_1_and_idempotent(data_dir):
+    import sqlite3
+    path = data_dir / "v1.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+    conn.executescript("BEGIN;\n" + db.MIGRATIONS[0] + "\nCOMMIT;")
+    conn.execute("INSERT INTO schema_version VALUES (1, 'x')")
+    conn.commit()
+    conn.close()
+    conn = db.connect(path)
+    versions = [r[0] for r in conn.execute("SELECT version FROM schema_version ORDER BY version")]
+    assert versions == list(range(1, len(db.MIGRATIONS) + 1)) and len(versions) >= 2
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"team_games", "player_games", "team_games_adv", "player_games_adv"} <= tables
+    idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert {"idx_team_games_team_date", "idx_player_games_player_date"} <= idx
+    db.migrate(conn)
+    assert conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == len(versions)
+
+
+def test_upsert_rows():
+    conn = db.connect()
+    row = {"game_id": "g1", "team": "BOS", "season": "2025-26", "pts": 100}
+    assert db.upsert_rows(conn, "team_games", [row]) == 1
+    db.upsert_rows(conn, "team_games", [{**row, "pts": 110}])
+    rows = conn.execute("SELECT pts, opp FROM team_games").fetchall()
+    assert len(rows) == 1 and rows[0]["pts"] == 110 and rows[0]["opp"] is None
+    assert db.upsert_rows(conn, "team_games", []) == 0
+    with pytest.raises(TypeError):
+        db.upsert_rows(conn, "team_games", [{"game_id": "g", "team": "X", "bogus": 1}])
+    with pytest.raises(ValueError):
+        db.upsert_rows(conn, "nope", [{"a": 1}])

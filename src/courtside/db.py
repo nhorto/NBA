@@ -63,6 +63,47 @@ MIGRATIONS: list[str] = [
         detail TEXT
     );
     """,
+    # 2: historical game logs (stats.nba.com)
+    """
+    CREATE TABLE team_games (
+        game_id TEXT NOT NULL, team TEXT NOT NULL, season TEXT, season_type TEXT,
+        game_date TEXT, opp TEXT, is_home INTEGER, wl TEXT, min REAL,
+        fgm INTEGER, fga INTEGER, fg3m INTEGER, fg3a INTEGER, ftm INTEGER, fta INTEGER,
+        oreb INTEGER, dreb INTEGER, reb INTEGER, ast INTEGER, stl INTEGER, blk INTEGER,
+        tov INTEGER, pf INTEGER, pts INTEGER, plus_minus REAL,
+        PRIMARY KEY (game_id, team)
+    );
+    CREATE INDEX idx_team_games_season ON team_games(season);
+    CREATE INDEX idx_team_games_date ON team_games(game_date);
+    CREATE INDEX idx_team_games_team_date ON team_games(team, game_date);
+
+    CREATE TABLE player_games (
+        game_id TEXT NOT NULL, player_id INTEGER NOT NULL, player_name TEXT, team TEXT,
+        season TEXT, season_type TEXT, game_date TEXT, min REAL,
+        fgm INTEGER, fga INTEGER, fg3m INTEGER, fg3a INTEGER, ftm INTEGER, fta INTEGER,
+        oreb INTEGER, dreb INTEGER, reb INTEGER, ast INTEGER, stl INTEGER, blk INTEGER,
+        tov INTEGER, pf INTEGER, pts INTEGER, plus_minus REAL,
+        PRIMARY KEY (game_id, player_id)
+    );
+    CREATE INDEX idx_player_games_season ON player_games(season);
+    CREATE INDEX idx_player_games_date ON player_games(game_date);
+    CREATE INDEX idx_player_games_player_date ON player_games(player_id, game_date);
+
+    CREATE TABLE team_games_adv (
+        game_id TEXT NOT NULL, team TEXT NOT NULL,
+        off_rating REAL, def_rating REAL, net_rating REAL, pace REAL, poss REAL,
+        efg_pct REAL, ts_pct REAL, tov_pct REAL, oreb_pct REAL, dreb_pct REAL,
+        ast_pct REAL, pie REAL,
+        PRIMARY KEY (game_id, team)
+    );
+
+    CREATE TABLE player_games_adv (
+        game_id TEXT NOT NULL, player_id INTEGER NOT NULL,
+        off_rating REAL, def_rating REAL, net_rating REAL, usg_pct REAL, ts_pct REAL,
+        efg_pct REAL, ast_pct REAL, reb_pct REAL, pace REAL, poss REAL, pie REAL,
+        PRIMARY KEY (game_id, player_id)
+    );
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
@@ -146,6 +187,23 @@ def insert_injury_snapshots(conn: sqlite3.Connection, rows: list[dict]) -> int:
         f"INSERT INTO injury_snapshots ({', '.join(INJURY_COLUMNS)}) "
         f"VALUES ({', '.join(':' + c for c in INJURY_COLUMNS)})",
         [{c: r.get(c) for c in INJURY_COLUMNS} for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def upsert_rows(conn: sqlite3.Connection, table: str, rows: list[dict]) -> int:
+    """INSERT OR REPLACE dicts into `table`. Keys must be existing columns; missing keys -> NULL."""
+    if not rows:
+        return 0
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+    if not cols:
+        raise ValueError(f"unknown table {table!r}")
+    for r in rows:
+        _check(r, tuple(cols))
+    conn.executemany(
+        f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "
+        f"VALUES ({', '.join(':' + c for c in cols)})",
+        [{c: r.get(c) for c in cols} for r in rows])
     conn.commit()
     return len(rows)
 
