@@ -3,15 +3,16 @@ name = "courtside"
 version = "0.1.0"
 description = "Local NBA win probabilities and morning recaps"
 requires-python = ">=3.12"
-dependencies = ["curl_cffi"]
+dependencies = [
+    "curl_cffi",
+    "pdfplumber>=0.11.10",
+]
 
 [project.scripts]
 courtside = "courtside.cli:main"
 
 [project.optional-dependencies]
-pdf = [
-    "pdfplumber>=0.11.10",
-]
+pdf = []
 
 [dependency-groups]
 dev = ["pytest"]

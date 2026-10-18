@@ -242,10 +242,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "curl-cffi" },
-]
-
-[package.optional-dependencies]
-pdf = [
     { name = "pdfplumber" },
 ]
 
@@ -257,7 +253,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "curl-cffi" },
-    { name = "pdfplumber", marker = "extra == 'pdf'", specifier = ">=0.11.10" },
+    { name = "pdfplumber", specifier = ">=0.11.10" },
 ]
 provides-extras = ["pdf"]
 

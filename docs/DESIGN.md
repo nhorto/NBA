@@ -92,7 +92,7 @@ Later migrations will add normalized box score, play-by-play, and prediction tab
 
 ## Collection schedule (US/Eastern)
 
-- `pregame`: 10:00, 13:30 (after the 11am–1pm game-day injury resubmission), 17:00, and 18:30. Each run refreshes the schedule (cached daily), upserts today's games, and snapshots ESPN odds, cdn.nba.com odds, ESPN injuries, and the official injury report.
+- `pregame`: 10:00, 13:30 (after the 11am–1pm game-day injury resubmission), 17:00, 18:30, 20:00, and 22:00 (the last two catch late-tip lines and injury statuses). Each run refreshes the schedule (cached daily), upserts today's games, and snapshots ESPN odds, cdn.nba.com odds, ESPN injuries, and the official injury report.
 - `postgame`: 03:00 and 09:00. For each game on the previous NBA day that isn't fully archived yet, fetch the cdn.nba.com boxscore and playbyplay plus the ESPN summary, and mark the game final. The job is idempotent.
 
 ## Roadmap
