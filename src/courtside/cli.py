@@ -49,10 +49,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "collect":
         from . import collect, config
         if args.job == "pregame":
-            collect.run_pregame(args.date or config.today_nba_day())
+            summary = collect.run_pregame(args.date or config.today_nba_day())
         else:
-            collect.run_postgame(args.date or config.yesterday_nba_day())
-        return 0
+            summary = collect.run_postgame(args.date or config.yesterday_nba_day())
+        # The job logs its own summary; a failed step must still surface to the scheduler.
+        return 0 if summary.get("ok", True) else 1
     if args.cmd == "backfill":
         from . import backfill
         try:
