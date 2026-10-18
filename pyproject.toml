@@ -1,0 +1,22 @@
+[project]
+name = "courtside"
+version = "0.1.0"
+description = "Local NBA win probabilities and morning recaps"
+requires-python = ">=3.12"
+dependencies = ["curl_cffi"]
+
+[project.scripts]
+courtside = "courtside.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/courtside"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
