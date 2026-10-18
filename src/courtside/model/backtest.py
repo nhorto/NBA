@@ -170,7 +170,8 @@ def format_tables(ev: dict, last_n: int = 3) -> str:
     span = f"{any_r['seasons'][0]}..{any_r['seasons'][1]}"
     lastk = f"last{last_n}"
     lspan = ", ".join(any_r[f"{lastk}_seasons"])
-    hdr = f"{'model':<11}{'n':>7}{'logloss':>9}{'brier':>8}{'acc':>7}{'ece':>7}{'MAE':>7}{'RMSE':>7}"
+    w = max(11, max(len(n) for n in names) + 1)
+    hdr = f"{'model':<{w}}{'n':>7}{'logloss':>9}{'brier':>8}{'acc':>7}{'ece':>7}{'MAE':>7}{'RMSE':>7}"
     for seg in ("Regular Season", "Playoffs"):
         for scope, label in (("aggregate", span), (lastk, lspan)):
             lines.append(f"\n{seg} | {label}")
@@ -179,7 +180,7 @@ def format_tables(ev: dict, last_n: int = 3) -> str:
                 m = ev[n][scope].get(seg)
                 if not m:
                     continue
-                lines.append(f"{n:<11}{m['n']:>7}{_fmt(m['log_loss']):>9}{_fmt(m['brier']):>8}"
+                lines.append(f"{n:<{w}}{m['n']:>7}{_fmt(m['log_loss']):>9}{_fmt(m['brier']):>8}"
                              f"{_fmt(m['accuracy'], 3):>7}{_fmt(m['ece'], 3):>7}"
                              f"{_fmt(m.get('margin_mae'), 2):>7}{_fmt(m.get('margin_rmse'), 2):>7}")
     lines.append("\nRegular Season log-loss / accuracy by season")
