@@ -5,7 +5,10 @@ description = "Local NBA win probabilities and morning recaps"
 requires-python = ">=3.12"
 dependencies = [
     "curl_cffi",
+    "numpy>=2.5.4",
+    "pandas>=3.0.6",
     "pdfplumber>=0.11.10",
+    "scikit-learn>=1.9.1",
 ]
 
 [project.scripts]

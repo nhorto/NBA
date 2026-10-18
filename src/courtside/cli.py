@@ -35,7 +35,60 @@ def build_parser() -> argparse.ArgumentParser:
     gl.add_argument("--to", dest="end", default="2025-26", help="last season, e.g. 2025-26")
     gl.add_argument("--no-advanced", action="store_true", help="skip advanced-stat endpoints")
     gl.add_argument("--force", action="store_true", help="re-fetch even if already archived")
+
+    md = sub.add_parser("model", help="prediction model").add_subparsers(
+        dest="model_cmd", required=True)
+    bt = md.add_parser("backtest", help="walk-forward-by-season backtest")
+    bt.add_argument("--models", default="home,elo,elo_rest,elo_sched",
+                    help="comma-separated: home, elo, elo_rest, elo_sched")
+    bt.add_argument("--from", dest="start", default="2012-13", help="first test season")
+    bt.add_argument("--to", dest="end", default=None, help="last test season (default: latest)")
+    bt.add_argument("--no-report", action="store_true", help="don't write the JSON report")
+    md.add_parser("tune-elo", help="re-run the Elo hyperparameter search (2000-01..2010-11)")
     return p
+
+
+def _model_cmd(args) -> int:
+    from . import config, db
+    from .model import backtest, baselines, elo
+
+    frame = backtest.build_frame(db.connect())
+    if args.model_cmd == "tune-elo":
+        r = elo.tune_all(frame)
+        print(f"tuning window {elo.TUNE_SEASONS[0]}..{elo.TUNE_SEASONS[1]}, "
+              f"scored from {elo.TUNE_EVAL_FROM}")
+        for label, rows in (("stage 1", r["stage1"][:5]), ("stage 2", r["stage2"][:5]),
+                            ("rest/travel", r["rest"][:5])):
+            print(label)
+            for ll, prm in rows:
+                print(f"  {ll:.5f}  k={prm.k:g} hca={prm.hca:g} carry={prm.carry:g} "
+                      f"b2b={prm.b2b_elo:g} travel={prm.travel_elo_per_1000km:g}")
+        print(f"frozen TUNED: {elo.TUNED}\nfrozen TUNED_REST: {elo.TUNED_REST}")
+        return 0
+    names = [n.strip() for n in args.models.split(",") if n.strip()]
+    unknown = [n for n in names if n not in baselines.MODELS]
+    if unknown:
+        print(f"error: unknown model(s) {unknown}; choose from {list(baselines.MODELS)}",
+              file=sys.stderr)
+        return 2
+    seasons = [s for s in backtest.seasons_in(frame)
+               if s >= args.start and (args.end is None or s <= args.end)]
+    if not seasons or seasons[0] <= frame["season"].min():
+        print("error: need at least one training season before the first test season",
+              file=sys.stderr)
+        return 2
+    print(f"{len(frame)} games {frame['season'].min()}..{frame['season'].max()}; "
+          f"testing {seasons[0]}..{seasons[-1]} with {names}")
+    preds, desc = backtest.run_backtest(frame, {n: baselines.MODELS[n] for n in names},
+                                        seasons, log=print)
+    ev = backtest.evaluate(preds)
+    print(backtest.format_tables(ev))
+    if not args.no_report:
+        path = backtest.write_report(ev, desc, frame, config.data_dir() / "reports",
+                                     {"tuned_elo": elo.TUNED.to_dict(),
+                                      "tuned_elo_rest": elo.TUNED_REST.to_dict()})
+        print(f"\nreport: {path}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
             summary = collect.run_postgame(args.date or config.yesterday_nba_day())
         # The job logs its own summary; a failed step must still surface to the scheduler.
         return 0 if summary.get("ok", True) else 1
+    if args.cmd == "model":
+        return _model_cmd(args)
     if args.cmd == "backfill":
         from . import backfill
         try:

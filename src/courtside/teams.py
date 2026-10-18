@@ -80,3 +80,57 @@ def espn_to_tricode(abbr: str) -> str:
 
 def by_team_id(team_id: int | str) -> Team:
     return _BY_ID[int(team_id)]
+
+
+# --- Franchise continuity -------------------------------------------------------------------
+#
+# Historical tricodes -> current franchise tricode, by *roster continuity* (who the players
+# were), which is what a rating model needs. This deliberately differs from the NBA's official
+# record-keeping in one place: in 2014 the NBA reassigned the 1988-2002 Charlotte Hornets'
+# history to today's Charlotte franchise, and stats.nba.com reports those CHH seasons with
+# TEAM_ID 1610612766 (Charlotte). But that roster moved to New Orleans in 2002 (NOH -> NOK ->
+# NOP), while Charlotte restarted as the 2004 expansion Bobcats. So the numeric team_id is NOT
+# a safe continuity key (team_games stores no team_id anyway); use franchise(tricode, season).
+#
+# Also accepted: Basketball-Reference style codes (BRK, CHO, PHO, NOH, CHH) and ESPN
+# abbreviations, so other sources can be joined.
+
+_FRANCHISE_ALIASES: dict[str, str] = {
+    "NJN": "BKN", "BRK": "BKN",            # New Jersey Nets -> Brooklyn (2012-13)
+    "SEA": "OKC",                          # Seattle SuperSonics -> Oklahoma City (2008-09)
+    "VAN": "MEM",                          # Vancouver Grizzlies -> Memphis (2001-02)
+    "NOH": "NOP", "NOK": "NOP",            # New Orleans (/Oklahoma City 2005-07) Hornets
+    "CHH": "NOP",                          # Charlotte Hornets 1988-2002 -> New Orleans
+    "CHO": "CHA",                          # B-Ref code for Charlotte 2014-
+    "PHO": "PHX", "GS": "GSW", "NY": "NYK", "SA": "SAS", "NO": "NOP", "UTAH": "UTA",
+    "WSH": "WAS",
+}
+
+# Season (start year) in which the Charlotte expansion franchise (Bobcats) began. Any "CHA"
+# before it can only be the original Hornets, i.e. today's Pelicans.
+CHARLOTTE_EXPANSION_YEAR = 2004
+
+
+def season_start_year(season: str | int | None) -> int | None:
+    """'2004-05' -> 2004; 2004 -> 2004; None -> None."""
+    if season is None:
+        return None
+    if isinstance(season, int):
+        return season
+    return int(str(season)[:4])
+
+
+def franchise(tricode: str, season: str | int | None = None) -> str:
+    """Map any historical NBA tricode to the current franchise's tricode.
+
+    `season` ('2004-05' or start year) only matters for ambiguous codes: "CHA" before 2004-05
+    means the original Hornets (-> NOP). Raises KeyError for unknown codes.
+    """
+    code = tricode.strip().upper()
+    year = season_start_year(season)
+    if code == "CHA" and year is not None and year < CHARLOTTE_EXPANSION_YEAR:
+        return "NOP"
+    code = _FRANCHISE_ALIASES.get(code, code)
+    if code not in _BY_TRI:
+        raise KeyError(f"unknown NBA tricode {tricode!r}")
+    return code
