@@ -1,0 +1,7 @@
+{"_note":"SYNTHETIC: shaped like liveData/todaysScoreboard_00.json game entries (the real payload on 2026-10-18 had no games). 0022600003 is a late game: 01:30Z is the previous UTC date vs ET.","meta":{"version":1,"code":200},"scoreboard":{"gameDate":"2026-10-20","leagueId":"00","games":[
+{"gameId":"0022600001","gameStatus":3,"gameStatusText":"Final","gameTimeUTC":"2026-10-20T19:00:00Z","homeTeam":{"teamId":1610612765,"teamTricode":"DET","score":101},"awayTeam":{"teamId":1610612738,"teamTricode":"BOS","score":99}},
+{"gameId":"0022600002","gameStatus":2,"gameStatusText":"Q3 5:12","gameTimeUTC":"2026-10-20T23:00:00Z","homeTeam":{"teamId":1610612752,"teamTricode":"NYK","score":60},"awayTeam":{"teamId":1610612755,"teamTricode":"PHI","score":58}},
+{"gameId":"0022600003","gameStatus":1,"gameStatusText":"9:30 pm ET","gameTimeUTC":"2026-10-21T01:30:00Z","homeTeam":{"teamId":1610612759,"teamTricode":"SAS","score":0},"awayTeam":{"teamId":1610612760,"teamTricode":"OKC","score":0}},
+{"gameId":"0012600099","gameStatus":1,"gameStatusText":"7:00 pm ET","gameTimeUTC":"2026-10-20T23:00:00Z","homeTeam":{"teamTricode":"MIA","score":0},"awayTeam":{"teamTricode":"ORL","score":0}},
+{"gameId":"0022600004","gameStatus":1,"gameStatusText":"PPD","gameTimeUTC":"2026-10-20T23:00:00Z","homeTeam":{"teamTricode":"CHI","score":0},"awayTeam":{"teamTricode":"MIL","score":0}}
+]}}

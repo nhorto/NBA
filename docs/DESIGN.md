@@ -1,9 +1,36 @@
 # Courtside — design
 
-A local NBA app with two jobs:
+**Product:** *the NBA Morning Brief*. It should be good enough that people would pay for a subscription. A box score is only a snapshot of one game; the Brief tells you what it means: who's rising, who's sliding, who quietly won the game, and what to expect tonight. Hosting is local for now, but everything else (data quality, model rigor, writing, design) is built to product standard.
 
-1. **Today**: win probabilities (later spread/total) for each of today's games.
-2. **Last night**: a morning recap that goes beyond the box score. It covers turning points, runs, clutch play, high-impact role players, team trends, and a short storyline write-up.
+## What the Brief contains (the product spec)
+
+1. **Last night**: one card per game.
+   - Final score, and our pregame pick versus the result.
+   - **The story**: 2–4 sentences generated from structured facts only, so nothing is hallucinated.
+   - **Turning point**: the biggest win-probability swing or decisive run, with time and score.
+   - **Unsung hero**: the role player whose impact outstripped their points (on/off, plus-minus versus minutes, efficiency, defense and hustle where available).
+   - Standout lines, and in-game injuries.
+2. **Team pulse**: teams trending up or down. Measures are net rating over the last 10 games versus the season, rating change, streaks, and strength of schedule faced. Also includes a model power ranking.
+3. **Player pulse**: who is hot or cold over the last 5/10 games versus their own baseline. It flags role changes (a bench player's minutes or usage jumping, a new starter) and lists the leaders over the last 10 games by an impact metric, not just points.
+4. **Injury watch**: new absences, returns, and how each one moves tonight's odds.
+5. **Tonight**: every game with win probability, projected margin and total, our number versus the market line, key factors (rest, travel, injuries, form), and confidence. Includes an "upset watch".
+6. **Scorecard**: the model's season record and calibration, and how it compares to the market. Showing this openly earns trust.
+
+Quality bar: correct numbers every time, explained in plain English, fast to scan on a phone, and with a consistent editorial voice.
+
+**Data licensing:** the free endpoints (NBA.com, ESPN) are fine for personal and local use. A paid public product would need licensed feeds (e.g. Sportradar or SportsDataIO). Keep every source behind the `sources/` interface so a feed can be swapped without touching analytics.
+
+## Prediction model: full latitude, judged only by honest out-of-sample results
+
+- **Data:** 10+ seasons of team and player game logs (stats.nba.com `leaguegamelog`, team and player, about two calls per season). Historical official injury reports from 2021-22 onward via `nbainjuries`. Schedule-derived rest and travel. Play-by-play for the win-probability model. Historical closing lines from any obtainable archive, used as the benchmark.
+- **Ladder:**
+  1. Elo carried across seasons.
+  2. Player-based team strength: player ratings × expected minutes given availability, so injuries flow straight into the prediction.
+  3. Gradient-boosted model on pregame features.
+  4. Neural nets or sequence models, only if they beat (3) out of sample.
+- **Targets:** predict the margin and total as distributions; derive win probability from the margin distribution. Calibrate it.
+- **Evaluation:** walk-forward by season, never a random split. Metrics are log-loss, Brier, margin MAE, calibration, and against-the-spread results versus the closing line. Every model change must beat the current one on the same backtest.
+- Heavy training runs on the Mac mini (M4, 32 GB).
 
 The old 2023-24 notebooks live in `legacy/`. Don't import from them. Port the good ideas instead: lagged rolling stats, Elo, and the "missing rotation player" idea.
 
@@ -71,6 +98,8 @@ Later migrations will add normalized box score, play-by-play, and prediction tab
 ## Roadmap
 
 1. **Collector** (before 2026-10-20): the pieces above, deployed on the Mac mini.
-2. **Honest model**: multi-season history from stats.nba.com `leaguegamelog` (one call per season) and box scores. Elo carried across seasons. Rest, back-to-back, and travel features. Injury-adjusted availability built from the archived snapshots. Chronological backtest scored on log-loss and Brier, against "home team", "Elo", and the closing line.
-3. **Recap**: normalize the box scores and play-by-play, then compute win-probability swings, runs, clutch stats, an impact score for role players, and team trend flags. An LLM writes the storyline from structured facts only.
-4. **Web page**: Today and Last Night tabs, served locally and reachable over Tailscale.
+2. **History backfill and backtest harness**: multi-season game logs, historical injury reports, the walk-forward evaluation framework, and baselines (home team, Elo, market).
+3. **Model ladder** (see above): each rung is kept only if it beats the last.
+4. **Analytics**: normalized box scores and play-by-play, the win-probability model, runs, clutch play, the impact metric, and team and player trend detection.
+5. **Brief**: the LLM writes from a structured facts JSON, with a fixed editorial style guide and a fact-check pass.
+6. **Web app**: a polished, mobile-first Brief with Today, Last Night, Teams, and Players, served locally and reachable over Tailscale.
