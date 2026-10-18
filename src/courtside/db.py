@@ -104,6 +104,19 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (game_id, player_id)
     );
     """,
+    # 3: historical closing lines (Kaggle SBR/ESPN BET, ESPN core API open/close)
+    """
+    CREATE TABLE IF NOT EXISTS closing_lines (
+        game_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        provider TEXT,
+        home_spread_open REAL, home_spread_close REAL,
+        total_open REAL, total_close REAL,
+        home_ml_open REAL, home_ml_close REAL,
+        away_ml_open REAL, away_ml_close REAL,
+        PRIMARY KEY (game_id, source)
+    );
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",

@@ -1,0 +1,7 @@
+season,date,regular,playoffs,away,home,score_away,score_home,q1_away,q2_away,q3_away,q4_away,ot_away,q1_home,q2_home,q3_home,q4_home,ot_home,whos_favored,spread,total,moneyline_away,moneyline_home,h2_spread,h2_total,id_spread,id_total
+2008,2007-10-30,True,False,por,sa,97,106,26,23,28,20,0,29,30,22,25,0,home,13,189.5,900,-1400,5,95,0,1
+2008,2007-10-30,True,False,utah,gs,117,96,28,34,24,31,0,30,21,21,24,0,home,1,212,100,-120,3,105.5,0,1
+2008,2007-11-02,True,False,nj,no,90,95,0,0,0,0,0,0,0,0,0,0,away,2.5,190,-130,110,0,0,0,1
+2015,2014-12-01,True,False,ny,bkn,100,98,0,0,0,0,0,0,0,0,0,0,home,0,200,-110,-110,0,0,0,1
+2024,2023-11-20,True,False,wsh,phx,100,110,0,0,0,0,0,0,0,0,0,0,home,7.5,230.5,,,0,0,0,1
+2024,2023-11-21,True,False,sea,cha,100,110,0,0,0,0,0,0,0,0,0,0,away,3,,,,0,0,0,1
