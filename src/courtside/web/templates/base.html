@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block title %}Courtside{% endblock %}</title>
+<meta name="description" content="Courtside: the NBA Morning Brief. Last night, what it meant, and what to expect tonight.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0d0f12" media="(prefers-color-scheme: dark)">
+<link rel="preload" href="/static/fonts/Inter-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/static/fonts/NotoSerifDisplay-Bold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<script>try{var t=localStorage.getItem("cs-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+</head>
+<body class="page-{{ page|default('x') }}">
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+  <div class="wrap topbar-in">
+    <a class="brand" href="/" aria-label="Courtside home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14.5" fill="var(--accent)"/><path d="M16 1.5v29M1.5 16h29M6 5.5c4.5 4 4.5 17 0 21M26 5.5c-4.5 4-4.5 17 0 21" fill="none" stroke="var(--brand-seam)" stroke-width="1.6"/></svg>
+      <span class="brand-word">Courtside</span>
+    </a>
+    <nav class="top-nav" aria-label="Site">
+      {% block topnav %}{% endblock %}
+      <a href="/archive" class="top-link{% if page == 'archive' %} is-active{% endif %}">Archive</a>
+      <button class="theme-toggle" type="button" aria-label="Switch colour theme" title="Switch colour theme">
+        <svg class="ico-sun" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.6" fill="currentColor"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M10 1.8v2M10 16.2v2M1.8 10h2M16.2 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M4.2 15.8l1.4-1.4M14.4 5.6l1.4-1.4"/></g></svg>
+        <svg class="ico-moon" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.8 12.6A6.8 6.8 0 017.4 4.2a6.8 6.8 0 108.4 8.4z" fill="currentColor"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+<main id="main">
+{% block content %}{% endblock %}
+</main>
+<footer class="site-foot">
+  <div class="wrap foot-in">
+    {% block foot %}{% endblock %}
+    <p class="foot-brand"><span class="brand-word">Courtside</span> &middot; The NBA Morning Brief. Numbers come from structured game data; win probabilities are model estimates, not advice.</p>
+  </div>
+</footer>
+<script src="/static/app.js?v={{ asset_v }}" defer></script>
+</body>
+</html>

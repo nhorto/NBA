@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}{{ g.away.code }} {% if g.away.score is not none %}{{ g.away.score }}{% endif %}, {{ g.home.code }} {% if g.home.score is not none %}{{ g.home.score }}{% endif %} &middot; Courtside{% endblock %}
+
+{% block content %}
+<div class="wrap game-page">
+  <nav class="crumbs" aria-label="Breadcrumb"><a href="/brief/{{ day }}">{{ m.icon("back") }}Brief for {{ day|medium_date }}</a></nav>
+
+  <header class="game-hero card">
+    <div class="gh-meta">
+      <span class="kicker">{{ g.status }}{% if g.season_type %} &middot; {{ g.season_type }}{% endif %}</span>
+      <span class="muted">{% if g.date %}{{ g.date|long_date }}{% endif %}{% if g.arena %} &middot; {{ g.arena }}{% endif %}</span>
+    </div>
+    <div class="gh-main">
+      {{ m.scoreline(g, big=True) }}
+      {% if g.periods %}
+      <table class="table linescore" aria-label="Score by period">
+        <thead><tr><th scope="col"><span class="sr">Team</span></th>{% for p in g.periods %}<th class="num" scope="col">{{ p }}</th>{% endfor %}<th class="num" scope="col">T</th></tr></thead>
+        <tbody>
+          {% for s, ps in [(g.away, g.away_periods), (g.home, g.home_periods)] %}
+          <tr{% if s.winner %} class="is-win"{% endif %}><th scope="row">{{ m.dot(s) }}{{ s.code }}</th>{% for x in ps %}<td class="num">{{ x }}</td>{% endfor %}<td class="num strong">{{ s.score }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+    {{ m.verdict(g) }}
+    {% if g.headline %}<h1 class="gh-head">{{ g.headline }}</h1>{% endif %}
+    {% if g.story %}<p class="gh-story">{{ g.story }}</p>{% endif %}
+  </header>
+
+  {% if g.lead_chart %}
+  <section class="card chart-card" aria-labelledby="flow-title">
+    <div class="card-head-row">
+      <h2 class="card-title" id="flow-title">Game flow</h2>
+      <p class="legend"><span class="lg-sw" style="--c1:{{ g.home.bar }}"></span>{{ g.home.code }} ahead <span class="lg-sw" style="--c1:{{ g.away.bar }}"></span>{{ g.away.code }} ahead</p>
+    </div>
+    <div class="chart-box">{{ g.lead_chart.svg|safe }}{{ g.lead_chart.svg_narrow|safe }}</div>
+    <p class="footnote">{% if g.lead_chart.source == "timeline" %}Lead margin through the game.{% else %}Lead margin reconstructed from {{ g.lead_chart.n }} score checkpoints (quarter ends, scoring runs, largest leads, clutch plays); lines between checkpoints are approximate.{% endif %}</p>
+  </section>
+  {% endif %}
+
+  {% if not g.has_facts %}
+  {{ m.empty("No play-by-play breakdown for this game", "The box score or play-by-play wasn’t archived, so runs, clutch and impact numbers aren’t available.") }}
+  {% else %}
+  <div class="facts-grid">
+    <section class="card" aria-labelledby="flow-facts">
+      <h2 class="card-title" id="flow-facts">How it unfolded</h2>
+      <dl class="kv">
+        {% if g.lead_changes is not none %}<div><dt>Lead changes</dt><dd>{{ g.lead_changes }}</dd></div>{% endif %}
+        {% if g.times_tied is not none %}<div><dt>Times tied</dt><dd>{{ g.times_tied }}</dd></div>{% endif %}
+        {% for l in g.largest_leads %}<div><dt>{{ m.dot(l.team) }}{{ l.team.code }} largest lead</dt><dd>{{ l.lead }} <span class="muted">{{ l.when }}</span></dd></div>{% endfor %}
+        {% if g.comeback %}<div><dt>Comeback</dt><dd>{{ g.comeback.team.code }} from {{ g.comeback.deficit }} down <span class="muted">{{ g.comeback.when }}</span></dd></div>{% endif %}
+        {% if g.garbage %}<div><dt>Garbage time</dt><dd>{{ g.garbage.seconds|seconds_clock }}{% if g.garbage.from %} <span class="muted">from {{ g.garbage.from.label }} {{ g.garbage.from.clock }}</span>{% endif %}</dd></div>{% endif %}
+      </dl>
+      {% if g.turning %}
+      <dl class="beats beats-flat">{{ m.turning_beat(g.turning) }}</dl>
+      {% endif %}
+    </section>
+
+    <section class="card" aria-labelledby="runs-title">
+      <h2 class="card-title" id="runs-title">Scoring runs</h2>
+      {% if g.runs %}
+      <ol class="runs">
+        {% for r in g.runs %}
+        <li>
+          <span class="run-chip" style="--c1:{{ r.team.bar }}">{{ r.run }}</span>
+          <div><p><strong>{{ r.team.code }}</strong>{% if r.unanswered %} <span class="flag flag-plain">unanswered</span>{% endif %} <span class="muted">{{ r.from }} &ndash; {{ r.to }}{% if r.minutes %} &middot; {{ r.minutes|num }} min{% endif %}</span></p>
+            {% if r.effect %}<p class="run-eff">{{ r.effect|capitalize }}</p>{% endif %}</div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      {{ m.empty("No runs of 8+ points") }}
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="card" aria-labelledby="impact-title">
+    <h2 class="card-title" id="impact-title">Impact</h2>
+    <p class="card-sub">Top performers and unsung-hero candidates. On/off is the team&rsquo;s net per 100 possessions with the player on minus off, garbage time excluded.</p>
+    {% if g.impact %}
+    <div class="table-scroll">
+    <table class="table impact-table">
+      <thead><tr><th scope="col">Player</th><th class="num" scope="col">MIN</th><th class="num" scope="col">PTS</th><th class="num" scope="col">REB</th><th class="num" scope="col">AST</th><th class="num" scope="col">FG</th><th class="num" scope="col">TS%</th><th class="num" scope="col">+/&minus;</th><th class="num" scope="col">On/off</th><th class="num" scope="col">STL+BLK</th><th class="num" scope="col">GmSc</th></tr></thead>
+      <tbody>
+      {% for r in g.impact %}
+      <tr>
+        <th scope="row"><span class="it-who">{{ m.dot(r.team) }}<span class="it-team">{{ r.team.code }}</span> {{ r.name }}</span>{% for tg in r.tags %}<span class="flag flag-plain flag-xs">{{ tg }}</span>{% endfor %}</th>
+        <td class="num">{{ r.minutes|minutes }}</td>
+        <td class="num strong">{{ r.pts }}</td>
+        <td class="num">{{ r.reb }}</td>
+        <td class="num">{{ r.ast }}</td>
+        <td class="num">{{ r.fg or DASH }}</td>
+        <td class="num">{{ r.ts_pct|ts }}</td>
+        <td class="num {{ 'pos' if (r.plus_minus or 0) > 0 else ('neg' if (r.plus_minus or 0) < 0 else '') }}">{{ r.plus_minus|signed_int }}</td>
+        <td class="num">{{ r.on_off|signed }}</td>
+        <td class="num">{{ r.stocks }}</td>
+        <td class="num">{{ r.game_score|num }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    {{ m.empty("No impact numbers") }}
+    {% endif %}
+  </section>
+
+  <div class="facts-grid">
+    <section class="card" aria-labelledby="hero-title">
+      <h2 class="card-title" id="hero-title">Unsung hero candidates</h2>
+      {% if g.heroes %}
+      <dl class="beats beats-flat">
+        {% for h in g.heroes %}{{ m.hero_beat(h, "Top candidate" if loop.first else "Candidate " ~ loop.index) }}{% endfor %}
+      </dl>
+      {% else %}
+      {{ m.empty("No candidate this time", "Needs a role player with 12+ minutes whose impact outran his points.") }}
+      {% endif %}
+    </section>
+
+    <section class="card" aria-labelledby="clutch-title">
+      <h2 class="card-title" id="clutch-title">Clutch</h2>
+      {% set cl = g.clutch %}
+      {% if cl and cl.had %}
+      <p class="card-sub">{{ cl.seconds|seconds_clock }} of clutch time (last five minutes, within five points){% if cl.points_text %} &middot; {{ cl.points_text }}{% endif %}</p>
+      {% if cl.players %}
+      <div class="table-scroll">
+      <table class="table clutch-table">
+        <thead><tr><th scope="col">Player</th><th class="num" scope="col">PTS</th><th class="num" scope="col">FG</th><th class="num" scope="col">FT</th><th class="num" scope="col">AST</th><th class="num" scope="col">+/&minus;</th></tr></thead>
+        <tbody>{% for p in cl.players %}<tr><th scope="row">{{ m.dot(team(p.team)) }}<span class="it-team">{{ p.team }}</span> {{ p.name }}</th><td class="num strong">{{ p.pts }}</td><td class="num">{{ p.fg or DASH }}</td><td class="num">{{ p.ft or DASH }}</td><td class="num">{{ p.ast }}</td><td class="num">{{ p.plus_minus|signed_int }}</td></tr>{% endfor %}</tbody>
+      </table>
+      </div>
+      {% endif %}
+      {% if cl.plays %}
+      <h3 class="mini-head">Key plays</h3>
+      <ol class="plays">
+        {% for p in cl.plays %}
+        <li{% if p.decisive %} class="is-decisive"{% endif %}><span class="pl-clock tabnum">{{ p.label }} {{ p.clock }}</span><span class="pl-what">{{ m.dot(p.team) }}<strong>{{ p.player }}</strong> {{ p.kind|lower }}{% if p.decisive %} <span class="flag">decisive</span>{% endif %}</span><span class="pl-score tabnum">{{ p.score }}</span></li>
+        {% endfor %}
+      </ol>
+      {% endif %}
+      {% else %}
+      {{ m.empty("No clutch time", "The game was never within five points in the last five minutes.") }}
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="facts-grid">
+    <section class="card" aria-labelledby="lines-title">
+      <h2 class="card-title" id="lines-title">Notable lines</h2>
+      {% if g.notable %}
+      <dl class="beats beats-flat">{{ m.notable_beat(g.notable, 20) }}</dl>
+      {% else %}
+      {{ m.empty("No standout lines") }}
+      {% endif %}
+    </section>
+    <section class="card" aria-labelledby="inc-title">
+      <h2 class="card-title" id="inc-title">Incidents</h2>
+      {% if g.incidents %}
+      <ul class="incidents">{% for i in g.incidents %}<li>{{ i }}</li>{% endfor %}</ul>
+      <p class="footnote">&ldquo;Left the game and did not return&rdquo; is detected from substitutions; it isn&rsquo;t a confirmed injury.</p>
+      {% else %}
+      {{ m.empty("No ejections, foul-outs or early exits") }}
+      {% endif %}
+      {% if g.pick %}
+      <h3 class="mini-head">Our pregame call</h3>
+      <dl class="kv">
+        <div><dt>Pick</dt><dd>{{ g.pick.team.code }} {{ g.pick.prob|pct }} <span class="muted">{{ g.pick.confidence }}</span></dd></div>
+        <div><dt>Our line</dt><dd>{{ g.pick.margin }}</dd></div>
+        <div><dt>Our total</dt><dd>{{ g.pick.total|num }}</dd></div>
+        {% if g.total is not none %}<div><dt>Actual total</dt><dd>{{ g.total }}</dd></div>{% endif %}
+      </dl>
+      {% endif %}
+    </section>
+  </div>
+  {% if g.validation and g.validation.ok is sameas false %}
+  <p class="caveat">These numbers failed the stint validation check (minutes or plus-minus didn&rsquo;t reconcile with the box score). Treat lineup-based numbers with care.</p>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% import "_macros.html" as m %}
+<article class="card trend trend-{{ t.direction }}">
+  <div class="tr-head">
+    {{ m.badge(t.team) }}
+    <div class="tr-name">
+      <h4>{{ t.team.nickname }}</h4>
+      <p class="tr-form">{{ t.record|record }}{% if t.last10 %} &middot; {{ t.last10|record }} last 10{% endif %}{% if t.streak %} &middot; {{ t.streak }}{% endif %}</p>
+    </div>
+    {% if t.power_rank %}<p class="tr-rank"><span>Power</span>#{{ t.power_rank }}</p>{% endif %}
+  </div>
+  <div class="tr-metric">
+    <div class="tr-big">
+      <p class="tr-val {{ 'pos' if t.direction == 'up' else 'neg' }}">{{ t.net.last10_adj|signed }}</p>
+      <p class="tr-lbl">adj. net rating, last 10</p>
+    </div>
+    <div class="tr-spark">
+      {{ t.spark|safe }}
+      <p class="tr-scale"><span>season {{ t.net.season_adj|signed }}</span><span>last 10 {{ t.net.last10_adj|signed }}</span></p>
+    </div>
+  </div>
+  <dl class="tr-split">
+    <div><dt>Offense</dt><dd>{{ t.off.last10|num }} <span class="muted">vs {{ t.off.season|num }}</span></dd></div>
+    <div><dt>Defense</dt><dd>{{ t.def.last10|num }} <span class="muted">vs {{ t.def.season|num }}</span></dd></div>
+    {% if t.trend.z is not none %}<div><dt>Signal</dt><dd>z {{ t.trend.z|signed }}</dd></div>{% endif %}
+  </dl>
+  {% if t.blurb %}<p class="tr-blurb">{{ t.blurb }}</p>{% endif %}
+  {% if t.chips %}<ul class="chips chips-plain">{% for c in t.chips %}<li class="chip">{{ c }}</li>{% endfor %}</ul>{% endif %}
+  {% if t.absences %}
+  <p class="tr-abs"><span class="muted">Without</span> {% for a in t.absences %}<strong>{{ a.player }}</strong> <span class="muted">({{ a.team_games_missed }} games{% if a.mpg_before %}, {{ a.mpg_before|num }} mpg{% endif %})</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>
+  {% endif %}
+</article>

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Archive &middot; Courtside{% endblock %}
+{% block content %}
+<div class="wrap archive-page">
+  <header class="page-head">
+    <p class="kicker">The Morning Brief</p>
+    <h1 class="page-title">Archive</h1>
+    <p class="page-sub">{{ count }} {{ "Brief" if count == 1 else "Briefs" }}</p>
+  </header>
+  {% if months %}
+  {% for mo in months %}
+  <section class="arch-month" aria-labelledby="mo{{ loop.index }}">
+    <h2 class="arch-label" id="mo{{ loop.index }}">{{ mo.label }}</h2>
+    <ol class="arch-list card">
+      {% for r in mo.rows %}
+      <li><a href="/brief/{{ r.day }}" class="arch-row">
+        <span class="arch-date"><b>{{ r.day|short_date }}</b><span>{{ r.day|weekday }}</span></span>
+        <span class="arch-head">{{ r.headline }}</span>
+        <span class="arch-meta">{% if r.games %}{{ r.games }} {{ "game" if r.games == 1 else "games" }}{% else %}Off day{% endif %}{% if r.picks %} &middot; {{ r.picks.correct }}{{ DASH }}{{ r.picks.n - r.picks.correct }}{% endif %}</span>
+      </a></li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endfor %}
+  {% else %}
+  {{ m.empty("No Briefs yet", "Build one with: courtside brief build") }}
+  {% endif %}
+</div>
+{% endblock %}

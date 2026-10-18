@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}{{ message }} &middot; Courtside{% endblock %}
+{% block content %}
+<div class="wrap error-page">
+  <p class="kicker">404</p>
+  <h1 class="page-title">{{ message }}</h1>
+  {% if detail %}<p class="page-sub">{{ detail }}</p>{% endif %}
+  <p class="error-links"><a class="button" href="/">Latest Brief</a> <a class="button button-ghost" href="/archive">Archive</a></p>
+</div>
+{% endblock %}

@@ -5,10 +5,14 @@ description = "Local NBA win probabilities and morning recaps"
 requires-python = ">=3.12"
 dependencies = [
     "curl_cffi",
+    "fastapi>=0.146.0",
+    "jinja2>=3.1.6",
+    "lightgbm>=4.7.0",
     "numpy>=2.5.4",
     "pandas>=3.0.6",
     "pdfplumber>=0.11.10",
     "scikit-learn>=1.9.1",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
@@ -18,7 +22,10 @@ courtside = "courtside.cli:main"
 pdf = []
 
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "httpx>=0.28.1",
+    "pytest",
+]
 
 [build-system]
 requires = ["hatchling"]

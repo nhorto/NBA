@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Courtside{% endblock %}
+{% block content %}
+<div class="wrap error-page">
+  <p class="kicker">The Morning Brief</p>
+  <h1 class="page-title">No Brief yet</h1>
+  <p class="page-sub">Nothing has been built for this data directory. Build today&rsquo;s Brief and refresh:</p>
+  <pre class="code">uv run courtside brief build</pre>
+</div>
+{% endblock %}

@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set mh = v.masthead %}
+{% set ln = v.last_night %}
+{% set tn = v.tonight %}
+{% set sc = v.score %}
+{% block title %}{{ mh.headline }} &middot; Courtside, {{ day|short_date }}{% endblock %}
+
+{% block content %}
+<section class="masthead wrap" aria-labelledby="headline">
+  <div class="mast-kicker">
+    <span class="kicker">The Morning Brief</span>
+    <time datetime="{{ day }}">{{ day|long_date }}</time>
+  </div>
+  <h1 class="headline" id="headline">{{ mh.headline }}</h1>
+  <p class="dek">{{ mh.dek }}</p>
+
+  <div class="tiles">
+    <a class="tile" href="#last-night">
+      <span class="tile-k">Last night</span>
+      <span class="tile-v">{{ ln.cards|length }}<small> {{ "game" if ln.cards|length == 1 else "games" }}</small></span>
+      <span class="tile-s">{{ ln.day|medium_date }}</span>
+    </a>
+    <a class="tile" href="#last-night">
+      <span class="tile-k">Our picks</span>
+      {% if ln.picks %}
+      <span class="tile-v">{{ ln.picks.correct }}{{ DASH }}{{ ln.picks.n - ln.picks.correct }}</span>
+      <span class="tile-s">{{ (ln.picks.correct / ln.picks.n)|pct }} right</span>
+      {% else %}
+      <span class="tile-v tile-none">{{ DASH }}</span><span class="tile-s">no picks scored</span>
+      {% endif %}
+    </a>
+    <a class="tile" href="#tonight">
+      <span class="tile-k">Tonight</span>
+      <span class="tile-v">{{ tn.games|length }}<small> {{ "game" if tn.games|length == 1 else "games" }}</small></span>
+      <span class="tile-s">{% if tn.upsets %}{{ tn.upsets }} on upset watch{% else %}{{ tn.day|medium_date }}{% endif %}</span>
+    </a>
+    <a class="tile" href="#scorecard">
+      <span class="tile-k">Season record</span>
+      {% if sc.n %}
+      <span class="tile-v">{{ sc.correct }}{{ DASH }}{{ sc.incorrect }}</span>
+      <span class="tile-s">{{ sc.accuracy|pct(1) }} &middot; {{ sc.season }}</span>
+      {% else %}
+      <span class="tile-v tile-none">{{ DASH }}</span><span class="tile-s">no results yet</span>
+      {% endif %}
+    </a>
+  </div>
+
+  <nav class="daynav" aria-label="Other days">
+    {% if prev_day %}<a class="daynav-a" href="/brief/{{ prev_day }}" rel="prev">{{ m.icon("back") }}<span>{{ prev_day|medium_date }}</span></a>{% else %}<span></span>{% endif %}
+    {% if not is_latest %}<a class="daynav-today" href="/">Latest Brief</a>{% endif %}
+    {% if next_day %}<a class="daynav-a daynav-next" href="/brief/{{ next_day }}" rel="next"><span>{{ next_day|medium_date }}</span>{{ m.icon("arrow") }}</a>{% else %}<span></span>{% endif %}
+  </nav>
+</section>
+
+<nav class="secnav" aria-label="Sections">
+  <div class="wrap secnav-in">
+    <a href="#last-night">Last Night</a>
+    <a href="#teams">Team Pulse</a>
+    <a href="#players">Player Pulse</a>
+    <a href="#injuries">Injury Watch</a>
+    <a href="#tonight">Tonight</a>
+    <a href="#scorecard">Scorecard</a>
+  </div>
+</nav>
+
+{# ================================================================ LAST NIGHT #}
+<section class="section wrap" id="last-night" aria-labelledby="last-night-title">
+  {% set meta %}{{ ln.day|medium_date }}{% if ln.cards %} &middot; {{ ln.cards|length }} {{ "game" if ln.cards|length == 1 else "games" }}{% endif %}{% if ln.picks %} &middot; picks {{ ln.picks.correct }}{{ DASH }}{{ ln.picks.n - ln.picks.correct }}{% endif %}{% endset %}
+  {{ m.sec_head("last-night", "01", "Last Night", meta) }}
+  {% if ln.text %}<p class="sec-lede">{{ ln.text }}</p>{% endif %}
+  {% if ln.cards %}
+  <div class="grid grid-2">
+    {% for c in ln.cards %}{{ m.game_card(c) }}{% endfor %}
+  </div>
+  {% else %}
+  {{ m.empty("No games last night", "Nothing to recap from " ~ (ln.day|medium_date or "the previous day") ~ ". The league was off.") }}
+  {% endif %}
+</section>
+
+{# ================================================================ TEAM PULSE #}
+{% set tp = v.team %}
+<section class="section wrap" id="teams" aria-labelledby="teams-title">
+  {{ m.sec_head("teams", "02", "Team Pulse", ("Through " ~ (tp.data_through|medium_date)) if tp.data_through else "") }}
+  {% if tp.text %}<p class="sec-lede">{{ tp.text }}</p>{% endif %}
+  {% if not tp.available %}
+  {{ m.empty("Team trends are unavailable", "The trends engine didn’t produce numbers for this Brief.") }}
+  {% else %}
+  <div class="pulse-grid">
+    <div class="pulse-col">
+      <h3 class="sub-head sub-up">{{ m.icon("up") }}Rising</h3>
+      {% if tp.rising %}
+        {% for t in tp.rising %}{% include "_trend.html" %}{% endfor %}
+      {% else %}
+        {{ m.empty("No team is clearly rising", "Early-season samples are too small to flag." if tp.early else "No team’s last 10 games stand out from its baseline.") }}
+      {% endif %}
+    </div>
+    <div class="pulse-col">
+      <h3 class="sub-head sub-down">{{ m.icon("down") }}Sliding</h3>
+      {% if tp.sliding %}
+        {% for t in tp.sliding %}{% include "_trend.html" %}{% endfor %}
+      {% else %}
+        {{ m.empty("No team is clearly sliding", "Early-season samples are too small to flag." if tp.early else "No team’s last 10 games stand out from its baseline.") }}
+      {% endif %}
+    </div>
+  </div>
+  {% if tp.validity.rising and (tp.rising or tp.sliding) %}
+  <p class="footnote">How much to trust a flag: since 2015-16, {{ tp.validity.rising.next10_beat_rating_pct|num(0) }}% of rising teams beat their rating over the next 10 games and {{ tp.validity.sliding.next10_below_rating_pct|num(0) }}% of sliding teams fell short of it (coin flip: {{ tp.validity.base_rate_pct|num(0) }}%). Real, but modest.</p>
+  {% endif %}
+
+  {% if tp.power or tp.streaks or tp.movers %}
+  <div class="power-wrap">
+    <div class="card power">
+      <h3 class="card-title">Power ranking</h3>
+      {% if tp.power %}
+      <table class="table power-table">
+        <thead><tr><th class="num" scope="col">#</th><th scope="col">Team</th><th class="num" scope="col">Record</th><th class="num" scope="col" title="Power rating, points per 100 possessions vs average">Power</th><th class="num hide-sm" scope="col">L10 net</th><th class="num" scope="col"><span class="sr">7-day change</span>7d</th></tr></thead>
+        <tbody>
+        {% for r in tp.power %}
+        <tr>
+          <td class="num rank">{{ r.rank }}</td>
+          <td><span class="pt-team">{{ m.badge(r.team_id, "sm") }}<span class="pt-name">{{ r.team_id.nickname }}</span></span></td>
+          <td class="num">{{ r.record|record }}</td>
+          <td class="num strong">{{ r.power|signed }}</td>
+          <td class="num hide-sm">{{ r.last10_adj_net|signed }}</td>
+          <td class="num move">{% if r.change_7d and r.change_7d > 0 %}<span class="mv mv-up">{{ m.icon("up") }}{{ r.change_7d }}</span>{% elif r.change_7d and r.change_7d < 0 %}<span class="mv mv-down">{{ m.icon("down") }}{{ -r.change_7d }}</span>{% else %}<span class="mv mv-flat" aria-label="no change">&ndash;</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      {{ m.empty("No ranking yet") }}
+      {% endif %}
+    </div>
+    <div class="card streaks">
+      <h3 class="card-title">Streaks</h3>
+      {% if tp.streaks %}
+      <ul class="streak-list">
+        {% for s in tp.streaks %}
+        <li>{{ m.badge(s.team_id, "sm") }} <span class="st-name">{{ s.team_id.nickname }}</span> <span class="st-rec muted">{{ s.record|record }}</span> <span class="st-val {% if s.streak[:1] == 'W' %}pos{% else %}neg{% endif %}">{{ s.streak }}</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      {{ m.empty("No five-game streaks right now") }}
+      {% endif %}
+      {% if tp.movers %}
+      <h3 class="card-title card-title-2">Biggest movers this week</h3>
+      <ul class="streak-list">
+        {% for r in tp.movers %}
+        <li>{{ m.badge(r.team_id, "sm") }} <span class="st-name">{{ r.team_id.nickname }}</span> <span class="muted">#{{ r.rank_7d_ago }} {{ m.icon("arrow") }} #{{ r.rank }}</span> <span class="st-val {% if r.change_7d > 0 %}pos{% else %}neg{% endif %}">{% if r.change_7d > 0 %}+{% endif %}{{ r.change_7d }}</span></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+
+{# ================================================================ PLAYER PULSE #}
+{% set pp = v.player %}
+<section class="section wrap" id="players" aria-labelledby="players-title">
+  {{ m.sec_head("players", "03", "Player Pulse", "Courtside Impact vs each player’s own baseline") }}
+  {% if pp.text %}<p class="sec-lede">{{ pp.text }}</p>{% endif %}
+  {% if not pp.available %}
+  {{ m.empty("Player trends are unavailable", "The trends engine didn’t produce numbers for this Brief.") }}
+  {% else %}
+  <div class="pulse-grid">
+    {% for title, rows, cls in [("Hot", pp.hot, "up"), ("Cold", pp.cold, "down")] %}
+    <div class="pulse-col">
+      <h3 class="sub-head sub-{{ cls }}">{{ m.icon(cls) }}{{ title }}</h3>
+      {% if rows %}
+      <ol class="card plist">
+        {% for p in rows %}
+        <li class="prow">
+          <div class="prow-top">
+            <p class="prow-name"><strong>{{ p.player }}</strong> <span class="team-tag">{{ m.dot(p.team) }}{{ p.team.code }}</span></p>
+            <p class="prow-win">{{ p.window }}</p>
+          </div>
+          <div class="prow-spark">
+            <span class="prow-from tabnum" title="Baseline impact">{{ p.impact_baseline|num }}</span>
+            {{ p.spark|safe }}
+            <span class="prow-to tabnum {{ 'pos' if p.hot else 'neg' }}" title="Recent impact">{{ p.impact_recent|num }}</span>
+          </div>
+          <p class="prow-line">
+            {% if p.recent.pts is not none %}<span><b>{{ p.recent.pts|num }}</b> pts{% if p.d_pts is not none %} <i class="{{ 'pos' if p.d_pts >= 0 else 'neg' }}">{{ p.d_pts|signed }}</i>{% endif %}</span>{% endif %}
+            {% if p.recent.ts_pct is not none %}<span><b>{{ p.recent.ts_pct|ts }}</b> TS{% if p.d_ts is not none %} <i class="{{ 'pos' if p.d_ts >= 0 else 'neg' }}">{{ p.d_ts|signed }}</i>{% endif %}</span>{% endif %}
+            {% if p.recent.min is not none %}<span><b>{{ p.recent.min|num }}</b> min</span>{% endif %}
+          </p>
+          {% if p.blurb %}<p class="prow-blurb">{{ p.blurb }}</p>{% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      {{ m.empty("Nobody is running " ~ title|lower ~ " right now", "Early-season samples are too small to flag." if pp.early else "No rotation player is far enough from his baseline to flag.") }}
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% if pp.hot or pp.cold %}
+  <p class="footnote">Courtside Impact is Game Score adjusted for shooting efficiency and on-court margin. Dots show {{ "baseline" }} (hollow) and recent form (filled); deltas compare the window with the season average.</p>
+  {% endif %}
+
+  {% if pp.leaders or pp.roles %}
+  <div class="pulse-grid pulse-grid-wide">
+    <div class="card leaders" data-tabs>
+      <h3 class="card-title">Last-10 leaders</h3>
+      {% if pp.leaders %}
+      <div class="tabs" role="tablist" aria-label="Leader categories">
+        {% for cat in pp.leaders %}<button type="button" role="tab" id="tab-{{ cat.key }}" aria-controls="panel-{{ cat.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}" tabindex="{{ '0' if loop.first else '-1' }}">{{ cat.label }}</button>{% endfor %}
+      </div>
+      {% for cat in pp.leaders %}
+      <div class="tab-panel" role="tabpanel" id="panel-{{ cat.key }}" aria-labelledby="tab-{{ cat.key }}"{% if not loop.first %} hidden{% endif %}>
+        <ol class="leader-list">
+          {% for r in cat.rows %}
+          <li><span class="ll-rank">{{ loop.index }}</span><span class="ll-who"><strong>{{ r.player }}</strong> <span class="team-tag">{{ m.dot(r.team) }}{{ r.team.code }}</span><span class="ll-line">{{ r.line }}{% if r.games %} &middot; {{ r.games }} gp{% endif %}</span></span><span class="ll-val">{{ r.value }}</span></li>
+          {% endfor %}
+        </ol>
+      </div>
+      {% endfor %}
+      {% else %}
+      {{ m.empty("No leaders yet", "Needs at least six games per player.") }}
+      {% endif %}
+    </div>
+    <div class="card roles">
+      <h3 class="card-title">Role changes</h3>
+      {% if pp.roles %}
+      <ul class="role-list">
+        {% for r in pp.roles[:5] %}
+        <li><p class="rl-who"><strong>{{ r.player }}</strong> <span class="team-tag">{{ m.dot(r.team) }}{{ r.team.code }}</span></p>
+          <p class="rl-kinds">{% for k in r.kinds %}<span class="flag{% if k.neg %} flag-neg{% endif %}">{{ k.label }}</span>{% endfor %}</p>
+          {% if r.detail %}<p class="rl-detail">{{ r.detail }}</p>{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% if pp.roles|length > 5 %}
+      <details class="more"><summary>{{ pp.roles|length - 5 }} more</summary>
+        <ul class="role-list">
+        {% for r in pp.roles[5:] %}
+        <li><p class="rl-who"><strong>{{ r.player }}</strong> <span class="team-tag">{{ m.dot(r.team) }}{{ r.team.code }}</span></p>
+          <p class="rl-kinds">{% for k in r.kinds %}<span class="flag{% if k.neg %} flag-neg{% endif %}">{{ k.label }}</span>{% endfor %}</p>
+          {% if r.detail %}<p class="rl-detail">{{ r.detail }}</p>{% endif %}</li>
+        {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+      {% else %}
+      {{ m.empty("No role changes flagged") }}
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% if pp.streaks or pp.career_highs %}
+  <div class="card streak-strip">
+    <h3 class="card-title">Streaks &amp; career highs</h3>
+    <ul class="notes-list">
+      {% for s in pp.career_highs %}<li><span class="flag">Career high</span> <strong>{{ s.player }}</strong> <span class="team-tag">{{ m.dot(team(s.team)) }}{{ s.team }}</span> <span class="muted">{{ s.detail }}</span></li>{% endfor %}
+      {% for s in pp.streaks[:6] %}<li><span class="flag flag-plain">{{ s.games }} straight</span> <strong>{{ s.player }}</strong> <span class="team-tag">{{ m.dot(team(s.team)) }}{{ s.team }}</span> <span class="muted">{{ s.detail }}</span></li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+
+{# ================================================================ INJURIES #}
+{% set iw = v.injuries %}
+<section class="section wrap" id="injuries" aria-labelledby="injuries-title">
+  {{ m.sec_head("injuries", "04", "Injury Watch", ("Report as of " ~ (iw.latest|stamp)) if iw.latest else "") }}
+  {% if iw.text %}<p class="sec-lede">{{ iw.text }}</p>{% endif %}
+  {% if not v.meta.model_uses_injuries and (iw.out_tonight or iw.new) %}
+  <p class="caveat">Our current model ({{ v.meta.model }}) doesn&rsquo;t price injuries yet: absences are context for tonight, not inputs to our numbers.</p>
+  {% endif %}
+  {% if not iw.available %}
+  {{ m.empty("No injury reports yet", "Injury snapshots haven’t been collected for this day.") }}
+  {% else %}
+  <div class="inj-grid">
+    <div class="card inj-out">
+      <h3 class="card-title">Impact players out tonight</h3>
+      {% if iw.out_tonight %}
+      {% macro out_row(i) %}
+        <li class="inj-row">
+          {{ m.badge(i.team, "sm") }}
+          <div class="inj-main"><p><strong>{{ i.player }}</strong>{% if i.opponent %} <span class="muted">vs {{ i.opponent }}</span>{% endif %}</p>
+            {% if i.reason %}<p class="inj-reason">{{ i.reason }}</p>{% endif %}</div>
+          <div class="inj-side">{{ m.status_pill(i.status) }}{% if i.mpg is not none %}<span class="inj-mpg tabnum">{{ i.mpg|num }} mpg</span>{% endif %}</div>
+        </li>
+      {% endmacro %}
+      <ul class="inj-list">{% for i in iw.out_tonight[:8] %}{{ out_row(i) }}{% endfor %}</ul>
+      {% if iw.out_tonight|length > 8 %}
+      <details class="more"><summary>{{ iw.out_tonight|length - 8 }} more</summary>
+        <ul class="inj-list">{% for i in iw.out_tonight[8:] %}{{ out_row(i) }}{% endfor %}</ul>
+      </details>
+      {% endif %}
+      {% else %}
+      {{ m.empty("No impact players listed out tonight" if tn.games else "No games tonight") }}
+      {% endif %}
+    </div>
+    <div class="card inj-changes">
+      <h3 class="card-title">What changed since yesterday</h3>
+      {% if not iw.diff %}
+      {{ m.empty("Not enough reports to compare", "Needs two injury snapshots at least 12 hours apart.") }}
+      {% elif not (iw.new or iw.returns or iw.status) %}
+      {{ m.empty("No changes in the last day") }}
+      {% else %}
+      {% for title, rows in [("New absences", iw.new), ("Returning", iw.returns), ("Status changes", iw.status)] %}
+      {% if rows %}
+      <h4 class="mini-head">{{ title }} <span class="count">{{ rows|length }}</span></h4>
+      <ul class="chg-list">
+        {% for i in rows[:6] %}
+        <li>{{ m.dot(i.team) }}<span class="chg-team">{{ i.team.code }}</span> <strong>{{ i.player }}</strong>
+          <span class="chg-st">{% if i.from_status %}<span class="muted">{{ i.from_status }}</span> {{ m.icon("arrow") }} {% endif %}{{ m.status_pill(i.to_status) }}</span>
+          {% if i.tonight %}<span class="tag tag-tonight">tonight</span>{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% if rows|length > 6 %}
+      <details class="more"><summary>{{ rows|length - 6 }} more</summary>
+        <ul class="chg-list">
+        {% for i in rows[6:] %}
+        <li>{{ m.dot(i.team) }}<span class="chg-team">{{ i.team.code }}</span> <strong>{{ i.player }}</strong>
+          <span class="chg-st">{% if i.from_status %}<span class="muted">{{ i.from_status }}</span> {{ m.icon("arrow") }} {% endif %}{{ m.status_pill(i.to_status) }}</span>
+          {% if i.tonight %}<span class="tag tag-tonight">tonight</span>{% endif %}</li>
+        {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+      {% endif %}
+      {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+
+{# ================================================================ TONIGHT #}
+<section class="section wrap" id="tonight" aria-labelledby="tonight-title">
+  {% set tmeta %}{{ tn.day|medium_date }}{% if tn.games %} &middot; {{ tn.games|length }} {{ "game" if tn.games|length == 1 else "games" }}{% endif %}{% if tn.upsets %} &middot; {{ tn.upsets }} upset watch{% endif %}{% endset %}
+  {{ m.sec_head("tonight", "05", "Tonight", tmeta) }}
+  {% if tn.text %}<p class="sec-lede">{{ tn.text }}</p>{% endif %}
+  {% if tn.games %}
+  <div class="grid grid-2">
+    {% for t in tn.games %}{{ m.matchup_card(t) }}{% endfor %}
+  </div>
+  {% else %}
+  {{ m.empty("No games tonight", "Enjoy the night off. The next Brief picks up when the schedule does.") }}
+  {% endif %}
+</section>
+
+{# ================================================================ SCORECARD #}
+<section class="section wrap" id="scorecard" aria-labelledby="scorecard-title">
+  {{ m.sec_head("scorecard", "06", "Scorecard", ("Model " ~ sc.model ~ " · " ~ (sc.season or "")) if sc.model else "") }}
+  {% if sc.text %}<p class="sec-lede">{{ sc.text }}</p>{% endif %}
+  {% if not sc.n %}
+  {{ m.empty("No graded picks yet", "The scorecard fills in once our pre-tip predictions have final results.") }}
+  {% else %}
+  {% set vm = sc.vs_market %}
+  <div class="score-grid">
+    <div class="card score-main">
+      <div class="stat-row">
+        <div class="stat"><p class="stat-k">Season record</p><p class="stat-v">{{ sc.correct }}{{ DASH }}{{ sc.incorrect }}</p><p class="stat-s">{{ sc.accuracy|pct(1) }} of {{ sc.n|int }} games</p></div>
+        <div class="stat"><p class="stat-k">Brier score</p><p class="stat-v">{{ sc.brier|prob3 }}</p><p class="stat-s">{% if vm %}market {{ vm.market.brier|prob3 }}{% else %}lower is better{% endif %}</p></div>
+        {% if sc.recent.last_night and sc.recent.last_night.n %}
+        <div class="stat"><p class="stat-k">Last night</p><p class="stat-v">{{ sc.recent.last_night.correct }}{{ DASH }}{{ sc.recent.last_night.n - sc.recent.last_night.correct }}</p><p class="stat-s">{% if sc.recent.last_7_days.n %}{{ sc.recent.last_7_days.correct }}{{ DASH }}{{ sc.recent.last_7_days.n - sc.recent.last_7_days.correct }} last 7 days{% endif %}</p></div>
+        {% endif %}
+      </div>
+      {% if vm %}
+      <div class="verdict-box {{ 'is-ahead' if vm.model_beats_market_brier else 'is-behind' }}">
+        {% if vm.model_beats_market_brier %}
+        <p><strong>We&rsquo;re beating the market.</strong> On the {{ vm.n|int }} games with a betting line, our Brier score is {{ vm.model.brier|prob3 }} against the market&rsquo;s {{ vm.market.brier|prob3 }} (lower is better).</p>
+        {% else %}
+        <p><strong>The market is sharper, for now.</strong> On the {{ vm.n|int }} games with a betting line, the market&rsquo;s Brier score is {{ vm.market.brier|prob3 }} to our {{ vm.model.brier|prob3 }} (lower is better). Treat our edges as a second opinion, not a signal.</p>
+        {% endif %}
+      </div>
+      <table class="table cmp-table">
+        <thead><tr><th scope="col"></th><th class="num" scope="col">Us</th><th class="num" scope="col">Market</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Picks right</th><td class="num">{{ vm.model.accuracy|pct(1) }}</td><td class="num">{{ vm.market.accuracy|pct(1) }}</td></tr>
+          <tr><th scope="row">Brier</th><td class="num">{{ vm.model.brier|prob3 }}</td><td class="num">{{ vm.market.brier|prob3 }}</td></tr>
+          <tr><th scope="row">Log loss</th><td class="num">{{ vm.model.log_loss|prob3 }}</td><td class="num">{{ vm.market.log_loss|prob3 }}</td></tr>
+          {% if vm.margin_mae and vm.margin_mae.n %}<tr><th scope="row">Margin error</th><td class="num">{{ vm.margin_mae.model|num }}</td><td class="num">{{ vm.margin_mae.market|num }}</td></tr>{% endif %}
+          {% if vm.total_mae and vm.total_mae.n %}<tr><th scope="row">Total error</th><td class="num">{{ vm.total_mae.model|num }}</td><td class="num">{{ vm.total_mae.market|num }}</td></tr>{% endif %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+    <div class="card score-calib">
+      <h3 class="card-title">Calibration</h3>
+      <p class="card-sub">When we say 70%, does it happen 70% of the time? Dots on the line mean yes; size is the number of games.</p>
+      {% if sc.calib_svg %}<div class="chart-box">{{ sc.calib_svg|safe }}</div>{% endif %}
+      <details class="more"><summary>Table view</summary>
+        <table class="table calib-table">
+          <thead><tr><th scope="col">Bin</th><th class="num" scope="col">Games</th><th class="num" scope="col">We said</th><th class="num" scope="col">Home won</th></tr></thead>
+          <tbody>{% for b in sc.calibration %}<tr><td>{{ b.lo|pct }}&ndash;{{ b.hi|pct }}</td><td class="num">{{ b.n }}</td><td class="num">{{ b.mean_p|pct(1) }}</td><td class="num">{{ b.frac_home_won|pct(1) }}</td></tr>{% endfor %}</tbody>
+        </table>
+      </details>
+      {% if sc.ece is not none %}<p class="footnote">Expected calibration error {{ sc.ece|pct(1) }}.</p>{% endif %}
+    {% if sc.by_conf %}
+      <h3 class="card-title card-title-2">By confidence</h3>
+      <ul class="conf-list">
+        {% for b in sc.by_conf %}
+        <li>
+          <span class="conf-tier">{{ b.tier|capitalize }}</span>
+          <span class="conf-bar"><span style="--w:{{ '%.1f'|format((b.accuracy or 0) * 100) }}%"></span><i style="--x:50%" aria-hidden="true"></i></span>
+          <span class="conf-val tabnum">{{ b.accuracy|pct }}</span>
+          <span class="conf-n muted tabnum">{{ b.correct }}/{{ b.n }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      <p class="footnote">Higher-confidence picks should hit more often. The tick marks 50%.</p>
+    {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block foot %}
+<div class="foot-meta">
+  <p><strong>This Brief</strong> &middot; built {{ v.meta.built_at|stamp }} &middot; model {{ v.meta.model }} &middot; schema {{ v.meta.schema_version }} &middot; <a href="/api/brief/{{ day }}">JSON</a></p>
+  {% if v.notes %}
+  <details class="data-notes"><summary>Data notes <span class="count">{{ v.notes|length }}</span></summary>
+    <ul>{% for n in v.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+</div>
+{% endblock %}

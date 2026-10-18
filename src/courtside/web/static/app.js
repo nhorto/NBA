@@ -1,0 +1,84 @@
+/* Courtside: theme toggle, tabs, active section in the section nav. No dependencies. */
+(function () {
+  "use strict";
+  var root = document.documentElement;
+
+  // ---- theme: system by default, a click pins the opposite of what is showing
+  var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  function effective() {
+    var t = root.dataset.theme;
+    if (t === "light" || t === "dark") return t;
+    return mq && mq.matches ? "dark" : "light";
+  }
+  var btn = document.querySelector(".theme-toggle");
+  if (btn) {
+    var label = function () {
+      btn.setAttribute("aria-label", effective() === "dark" ? "Switch to light theme" : "Switch to dark theme");
+    };
+    label();
+    btn.addEventListener("click", function () {
+      var next = effective() === "dark" ? "light" : "dark";
+      var sys = mq && mq.matches ? "dark" : "light";
+      try {
+        if (next === sys) { localStorage.removeItem("cs-theme"); delete root.dataset.theme; }
+        else { localStorage.setItem("cs-theme", next); root.dataset.theme = next; }
+      } catch (e) { root.dataset.theme = next; }
+      label();
+    });
+    if (mq && mq.addEventListener) mq.addEventListener("change", label);
+  }
+
+  // ---- tabs (ARIA tablist; arrow keys move between tabs)
+  document.querySelectorAll("[data-tabs]").forEach(function (box) {
+    var tabs = Array.prototype.slice.call(box.querySelectorAll('[role="tab"]'));
+    function select(tab, focus) {
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.setAttribute("aria-selected", on ? "true" : "false");
+        t.tabIndex = on ? 0 : -1;
+        var p = document.getElementById(t.getAttribute("aria-controls"));
+        if (p) p.hidden = !on;
+      });
+      if (focus) tab.focus();
+    }
+    tabs.forEach(function (t, i) {
+      t.addEventListener("click", function () { select(t, false); });
+      t.addEventListener("keydown", function (e) {
+        var j = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : null;
+        if (e.key === "Home") j = 0;
+        if (e.key === "End") j = tabs.length - 1;
+        if (j === null) return;
+        e.preventDefault();
+        select(tabs[(j + tabs.length) % tabs.length], true);
+      });
+    });
+  });
+
+  // ---- highlight the section in view
+  var links = document.querySelectorAll(".secnav a[href^='#']");
+  if (links.length && "IntersectionObserver" in window) {
+    var map = {};
+    links.forEach(function (a) { map[a.getAttribute("href").slice(1)] = a; });
+    var current = null;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) {
+          if (current) current.classList.remove("is-active");
+          current = map[en.target.id];
+          if (current) {
+            current.classList.add("is-active");
+            var nav = current.parentElement;
+            var l = current.offsetLeft - 16;
+            if (l < nav.scrollLeft || current.offsetLeft + current.offsetWidth > nav.scrollLeft + nav.clientWidth) {
+              nav.scrollTo({ left: l, behavior: "smooth" });
+            }
+          }
+        }
+      });
+    }, { rootMargin: "-45% 0px -50% 0px" });
+    Object.keys(map).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) io.observe(el);
+    });
+  }
+})();
