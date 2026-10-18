@@ -8,7 +8,7 @@ Schedule (US/Eastern, defined in `schedule.sh`):
 **Run the scheduler on ONE machine at a time.** The Mac mini is primary; running it on two machines produces duplicate snapshots. Other machines can pull the data instead:
 
 ```
-rsync -a nicholashorton@mac-mini:"Documents/NBA Data/var/" var/
+rsync -a nicholashorton@mac-mini:"Developer/NBA/var/" var/
 ```
 
 `run-job.sh <pregame|postgame>` is the wrapper both schedulers call. It cds to the repo (spaces in the path are fine), finds `uv`, runs `uv run --frozen courtside collect <job>`, and exits with the job's exit code.
