@@ -68,7 +68,28 @@ PLAYER_COLUMNS = ("game_id", "player_id", "player_name", "team", "min", *RATE_ST
 #   soft            "played", but status-change players marked Questionable (p=0.5) w.p. q_soft
 #   flip            "played", but status-change players' availability flipped w.p. q_flip
 #   box             "played" lineup, rated by the box prior mu only (no plus-minus)
+#   played_tight    "played", but postseason (Playoffs/PlayIn) games use a tighter rotation:
+#                   floor PLAYOFF_FLOOR, cap PLAYOFF_CAP, at least PLAYOFF_MIN_PLAYERS (rung 3;
+#                   not in ALL_MODES so rung-2 runs are unchanged; request it explicitly)
+#   avail           leak-safer oracle (rung 3): the oracle is used only for rotation regulars
+#                   (projection >= REGULAR_MIN), whose absences are announced pre-game; fringe
+#                   players count as available iff on the recent roster (exactly what
+#                   expected_lineup assumes for players missing from the injury report).
+#                   "played" also reveals fringe DNP-CD vs garbage-time minutes, which depend
+#                   on the game's flow (blowouts empty both benches); a GBM exploits that.
+#   avail_tight     "avail" with the postseason rotation of played_tight
+#   roster_tight    "roster" with the postseason rotation (the full-strength reference for
+#                   avail_tight, so absence losses compare like with like in the playoffs)
 ALL_MODES = ("played", "played_nofloor", "roster", "soft", "flip", "box")
+EXTRA_MODES = ("played_tight", "avail", "avail_tight", "roster_tight")
+REGULAR_MIN = 20.0      # projected minutes that make a player a rotation regular (see MODEL.md rung 3:
+                        # the leak probe falls from 58% ATS (oracle) to 55% at 10, 52% at 15, 51% at 20)
+
+# Postseason rotation (set a priori, not tuned on results): coaches shorten the bench and
+# stars play ~40 minutes, so deep-bench projections are dropped and the cap is raised.
+PLAYOFF_FLOOR = 12.0
+PLAYOFF_CAP = 45.0
+PLAYOFF_MIN_PLAYERS = 7
 
 
 @dataclass(frozen=True)
@@ -194,13 +215,20 @@ def select_lineup(proj: np.ndarray, p_play: np.ndarray, floor: float, min_player
     return keep
 
 
-def lineup_strength(ratings, proj, p_play, prm: PlayerParams, floor: float | None = None):
+def lineup_strength(ratings, proj, p_play, prm: PlayerParams, floor: float | None = None,
+                    cap: float | None = None, min_players: int | None = None):
     """(strength, minutes): strength = sum rating * minutes / 48 over the expected lineup."""
     f = prm.floor if floor is None else floor
-    keep = select_lineup(proj, p_play, f, prm.min_players)
+    keep = select_lineup(proj, p_play, f, prm.min_players if min_players is None else min_players)
     mins = np.zeros(len(proj))
-    mins[keep] = allocate_minutes(proj[keep], p_play[keep], cap=prm.cap)
+    mins[keep] = allocate_minutes(proj[keep], p_play[keep],
+                                  cap=prm.cap if cap is None else cap)
     return float(np.dot(ratings, mins) / 48.0), mins
+
+
+def playoff_rotation() -> dict:
+    """lineup_strength keyword arguments for a postseason game (tighter rotation)."""
+    return {"floor": PLAYOFF_FLOOR, "cap": PLAYOFF_CAP, "min_players": PLAYOFF_MIN_PLAYERS}
 
 
 # --- engine --------------------------------------------------------------------------------
@@ -237,13 +265,15 @@ class PlayerState:
         return cand[self.last_team[cand] == team]
 
     def expected_lineup(self, team: str, game: dict | None = None,
-                        availability: dict | None = None) -> pd.DataFrame:
+                        availability: dict | None = None, playoff: bool = False
+                        ) -> pd.DataFrame:
         """Expected lineup for `team`'s next game.
 
         availability: {player_id: P(plays)}; players not listed default to 1.0 if on the
         recent roster. Unknown player_ids in `availability` with P > 0 (new signings) are
         added with the new-player prior. None = full roster (ignore injuries).
         `game` is informational (date, opponent) and unused by the minutes logic.
+        playoff=True uses the tighter postseason rotation (mode "played_tight").
         """
         idx = list(self.roster(team))
         extra = []
@@ -265,7 +295,8 @@ class PlayerState:
             pids.append(int(pid)); names.append(None)
             proj = np.append(proj, self.params.m0); rat = np.append(rat, self.mu_new)
             p_play = np.append(p_play, pr)
-        strength, mins = lineup_strength(rat, proj, p_play, self.params)
+        strength, mins = lineup_strength(rat, proj, p_play, self.params,
+                                         **(playoff_rotation() if playoff else {}))
         df = pd.DataFrame({"player_id": pids, "name": names, "p_play": p_play,
                            "proj_min": proj, "minutes": mins, "rating": rat,
                            "contribution": rat * mins / 48.0})
@@ -309,6 +340,8 @@ def run_player_engine(games: pd.DataFrame, players: pd.DataFrame,
     glen = 48.0 + 5.0 * games["ot"].to_numpy(float) if "ot" in games else np.full(n_games, 48.0)
     margin = games["margin"].to_numpy(float)
     gid = games["game_id"].to_numpy()
+    post = (games["season_type"].to_numpy() != "Regular Season") if "season_type" in games \
+        else np.zeros(n_games, bool)
 
     # player state
     box_S = np.zeros((N, N_RATE)); box_poss = np.zeros(N); box_min = np.zeros(N)
@@ -454,6 +487,17 @@ def run_player_engine(games: pd.DataFrame, players: pd.DataFrame,
                 for m in modes:
                     if m == "played":
                         v, _ = lineup_strength(rat, proj, p_pl, prm)
+                    elif m == "roster_tight":
+                        v, _ = lineup_strength(rat, proj, in_roster.astype(float), prm,
+                                               **(playoff_rotation() if post[g] else {}))
+                    elif m in ("avail", "avail_tight"):
+                        reg_ = proj >= REGULAR_MIN
+                        pa_ = np.where(reg_, is_played, in_roster).astype(float)
+                        kw = playoff_rotation() if (m == "avail_tight" and post[g]) else {}
+                        v, _ = lineup_strength(rat, proj, pa_, prm, **kw)
+                    elif m == "played_tight":
+                        v, _ = lineup_strength(rat, proj, p_pl, prm,
+                                               **(playoff_rotation() if post[g] else {}))
                     elif m == "played_nofloor":
                         v, _ = lineup_strength(rat, proj, p_pl, prm, floor=0.0)
                     elif m == "roster":

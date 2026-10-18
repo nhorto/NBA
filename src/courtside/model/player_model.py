@@ -209,14 +209,21 @@ MARKET_SPECS = {
 
 
 def make_registry(players: pd.DataFrame | Callable[[], pd.DataFrame],
-                  params: pl.PlayerParams = pl.TUNED, burn_in: int = 3, market: bool = False
-                  ) -> tuple[dict[str, Callable], EngineCache]:
+                  params: pl.PlayerParams = pl.TUNED, burn_in: int = 3, market: bool = False,
+                  conn=None) -> tuple[dict[str, Callable], EngineCache]:
+    """Rung-2 models; with `conn`, also the rung-3 GBMs (gbm.SPECS: gbm.PRODUCTION_WINPROB,
+    gbm.PRODUCTION_OPINION), which read box scores and closing lines from `conn` lazily."""
     cache = EngineCache(players, params)
     reg = {}
     specs = {**SPECS, **(MARKET_SPECS if market else {})}
     for name, (fs, mode, head) in specs.items():
         reg[name] = (lambda n=name, f=fs, m=mode, h=head:
                      PlayerStrengthModel(cache, n, f, m, h, burn_in=burn_in))
+    if conn is not None:
+        from . import features as ft, gbm
+        greg, _ = gbm.make_registry(players, lambda: ft.load_team_box(conn),
+                                    lambda: ft.load_closing_full(conn), params)
+        reg.update(greg)
     return reg, cache
 
 

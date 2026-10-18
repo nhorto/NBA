@@ -1,8 +1,10 @@
 # Courtside — prediction model
 
-Status: **rung 2 (player-based team strength) beats rung 1 (Elo + schedule) in every test
-season.** The current best is `ps_elo_sched_mh`. Every later rung must beat it on the identical
-backtest. Reproduce with:
+Status: **rung 3 (stacked LightGBM) is the production model.** `gbm_market` gives the win
+probability (log-loss within 0.001 of the closing line). `gbm_opinion` is our independent
+number (no market inputs). Rung 3 also found that **rung 2's availability oracle leaks**: under
+leak-safe availability, rung 2 drops from 0.5966 to 0.6029 log-loss. Neither model beats the
+market. See "Rung 3" below. Reproduce with:
 
 ```
 uv run courtside model backtest            # rung-1 baselines, test seasons 2012-13..latest
@@ -12,6 +14,8 @@ uv run courtside model tune-elo            # re-run the (frozen) Elo hyperparame
 uv run courtside model tune-players        # re-run the (frozen) player-rating search
 uv run courtside model player-ratings      # top/bottom ratings after the last game
 uv run courtside model market var/reports/preds.csv.gz   # dumped predictions vs closing lines
+COURTSIDE_CACHE=~/scratch uv run courtside model gbm-backtest --threads 2   # rung 3 (read-only DB)
+uv run courtside model gbm-timing          # production-style daily fit; prints configs to freeze
 ```
 
 When `closing_lines` exists, `backtest` also prints the model-vs-market table and registers the
@@ -19,7 +23,9 @@ market-feature variants (`mkt`, `elo_sched_mkt`, `ps_elo_sched_mkt`).
 
 Each run prints the tables below and writes `var/reports/backtest_<UTC timestamp>.json`. The
 report holds per-season, aggregate and last-3-season metrics by segment, 10-bin calibration
-tables, the fitted coefficients for every fold, and the data anomaly report.
+tables, the fitted coefficients for every fold, and the data anomaly report. `gbm-backtest`
+opens the database read-only and writes `rung3_<ts>.json` plus per-game predictions to `--out`,
+else `$COURTSIDE_CACHE`, else `var/reports`. Engine passes are cached under `<out>/engine`.
 
 ## Code map
 
@@ -36,6 +42,9 @@ tables, the fitted coefficients for every fold, and the data anomaly report.
 | `model/players.py` | rung-2 engine `run_player_engine`, `PlayerParams`/`TUNED`, `PlayerState.expected_lineup`, `availability_from_injuries` |
 | `model/player_model.py` | rung-2 heads, shared `EngineCache`, registry `make_registry` (`SPECS`), `tune_all` |
 | `model/market.py` | closing lines (ESPN, then Kaggle), de-vig, model vs market, ATS |
+| `model/features.py` | rung-3 causal feature matrix: box/market loaders, rolling form, league environment, continuity |
+| `model/gbm.py` | rung-3 `GBMModel` (linear base + LightGBM residual, calibration, `explain`), caches, registry, `PRODUCTION_WINPROB`/`PRODUCTION_OPINION`, `FROZEN` |
+| `model/rung3.py` | rung-3 walk-forward evaluation: ATS/OU with Wilson CIs, totals, playoffs, timing |
 
 ## Data
 
@@ -282,6 +291,11 @@ players active in the last 4 years, about 1,000-1,400 of them).
 
 ### Results (walk-forward, Regular Season)
 
+> **Caveat found in rung 3:** these numbers use the full "played" oracle, which leaks game flow
+> (see "The availability leak" under rung 3). Under leak-safe availability (`avail` mode),
+> ps_elo_sched_mh scores 0.6029 / 0.2081 / 67.0% (last 3 seasons 0.5902). That is the honest
+> rung-2 bar.
+
 | model | 2012-13→2025-26 LL | Brier | acc | MAE | last 3 LL | Brier | acc | MAE |
 |---|---|---|---|---|---|---|---|---|
 | elo_sched (rung 1) | 0.6131 | 0.2126 | 66.1% | 10.24 | 0.6044 | 0.2088 | 67.4% | 11.13 |
@@ -358,6 +372,224 @@ The bottom of the list is young players on bad teams (Traoré −5.4, Powell −
 −4.1). The ranking is plausible. Rim-protecting bigs are over-represented, a known APM and
 box (blk/dreb) tilt.
 
+## Rung 3: stacked GBM (production)
+
+### Design (`model/features.py`, `model/gbm.py`)
+
+**Features.** One causal row per game. Every value uses only the schedule, the game's own
+pre-announced facts, and results/box scores from earlier days.
+- Player strength home and away, and their difference (engine `avail_tight` mode, see below).
+- Each team's strength lost to absences: full recent-roster strength minus available-lineup
+  strength.
+- Elo difference.
+- The ten elo_sched schedule terms.
+- Opponent-adjusted net rating, rolling over 5/10/20 games. Per game this is
+  `net − HCA (3 per 100) + the opponent's pre-game Elo strength`, per team and season,
+  shifted one game.
+- Ten-game four-factor differentials: eFG, TOV%, OREB%, FT rate.
+- Ten-game pace, ORtg/DRtg and game totals.
+- Roster continuity: share of recent minutes by players who were with the franchise last
+  season.
+- Games played and day of season.
+- League environment over the last 300 games before the day: scoring and pace.
+- Two online home-court estimates: the league home margin over the last 1,230 non-neutral
+  games (`lg_hca`) and the APM home term (`apm_hca`).
+- Market variant only: closing spread and total. NaN without a line; LightGBM handles NaN.
+
+**Model per target** (margin, total), refit on every training window, with 2000-03 as burn-in:
+1. A weighted linear base. Margin: rung-2 design plus the home-court × drift interactions, no
+   intercept. Total: intercept, league total, recent team totals, pace × ratings projection.
+   The market variant adds the line; rows without a line use a second fit that has no market
+   column.
+2. LightGBM on the residual, with the base as `init_score`.
+3. An inner walk-forward over the last 3 training seasons. Each one is predicted by a fit on
+   the seasons before it. The search covers 4 configs: leaves {7, 15} × recency half-life
+   {none, 4 seasons}, with lr 0.05 and at most 400 trees. The pooled validation-MSE curve
+   picks the config and the tree count, which is early stopping on time-ordered folds. Zero
+   trees is allowed. The final model is refit on the whole window.
+4. P(home win) from the margin. The calibrator is Gaussian Φ(μ/σ) by maximum likelihood,
+   Platt on (μ, μ×postseason), or isotonic, whichever wins leave-one-season-out on the inner
+   out-of-fold predictions. Gaussian won in 12-13 of 14 folds.
+
+**Leakage tests** (`tests/test_model_gbm.py`, synthetic):
+- `check_no_lookahead` on both production models.
+- The same check with every score, box column and player box score on or after the cut
+  scrambled, using fresh caches. All predictions are bit-identical.
+- Causality of the full feature matrix.
+- Prefix slicing of the feature cache.
+- League-trailing statistics use only earlier days.
+- Fallback when market columns are NaN or missing.
+- `explain` shape, determinism and exact additivity.
+- Calibrator monotonicity, and probability monotone in the margin.
+- The `avail` mode ignores fringe-player participation.
+- The injury override lowers the right team's strength, margin and absences factor.
+
+### The availability leak (found here; affects rung 2)
+
+The first GBM run hit **56.5% ATS** (62% at edge > 4) with no market features. That is not
+credible against closing lines.
+- **Diagnosis.** A walk-forward LightGBM on the ATS residual using only the two absence
+  features reached 58.3%.
+- **Cause.** The "played" oracle (players who logged minutes) reveals game flow. Fringe
+  players get DNP-CDs in close games and minutes in blowouts, and blowouts mean the favourite
+  covered. The linear rung-2 head barely used this (50.7% ATS), but its log-loss still
+  benefited.
+- **Fix: player-engine mode `avail` (and `avail_tight`).** The oracle is used only for
+  rotation regulars (projection ≥ `REGULAR_MIN` = 20 min), whose absences are announced
+  pre-game. Fringe players count as available if they are on the recent roster. That is
+  exactly what `expected_lineup` assumes for players missing from the injury report.
+- **Choosing the threshold.** The leak probe gave 58.3% for the full oracle, 55.2% at 10,
+  51.9% at 15, 50.8% at 20 and 51.5% at 25. 20 was set as a leak control, not a performance
+  tune: it makes our numbers worse.
+- **The leaky variant is kept for the record.** `gbm_opinion_oracle` scores 56.9% ATS
+  (62.0% at > 4, n=3,608) and log-loss 0.5955. Never use it.
+
+True production performance is somewhere between `avail` (which ignores real absences of
+players under 20 minutes) and the oracle (minus its leak). We can't measure it until a season
+of injury snapshots is archived; there are only 2 days today.
+
+### Results (walk-forward 2012-13 → 2025-26, Regular Season, 16,898 games; last 3: 3,690)
+
+| model | LL | Brier | acc | margin MAE | last 3 LL | Brier | acc | MAE |
+|---|---|---|---|---|---|---|---|---|
+| ps_elo_sched_mh (rung 2, leaky oracle) | 0.5966 | 0.2053 | 67.8% | 10.04 | 0.5819 | 0.1990 | 69.5% | 10.81 |
+| ps_elo_sched_mh_avail (rung 2, leak-safe) | 0.6029 | 0.2081 | 67.0% | 10.08 | 0.5902 | 0.2028 | 68.5% | 10.85 |
+| **gbm_opinion** (no market) | **0.6022** | 0.2079 | 67.2% | 10.06 | 0.5876 | 0.2017 | 68.6% | 10.82 |
+| **gbm_market** | **0.5933** | 0.2041 | 68.1% | 9.91 | 0.5790 | 0.1980 | 69.1% | 10.65 |
+
+On the 16,321 games with a closing moneyline (last 3 seasons: 3,687):
+
+| | LL | Brier | acc | MAE | LL − market | last 3 LL | last 3 LL − market |
+|---|---|---|---|---|---|---|---|
+| closing line | **0.5918** | **0.2035** | 68.1% | 9.90 | — | 0.5785 | — |
+| gbm_market | 0.5929 | 0.2039 | 68.1% | 9.92 | +0.0010 ± 0.0005 | **0.5785** | +0.0000 ± 0.0009 |
+| gbm_opinion | 0.6017 | 0.2077 | 67.2% | 10.07 | +0.0099 ± 0.0013 | 0.5870 | +0.0085 ± 0.0025 |
+
+- **The trees add almost nothing** (paired log-loss differences over all RS games):
+  - gbm_opinion vs its linear base: −0.0005 ± 0.0004.
+  - gbm_opinion vs leak-safe rung 2: −0.0007 ± 0.0005.
+  - gbm_market vs its linear base: +0.0001 ± 0.0002.
+  - Inner validation chose 2-53 trees for the market margin (2-9 since 2019) and 7-83 for the
+    opinion.
+- **Totals** (game total including OT), MAE (last 3):
+  - gbm_opinion: 14.74 (15.06).
+  - gbm_market: 14.09 (14.32).
+  - closing total: 14.08 (14.30).
+  - The opinion total sits 4.2 pts from the line on average.
+- **Calibration** (gbm_opinion, RS, 10 bins, mean p → observed):
+  - .07→.07, .16→.14, .25→.26, .35→.36, .45→.45
+  - .55→.56, .65→.64, .75→.75, .85→.84, .93→.92
+  - ECE 0.005 (gbm_market 0.013, rung 2 0.013).
+- **Drift.**
+  - gbm_opinion_nodrift (no lg_hca/apm_hca, no recency weights) differs by
+    −0.0001 ± 0.0003, or +0.0005 ± 0.0006 over the last 3 seasons.
+  - The search picked the 4-season half-life for the opinion margin in 2 of 14 folds.
+  - The home bias, mean P(home) minus the home win rate, is smaller than rung 2's in the last
+    3 seasons: +1.1/+1.0/−0.2 pp vs +2.7/+2.4/+1.3.
+  - A bias remains in odd years: 2020-21 is +3.2 pp (empty arenas) and 2022-23 is −4.4 pp.
+  - Verdict: drift is handled well enough by refitting each season. The online terms are kept,
+    but they are not a measurable gain.
+- **Feature contributions** (gbm_opinion, mean |pts| per RS test game, linear + SHAP):
+
+  | rank | feature | pts |
+  |---|---|---|
+  | 1 | full-roster strength diff | 3.44 |
+  | 2 | Elo | 1.43 |
+  | 3 | away b2b | 0.74 |
+  | 4 | away absences | 0.62 linear + 0.18 trees |
+  | 5 | home absences | 0.57 linear + 0.26 trees |
+  | 6 | APM home court | 0.51 |
+  | 7 | home b2b | 0.34 |
+  | 8 | tz change | 0.22 |
+  | 9 | league home court | 0.19 |
+  | 10 | travel | 0.15 |
+  | 11 | games in last 7 days | 0.14 |
+  | 12 | postseason home court | 0.13 |
+  | 13 | home ORtg (10 games) | 0.12 |
+
+  - gbm_market: market spread 4.41, strength 1.22, away b2b 0.29, league home court 0.23,
+    absences 0.21 / 0.19.
+  - Rolling form, four factors and continuity each contribute under 0.1 pt once player
+    strength and Elo are in.
+
+**Against the line** (RS; pick the side our number favours; pushes excluded; Wilson 95% CI;
+break-even at −110 is 52.4%):
+
+| model | all | edge > 2 | edge > 3 | edge > 4 |
+|---|---|---|---|---|
+| gbm_opinion ATS | 50.5% [49.7, 51.2] n=16,656 | 50.9% [49.7, 52.1] n=6,783 | 51.8% [50.2, 53.4] n=3,619 | 50.1% [47.7, 52.4] n=1,744 |
+| gbm_opinion ATS, last 3 | 50.6% n=3,672 | 51.4% n=1,621 | 51.9% n=896 | 49.1% n=450 |
+| gbm_market ATS | 50.6% [49.9, 51.4] | 51.2% [46.4, 55.9] n=420 | 69.0% [50.8, 82.7] n=29 | n=0 |
+| rung 2 leak-safe ATS | 50.6% | 51.1% n=7,083 | 50.9% n=3,880 | 51.1% n=1,946 |
+| gbm_opinion O/U | 49.8% [49.1, 50.6] n=16,711 | 49.9% n=11,734 | 49.5% n=9,429 | 49.5% [48.4, 50.7] n=7,418 |
+| gbm_market O/U | 50.4% [49.7, 51.2] | 49.7% [44.4, 55.0] n=332 | 46.3% n=41 | n=4 |
+
+**No edge.** No row's CI clears 52.4%.
+- The one nominal blip, gbm_opinion at edge > 3 (p = 0.03), is multiple-testing noise. It sits
+  between 50.9% at > 2 and 50.1% at > 4, and every row is still below break-even.
+- gbm_market rarely disagrees with the line by more than 2 points, and those 29-420 games are
+  too few to mean anything. The product presents
+"our number vs the market" as information, not betting advice.
+
+**Playoffs** (1,174 games; market on the 1,090 with a moneyline):
+- **Tighter rotation: no measurable gain.** `avail_tight`/`roster_tight` use floor 12, cap 45
+  and at least 7 players in Playoffs/PlayIn, all set a priori. gbm_opinion scores 0.6443
+  against 0.6448 with the regular rotation (−0.0004 ± 0.0023).
+  - A first run showed −0.0032, but that came from comparing the tight lineup with a
+    regular-rotation roster reference, which made fake "absences".
+  - The tight rotation is kept because it is more realistic for the playoff `explain`.
+- **The best leak-safe playoff opinion is the rung-2 logit head** (ps_elo_sched_avail_tight,
+  0.6397). gbm_opinion is +0.0046 ± 0.0017 worse there.
+- **gbm_market** scores 0.6241 overall; on games with a line it is 0.6215 against the closing
+  line's 0.6159 (+0.0056 ± 0.0032). The market is clearly better in the playoffs.
+- **The rung-2 bar of 0.6270 used the leaky oracle.**
+- **Comparability note.** The ablations (linear, nodrift, loose, oracle) were run before
+  `roster_tight` existed. They differ from the production models only through playoff rows in
+  training, so regular-season comparisons hold.
+
+### Production models and interface
+
+`gbm.PRODUCTION_WINPROB = "gbm_market"` (probability for the Brief) and
+`gbm.PRODUCTION_OPINION = "gbm_opinion"` (our number vs the market). Both appear in
+`player_model.make_registry(loader, conn=conn)` and `gbm.registry_for_conn(conn)`.
+
+Production uses `gbm.FROZEN` hyperparameters, chosen by the inner search on all games through
+2025-26 via `gbm-timing`. Refresh them once a season.
+- market: margin 7 leaves / 22 trees, total 7 leaves (4-season half-life) / 12 trees.
+- opinion: margin 15 leaves / 89 trees, total 7 leaves (4-season half-life) / 31 trees.
+
+```python
+reg, _ = gbm.registry_for_conn(conn)
+m = reg[gbm.PRODUCTION_OPINION]()
+m.prepare(train, test)        # optional: one engine pass shared by fit and predict
+m.fit(train)
+test = m.with_injuries(conn, test, as_of)   # optional lineup_home/away from injury snapshots
+m.predict_proba(test); m.predict_margin(test); m.predict_total(test)
+m.explain(test.iloc[i], test)  # [{"factor": "absences", "team": "LAL",
+                               #   "impact_pts": -3.1, "home_margin_pts": -3.1}, ...]
+```
+
+- **Optional columns on `test`:** `mkt_margin` (= −home spread) and `mkt_total` carry the live
+  pre-tip line. Training uses closing lines, so a morning line is a slightly noisier input than
+  the model was fit on.
+- **Factors in `explain`:** player_strength, absences (per team, measured from a fully healthy
+  roster, so they are negative when someone is out), team_rating, home_court, rest, travel,
+  recent_form, continuity, season_phase, market, pace_scoring.
+- **Sign convention:** `impact_pts` is from the named team's point of view.
+- **Additivity:** `contributions()` sums exactly to the predicted margin.
+
+**Runtime** (M4 mini, shared and heavily loaded, 2 threads):
+- **Walk-forward backtest:** 14 folds × 11 models, about 10 min as 3 parallel processes on a
+  loaded machine. A production GBM pair alone takes ~4 min.
+  - The GBM fit with the search is 3-28 s per fold when the machine is quiet, and 35-40 s when
+    it is loaded. Inner fits are memoised across folds.
+  - Predicting a season takes 0.04 s.
+- **Daily job** (`gbm-timing`, both production models): 53 s total.
+  - Load 3 s, engine pass + features 31 s.
+  - Frozen fit 0.5-0.9 s per model; predict + explain 0.03 s.
+  - Running the search instead of frozen configs adds ~9 s per model.
+  - The cost is dominated by the engine pass, which reruns over all history each day.
+
 ## Where we stand, honestly (rung 1, kept for the record)
 
 - **Benchmarks.** Closing-line favorites win about 67-68% of games, and the closing line's Brier
@@ -386,33 +618,20 @@ box (blk/dreb) tilt.
 
 ## Next steps (ladder)
 
-Rung 2 is done (above). The next steps are in priority order.
+Rung 3 is done (above). The next steps are in priority order.
 
-1. **Rung 3: GBM stacking with the market line.** Use LightGBM (or a regularised stack) on:
-   - `ps_diff`, the Elo difference, the closing or opening spread and total, and schedule terms
-   - availability deltas, i.e. the strength lost to absences (played − roster) per team
-   - rolling four factors and net rating from `team_games_adv`
-   - roster continuity and season phase or tanking proxies
-
-   Fit it walk-forward on 2007-08+ (where lines exist), with an inner fold for
-   hyperparameters. The target is closing-line log-loss/Brier. The bar is
-   `ps_elo_sched_mkt`'s 0.5922 / 0.2034, and ATS with an edge threshold must clear 52.4%.
-2. **Recency and home-advantage drift.** Home court fell from about 60% to 54-55%, and the heads
-   weight all history equally.
-   - Add a recency-weighted head (season half-life chosen by an inner walk-forward fold), or an
-     online HCA (EWMA of home residuals).
-   - The APM's own `h` already decays with a 4-year half-life.
-   - Also try per-season pace and scoring scaling of the margin σ (σ grows with pace: last-3
-     MAE is 10.8 against 10.0 overall).
-3. **Playoff handling.** Use rotation tightening (starters' minutes up, deep bench out) in
-   `expected_lineup`, and a separate playoff head or σ. The margin head is worse than the logit
-   head in the playoffs (0.6307 vs 0.6270). Keep each change only if it beats the logit head's
-   0.6270 playoff log-loss.
-4. **Production wiring.** In the morning job, run the engine to yesterday, then call
-   `availability_from_injuries` and `expected_lineup` per team. Validate the name matching on
-   the archived 2026 snapshots, and log unmatched names. Calibrate the status → P(play) map
-   once a season of snapshots is joined to box scores.
-5. **Ratings quality.**
-   - Big men look over-rated (Kornet, Queta, Clingan in the top 15). Try separate offence and
-     defence ratings, a position or role-aware prior, and an age curve if birthdates are added.
-   - The box prior is linear: try interactions such as usage × TS.
+1. **Real availability.** Archive injury snapshots daily (official report + ESPN) and join them
+   to box scores. That calibrates status → P(play) and replaces the `avail` proxy in the
+   backtest with what production actually knows. It is the only way to measure the true value
+   of absences and to bound the oracle.
+2. **Morning-line evaluation.** The Brief runs in the morning, but the market model is trained
+   on closing lines. Store the 07:00 ET line (`odds_snapshots`) and evaluate or retrain on it.
+   The move from the morning line to the close is where any real edge would live.
+3. **Better inputs, not a bigger model** (the trees found almost nothing new):
+   - separate offence and defence APM
+   - an age curve and a role-aware prior (bigs look over-rated)
+   - interactions in the box prior
+4. **Playoffs.** Add series state (game number, previous margin) and a separate σ, and learn
+   rotation weights from the 2003-11 playoffs.
+5. **Totals.** Use pace-adjusted player-level scoring and referee crews. The opinion total is
+   0.7 pts MAE behind the closing total.
