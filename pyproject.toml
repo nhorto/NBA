@@ -8,6 +8,11 @@ dependencies = ["curl_cffi"]
 [project.scripts]
 courtside = "courtside.cli:main"
 
+[project.optional-dependencies]
+pdf = [
+    "pdfplumber>=0.11.10",
+]
+
 [dependency-groups]
 dev = ["pytest"]
 
