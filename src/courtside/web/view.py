@@ -214,6 +214,80 @@ def hero_view(c: dict | None) -> dict | None:
             "why": [w for w in (c.get("why") or []) if isinstance(w, str) and w.strip()]}
 
 
+# A candidate is only *featured* on the compact home card when he did something you can see in
+# the box score: single-game on/off is noisy, and "1 pt on 0-2 shooting in 13 minutes" should not
+# headline a card. The game page still lists every candidate.
+HERO_MIN_MINUTES = 15
+HERO_MIN_PRODUCTION = 10      # pts + reb + ast + stocks
+HERO_MIN_PLUS_MINUS = 8
+
+
+def _number(x) -> float | None:
+    return None if isinstance(x, bool) or not isinstance(x, (int, float)) else float(x)
+
+
+def hero_production(c: dict) -> int:
+    """pts + reb + ast + stocks from a candidate (stocks field preferred, else stl + blk)."""
+    pl = parse_line(c.get("line"))
+    stocks = _number(c.get("stocks"))
+    if stocks is None:
+        stocks = pl.get("stl", 0) + pl.get("blk", 0)
+    return int(pl.get("pts", 0) + pl.get("reb", 0) + pl.get("ast", 0) + stocks)
+
+
+def hero_qualifies(c: dict | None) -> bool:
+    """Minimum real contribution to feature an unsung-hero candidate on the home card."""
+    if not isinstance(c, dict) or not c.get("name"):
+        return False
+    mins = _number(c.get("minutes"))
+    if mins is None or mins < HERO_MIN_MINUTES:
+        return False
+    pm = _number(c.get("plus_minus"))
+    return hero_production(c) >= HERO_MIN_PRODUCTION or (pm is not None
+                                                          and pm >= HERO_MIN_PLUS_MINUS)
+
+
+def featured_player(facts: dict | None, winner: str | None) -> dict | None:
+    """The one player the compact card names: the first unsung-hero candidate who clears the
+    contribution bar, otherwise the winning side's top performer."""
+    for c in g(facts, "unsung_hero", default=[]) or []:
+        if hero_qualifies(c):
+            return {**hero_view(c), "kind": "unsung", "label": "Unsung hero"}
+    tops = [p for p in g(facts, "top_performers", default=[]) or []
+            if isinstance(p, dict) and p.get("name")]
+    if not tops:
+        return None
+    mine = [p for p in tops if p.get("team") == winner] or tops
+    best = max(mine, key=lambda p: _number(p.get("game_score")) or 0)
+    return {**hero_view(best), "kind": "top", "label": "Top performer"}
+
+
+def player_beat(h: dict | None) -> str:
+    """'2 pts, 8 reb, 8 ast, 2 stl · +2 in 29 min'."""
+    if not h:
+        return ""
+    parts = [h["short_line"]] if h.get("short_line") else []
+    pm, mins = _number(h.get("plus_minus")), _number(h.get("minutes"))
+    if pm is not None and mins is not None:
+        parts.append(f"{fmt.signed_int(pm)} in {mins:.0f} min")
+    elif pm is not None:
+        parts.append(fmt.signed_int(pm))
+    return " · ".join(parts)
+
+
+def turning_beat_text(t: dict | None) -> str:
+    """'LAC 17–5 run · Q3 4:41 – Q4 11:02'."""
+    if not t:
+        return ""
+    s = f"{t['team']['code']} {t['run']} run"
+    when = " ".join(x for x in (t.get("from_label"), t.get("from_clock")) if x)
+    if when and t.get("to_clock"):
+        to = t["to_clock"] if t.get("to_label") == t.get("from_label") else \
+            " ".join(x for x in (t.get("to_label"), t["to_clock"]) if x)
+        when = f"{when} {fmt.DASH} {to}"
+    return f"{s} · {when}" if when else s
+
+
 KEY_PLAY = {"go_ahead": "Go-ahead", "tying": "Tying", "steal": "Steal", "block": "Block"}
 
 
@@ -311,11 +385,12 @@ def card_headline(card: dict, facts: dict | None, win: dict, lose: dict) -> str:
                                                           "40_point_game")):
             star = n
             break
-    if star:
+    if star and star.get("name"):
         fl = star.get("flags") or []
-        what = "triple-double" if "triple_double" in fl else str(parse_line(star["line"])
+        what = "triple-double" if "triple_double" in fl else str(parse_line(star.get("line"))
                                                                     .get("pts", ""))
-        return f"{head} behind {fmt.possessive(fmt.last_name(star['name']))} {what}"
+        if what:
+            return f"{head} behind {fmt.possessive(fmt.last_name(star['name']))} {what}"
     tops = [p for p in g(facts, "top_performers", default=[]) or [] if p.get("team") == win["code"]]
     if tops:
         pts = parse_line(tops[0].get("line")).get("pts")
@@ -418,7 +493,8 @@ def card_view(card: dict) -> dict:
         story = card_story(card, facts, win, lose, turning)
     heroes = [h for h in (hero_view(c) for c in g(facts, "unsung_hero", default=[]) or []) if h]
     stype = card.get("season_type")
-    return {
+    featured = featured_player(facts, winner) if facts else None
+    vm = {
         "game_id": card.get("game_id"), "final": final, "status": status,
         "season_type": stype if stype and stype != "Regular Season" else None,
         "home": home, "away": away, "winner": winner, "overtimes": ots,
@@ -431,24 +507,131 @@ def card_view(card: dict) -> dict:
         "clutch": clutch_view(facts, winner), "notable": notable_view(facts),
         "incidents": incidents_view(facts), "facts": facts,
         "has_facts": facts is not None, "arena": g(facts, "arena"),
+        "featured": featured, "featured_beat": player_beat(featured),
+        "turning_beat": turning_beat_text(turning),
     }
+    vm["story_lead"], vm["story_rest"] = story_lead(story)
+    vm["interest"], vm["tags"], vm["blowout"] = interest(vm)
+    return vm
 
 
-def story_score(c: dict) -> float:
-    """How headline-worthy a game is (for the masthead fallback)."""
-    s = 0.0
+# ------------------------------------------------------------------ story lead
+
+_SENT_END = re.compile(r"(?<=[.!?])[\"”’)]?\s+(?=[\"“(]?[A-Z0-9])")
+_ABBREV = re.compile(r"(?:\b(?:Jr|Sr|St|vs|No|Mt|Dr|Mr)|\b[A-Z])\.$")
+
+
+def split_sentences(text: str | None) -> list[str]:
+    """Plain sentence split that keeps 'Jr.', 'vs.', initials and decimals ('35.6') intact."""
+    if not text:
+        return []
+    out: list[str] = []
+    for piece in _SENT_END.split(text.strip()):
+        if out and _ABBREV.search(out[-1]):
+            out[-1] = f"{out[-1]} {piece}"
+        else:
+            out.append(piece)
+    return [p for p in out if p]
+
+
+STORY_SHORT = 100        # a first sentence shorter than this gets company
+STORY_LEAD_MAX = 260     # ...as long as the two together stay under this
+
+
+def story_lead(text: str | None) -> tuple[str, str]:
+    """(lead, rest): the first sentence, plus the second when the first is short. The home card
+    shows the lead; the rest sits behind 'Read more' (whole sentences only, never a cut)."""
+    sents = split_sentences(text)
+    if len(sents) <= 1:
+        return (text or "").strip(), ""
+    n = 1
+    if len(sents) > 2 and len(sents[0]) < STORY_SHORT \
+            and len(sents[0]) + len(sents[1]) <= STORY_LEAD_MAX:
+        n = 2
+    return " ".join(sents[:n]), " ".join(sents[n:])
+
+
+# ------------------------------------------------------------------ card ordering
+
+BLOWOUT_MARGIN = 20
+STAR_FLAGS = (("50_point_game", 5.0, "50-point night"), ("40_point_game", 3.5, "40-point night"),
+              ("triple_double", 3.0, "Triple-double"))
+
+
+def interest(c: dict) -> tuple[float, list[str], bool]:
+    """(score, tags, is_blowout) for ordering Last Night by how much a reader wants each game.
+
+    Uses the win-probability facts when the analytics provide them (`excitement` = sum of |ΔWP|,
+    `comeback_wp.min_wp` = the winner's lowest win probability); otherwise margin, overtime and
+    the score-based comeback. Upsets (market favourite lost, or our pick missed) and big
+    individual nights add to either. Blowouts (20+ points without a 40-point night or a
+    triple-double) sort last and render as compact rows.
+    """
     f = c.get("facts") or {}
-    flags = {fl for n in f.get("notable_lines") or [] for fl in (n.get("flags") or [])}
-    s += 3 if {"50_point_game", "40_point_game"} & flags else 0
-    s += 2 if "triple_double" in flags else 0
-    cb = f.get("comeback") or {}
-    s += 3 if cb.get("team") == c.get("winner") and (cb.get("deficit") or 0) >= 15 else 0
-    m = c.get("margin")
-    s += 2 if m is not None and m <= 3 else 0
-    s += 1.5 if c.get("overtimes") else 0
+    if not c.get("final") or not c.get("winner"):
+        return -100.0, [], False
+    tags: list[str] = []
+    s = 0.0
+    margin = _number(c.get("margin"))
+    ots = int(c.get("overtimes") or 0)
+    exc = _number(f.get("excitement"))
+    cwp = f.get("comeback_wp") if isinstance(f.get("comeback_wp"), dict) else {}
+    min_wp = _number(cwp.get("min_wp")) if cwp.get("team") in (None, c["winner"]) else None
+    cb = f.get("comeback") if isinstance(f.get("comeback"), dict) else {}
+    deficit = _number(cb.get("deficit")) if cb.get("team") == c["winner"] else None
+    if exc is not None:
+        s += 2 * min(exc, 5.0)
+    elif margin is not None:
+        s += 6 if margin <= 3 else 4 if margin <= 6 else 2 if margin <= 10 else 0
+    if ots:
+        s += min(3 * ots, 5)
+        tags.append("Overtime" if ots == 1 else f"{ots} OT")
+    elif margin is not None and margin <= 3:
+        tags.append("Thriller")
+    if min_wp is not None:
+        if min_wp < 0.25:
+            s += (0.25 - min_wp) * 16
+        if min_wp <= 0.15:
+            tags.append("Comeback")
+    elif deficit:
+        s += 4 if deficit >= 15 else 2.5 if deficit >= 10 else 1 if deficit >= 6 else 0
+        if deficit >= 10:
+            tags.append("Comeback")
     mk = c.get("market") or {}
-    s += 2 if mk.get("favorite_won") is False else 0
-    return s
+    if mk.get("favorite_won") is False:
+        s += 2.5
+        tags.append("Upset")
+    if (c.get("pick") or {}).get("correct") is False:
+        s += 1.5
+    flags = {fl for n in f.get("notable_lines") or [] if isinstance(n, dict)
+             for fl in (n.get("flags") or [])}
+    star = next(((w, lab) for k, w, lab in STAR_FLAGS if k in flags), None)
+    if star:
+        s += star[0]
+        tags.append(star[1])
+    elif "30_point_game" in flags:
+        s += 0.5
+    blowout = margin is not None and margin >= BLOWOUT_MARGIN and not star and not ots
+    if blowout:
+        s -= 6
+    return round(s, 2), tags[:2], blowout
+
+
+FEATURED_MAX = 4
+
+
+def card_tiers(cards: list[dict]) -> dict:
+    """featured (full cards), also (compact rows), blowouts (compact rows, 'Decided early').
+    Cards are already in interest order. With five or fewer competitive games all get a card."""
+    close = [c for c in cards if not c["blowout"]]
+    n = len(close) if len(close) <= FEATURED_MAX + 1 else FEATURED_MAX
+    return {"featured": close[:n], "also": close[n:],
+            "blowouts": [c for c in cards if c["blowout"]]}
+
+
+def order_cards(cards: list[dict]) -> list[dict]:
+    """Most interesting first; ties keep tip-off order."""
+    return [c for _, c in sorted(enumerate(cards), key=lambda ic: (-ic[1]["interest"], ic[0]))]
 
 
 # ------------------------------------------------------------------ tonight
@@ -483,6 +666,53 @@ def factor_chip(f: dict) -> dict | None:
         label = f.get("detail") or (kind or "").replace("_", " ")
     return {"team": t, "label": label, "kind": kind or "", "sub": "",
             "detail": f.get("detail") or label}
+
+
+SCHED_SHORT = {"back_to_back": "on a back-to-back", "four_in_six": "on 4 in 6 nights",
+               "three_in_four": "on 3 in 4 nights"}
+
+
+def key_factors(game: dict) -> list[str]:
+    """One or two short phrases for the compact Tonight row: the side missing the most minutes,
+    then the strongest schedule factor."""
+    out = []
+    by_team: dict[str, list[dict]] = {}
+    for f in game.get("factors") or []:
+        if isinstance(f, dict) and f.get("kind") == "injury" and isinstance(f.get("value"), dict) \
+                and f.get("team") and f["value"].get("player"):
+            by_team.setdefault(f["team"], []).append(f["value"])
+    if by_team:
+        team, rows = max(by_team.items(),
+                         key=lambda kv: sum(_number(v.get("mpg")) or 0 for v in kv[1]))
+        gone = [fmt.last_name(v["player"]) for v in rows
+                if (v.get("status") or "Out").lower() in ("out", "doubtful")]
+        q = [fmt.last_name(v["player"]) for v in rows
+             if (v.get("status") or "").lower() == "questionable"]
+        if gone:
+            s = f"{team} without {', '.join(gone)}"
+            if q:
+                s += f"; {', '.join(q)} questionable"
+            out.append(s)
+        elif q:
+            out.append(f"{team}: {', '.join(q)} questionable")
+    sched: dict[str, list[str]] = {}
+    for f in game.get("factors") or []:
+        if isinstance(f, dict) and f.get("kind") in SCHED_SHORT and f.get("team"):
+            sched.setdefault(f["kind"], []).append(f["team"])
+    for kind in ("back_to_back", "three_in_four", "four_in_six"):
+        teams = sched.get(kind)
+        if teams:
+            out.append(f"Both {SCHED_SHORT[kind]}" if len(set(teams)) > 1
+                       else f"{teams[0]} {SCHED_SHORT[kind]}")
+            break
+    else:
+        for f in game.get("factors") or []:
+            if isinstance(f, dict) and f.get("kind") == "rest_edge" and f.get("team") \
+                    and _number(f.get("value")):
+                v = _number(f["value"])
+                out.append(f"{f['team']} +{v:.0f} {'day' if v == 1 else 'days'} rest")
+                break
+    return out[:2]
 
 
 def tonight_view(game: dict) -> dict:
@@ -544,6 +774,7 @@ def tonight_view(game: dict) -> dict:
             "injuries": {"home": [i for i in injuries.get("home") or [] if isinstance(i, dict)],
                          "away": [i for i in injuries.get("away") or [] if isinstance(i, dict)]},
             "upset": upset,
+            "key": key_factors(game),
             "preview": preview,
             "preview_auto": preview is None}
 
@@ -584,6 +815,7 @@ def team_trend_view(t: dict, direction: str) -> dict:
         blurb = blurb[:1].upper() + blurb[1:] + "." if blurb else ""
     abs_ = [a for a in t.get("key_absences") or [] if isinstance(a, dict) and a.get("player")]
     return {"team": ident, "record": t.get("record"), "last10": t.get("last10"),
+            "z": _number(tr.get("z")), "why": team_why(t, reasons),
             "streak": t.get("streak"), "power_rank": t.get("power_rank"),
             "net": net, "off": t.get("off") or {}, "def": t.get("def") or {}, "trend": tr,
             "direction": direction, "chips": chips, "blurb": blurb,
@@ -592,6 +824,21 @@ def team_trend_view(t: dict, direction: str) -> dict:
                                      label=f"Adjusted net rating: season "
                                            f"{fmt.signed(net.get('season_adj'))}, last 10 "
                                            f"{fmt.signed(net.get('last10_adj'))}")}
+
+
+def team_why(t: dict, reasons: list[dict]) -> str:
+    """A one-line reason for the compact row: the offense/defense split that moved most."""
+    off, de = t.get("off") or {}, t.get("def") or {}
+    cands = []
+    for label, d, good_low in (("Offense", off, False), ("Defense", de, True)):
+        a, b = _number(d.get("last10")), _number(d.get("season"))
+        if a is not None and b is not None:
+            cands.append((abs(a - b), label, a, b))
+    if cands:
+        _, label, a, b = max(cands)
+        return f"{label} {fmt.num(a)} last 10 (season {fmt.num(b)})"
+    r = next((r for r in reasons if r.get("kind") not in REASON_SKIP and r.get("detail")), None)
+    return polish(r["detail"]) if r else ""
 
 
 def ordinal(n: int) -> str:
@@ -683,6 +930,29 @@ def injury_row(e: dict) -> dict:
             "direction": e.get("direction")}
 
 
+IMPACT_MIN = 10          # Courtside Impact (Game Score units) for an "impact player"
+IMPACT_MIN_MPG = 24      # fallback when impact is unknown
+
+
+def is_impact(e: dict) -> bool:
+    imp, mpg = _number(e.get("impact")), _number(e.get("mpg"))
+    return (imp is not None and imp >= IMPACT_MIN) or (imp is None and mpg is not None
+                                                       and mpg >= IMPACT_MIN_MPG)
+
+
+def injury_split(inj: dict) -> dict:
+    """What Injury Watch shows before 'See all': up to five impact players out tonight and the
+    three biggest changes since yesterday (by impact)."""
+    outs = inj["out_tonight"]
+    lead = [e for e in outs if is_impact(e)][:5] or outs[:3]
+    rest = [e for e in outs if e not in lead]
+    changes = inj["new"] + inj["returns"] + inj["status"]
+    top_changes = sorted([e for e in changes if is_impact(e)],
+                         key=lambda e: (not e["tonight"], -(_number(e.get("impact")) or 0)))[:3]
+    return {"lead": lead, "rest": rest, "top_changes": top_changes,
+            "n_changes": len(changes)}
+
+
 # ------------------------------------------------------------------ whole brief
 
 def masthead(brief: dict, cards: list[dict], tonight: list[dict]) -> dict:
@@ -692,7 +962,7 @@ def masthead(brief: dict, cards: list[dict], tonight: list[dict]) -> dict:
     if auto:
         finished = [c for c in cards if c["headline"] and c["final"]]
         if finished:
-            best = max(finished, key=story_score)
+            best = max(finished, key=lambda c: c.get("interest") or 0)
             head = best["headline"]
         elif tonight:
             n = len(tonight)
@@ -733,10 +1003,185 @@ def section_text(sec) -> str | None:
     return text_of(g(sec, "text"))
 
 
+# ------------------------------------------------------------------ the 60-second version
+
+def _streak_words(streak: str | None) -> str:
+    m = re.fullmatch(r"([WL])(\d+)", streak or "")
+    if not m or int(m.group(2)) < 3:
+        return ""
+    return f"{'won' if m.group(1) == 'W' else 'lost'} {m.group(2)} straight"
+
+
+def _game_bullet(c: dict) -> str:
+    """'Clippers 115, Nuggets 114: the underdog Clippers came back from 10 down, and Bennedict
+    Mathurin scored 38.' Every number comes from the card's facts."""
+    win, lose = (c["home"], c["away"]) if c["home"]["winner"] else (c["away"], c["home"])
+    s = f"{win['nickname']} {win['score']}, {lose['nickname']} {lose['score']}"
+    dog = (c.get("market") or {}).get("favorite_won") is False
+    verbs = []
+    cb = g(c, "facts", "comeback") or {}
+    if cb.get("team") == win["code"] and (cb.get("deficit") or 0) >= 8:
+        verbs.append(f"came back from {cb['deficit']} down")
+    if c.get("overtimes"):
+        verbs.append("won in overtime" if c["overtimes"] == 1 else
+                     f"won in {count_word(c['overtimes'], True)} overtimes")
+    if dog and not verbs:
+        verbs.append("won as the betting underdog")
+        dog = False
+    clauses = []
+    if verbs:
+        clauses.append(f"the {'underdog ' if dog else ''}{win['nickname']} {' and '.join(verbs)}")
+    tops = [p for p in g(c, "facts", "top_performers", default=[]) or []
+            if isinstance(p, dict) and p.get("team") == win["code"] and p.get("name")]
+    if tops:
+        pts = parse_line(tops[0].get("line")).get("pts")
+        if pts and pts >= 25:
+            clauses.append(f"{tops[0]['name']} scored {pts}")
+    if clauses:
+        s += ": " + ", and ".join(clauses)
+    return s + "."
+
+
+def _trend_bullet(team: dict, player: dict) -> tuple[str, str] | None:
+    ts = [t for t in team.get("trending", []) if t.get("z") is not None]
+    if ts:
+        t = max(ts, key=lambda t: abs(t["z"]))
+        s = f"The {t['team']['nickname']}"
+        if t.get("last10"):
+            s += f" are {fmt.record(t['last10'])} in their last 10"
+        sw = _streak_words(t.get("streak"))
+        if sw:
+            s += f" and have {sw}" if t.get("last10") else f" have {sw}"
+        net = t.get("net") or {}
+        if net.get("last10_adj") is not None and net.get("season_adj") is not None:
+            s += (f" (net rating {fmt.signed(net['last10_adj'])}, up from "
+                  f"{fmt.signed(net['season_adj'])})" if net["last10_adj"] >= net["season_adj"]
+                  else f" (net rating {fmt.signed(net['last10_adj'])}, down from "
+                  f"{fmt.signed(net['season_adj'])})")
+        if s == f"The {t['team']['nickname']}":
+            return None
+        return ("Rising" if t["direction"] == "up" else "Sliding"), s + "."
+    hot = player.get("hot") or []
+    if hot:
+        p = hot[0]
+        a, b = (p.get("recent") or {}).get("pts"), (p.get("season") or {}).get("pts")
+        if a is not None and b is not None:
+            return "Hot", (f"{p['player']} is averaging {fmt.num(a)} points over his "
+                           f"{p['window'] or 'recent games'}, up from {fmt.num(b)} on the season.")
+    return None
+
+
+def _injury_bullet(inj: dict) -> str | None:
+    outs = inj.get("out_tonight") or []
+    parts = []
+    lead = next((e for e in outs if (e.get("status") or "").lower() == "out"), None) or \
+        (outs[0] if outs else None)
+    if lead and lead.get("player"):
+        st = (lead.get("status") or "out").lower()
+        s = f"{lead['player']} ({lead['team']['code']}) is {st} tonight"
+        if lead.get("opponent"):
+            s += f" against the {identity(lead['opponent'])['nickname']}"
+        if lead.get("reason"):
+            s += f" ({lead['reason'][:1].lower() + lead['reason'][1:]})"
+        parts.append(s)
+    new = next((e for e in inj.get("new") or [] if e.get("tonight") and e.get("player")
+                and (lead is None or e["player"] != lead.get("player"))
+                and (_number(e.get("impact")) or 0) >= 12), None)
+    if new and new.get("to_status"):
+        parts.append(f"{new['player']} ({new['team']['code']}) is newly "
+                     f"{new['to_status'].lower()}")
+    return "; ".join(parts) + "." if parts else None
+
+
+def _marquee(tonight: list[dict]) -> dict | None:
+    def key(t):
+        ranks = [s.get("power_rank") for s in (t["home"], t["away"])]
+        avg = sum(ranks) / 2 if all(isinstance(r, int) for r in ranks) else 31
+        close = abs(t["pred"]["home_prob"] - 0.5) if t.get("pred") else 0.5
+        return avg + 30 * close
+    with_pred = [t for t in tonight if t.get("pred")]
+    return min(with_pred or tonight, key=key) if tonight else None
+
+
+def _marquee_bullet(t: dict) -> str:
+    s = f"{t['away']['nickname']} at {t['home']['nickname']}"
+    if t.get("tipoff"):
+        s += f", {t['tipoff']}"
+    ra, rh = t["away"].get("power_rank"), t["home"].get("power_rank")
+    bits = []
+    if isinstance(ra, int) and isinstance(rh, int):
+        bits.append(f"#{ra} vs #{rh} in our power ranking")
+    if t.get("pred"):
+        bits.append(f"we have the {t['pred']['pick']['nickname']} at "
+                    f"{fmt.pct(t['pred']['pick_prob'])}")
+    return s + (": " + ", and ".join(bits) if bits else "") + "."
+
+
+def _upset_bullet(t: dict, others: int) -> str | None:
+    u = t.get("upset") or {}
+    if not u.get("underdog") or u.get("model_prob") is None or u.get("market_prob") is None:
+        return None
+    s = (f"We give the {u['underdog']['nickname']} {fmt.pct(u['model_prob'])} against the "
+         f"{u['favorite']['nickname']}; the market has them at {fmt.pct(u['market_prob'])}.")
+    if others:
+        s += f" {count_word(others)} more {plural(others, 'game')} on the watch list."
+    return s
+
+
+def sixty_view(brief: dict, cards: list[dict], tonight: list[dict], team: dict, player: dict,
+               inj: dict, score: dict) -> dict:
+    """The 60-second version: 3-5 takeaways written from the facts, no LLM.
+
+    Hook: a writer may later supply `brief["sixty_seconds"] = {"bullets": [str, ...]}`; when
+    present (and non-empty) those bullets are shown instead of the deterministic ones.
+    """
+    sec = brief.get("sixty_seconds") if isinstance(brief.get("sixty_seconds"), dict) else {}
+    written = [text_of(b) for b in sec.get("bullets") or []]
+    written = [b for b in written if b]
+    if written:
+        return {"auto": False, "bullets": [{"label": None, "href": None, "text": b}
+                                           for b in written[:5]]}
+    items = []
+    finals = [c for c in cards if c["final"] and c.get("winner")
+              and c["home"]["score"] is not None and c["away"]["score"] is not None]
+    if finals:
+        best = finals[0]
+        items.append({"label": "Game of the night", "href": f"#g{best['game_id']}",
+                      "text": _game_bullet(best)})
+    elif not cards:
+        items.append({"label": "Last night", "href": "#last-night",
+                      "text": "No games last night, so there is nothing to recap."})
+    tb = _trend_bullet(team, player) if (team.get("available") or player.get("available")) \
+        else None
+    if tb:
+        items.append({"label": tb[0], "href": "#teams" if tb[0] != "Hot" else "#players",
+                      "text": tb[1]})
+    ib = _injury_bullet(inj) if inj.get("available") else None
+    if ib:
+        items.append({"label": "Injury", "href": "#injuries", "text": ib})
+    ups = sorted([t for t in tonight if t.get("upset")],
+                 key=lambda t: -abs(_number((t["upset"] or {}).get("edge")) or 0))
+    mq = _marquee([t for t in tonight if not ups or t is not ups[0]] or tonight)
+    if mq:
+        items.append({"label": "Tonight", "href": "#tonight", "text": _marquee_bullet(mq)})
+    elif not tonight:
+        items.append({"label": "Tonight", "href": "#tonight",
+                      "text": "Nothing on the schedule tonight."})
+    if ups:
+        ub = _upset_bullet(ups[0], len(ups) - 1)
+        if ub:
+            items.append({"label": "Upset watch", "href": "#tonight", "text": ub})
+    if len(items) < 5 and score.get("n"):
+        items.append({"label": "Scorecard", "href": "#scorecard",
+                      "text": f"Our picks are {score['correct']}{fmt.DASH}{score['incorrect']} "
+                              f"({fmt.pct(score['accuracy'], 1)}) this season."})
+    return {"auto": True, "bullets": items[:5]}
+
+
 def brief_view(brief: dict) -> dict:
     meta = brief.get("meta") or {}
     ln = brief.get("last_night") or {}
-    cards = [card_view(c) for c in ln.get("games") or [] if isinstance(c, dict)]
+    cards = order_cards([card_view(c) for c in ln.get("games") or [] if isinstance(c, dict)])
     tn = brief.get("tonight") or {}
     tonight = [tonight_view(x) for x in tn.get("games") or [] if isinstance(x, dict)]
     tp = brief.get("team_pulse") or {}
@@ -759,6 +1204,8 @@ def brief_view(brief: dict) -> dict:
                         for r in tp.get("streaks") or [] if isinstance(r, dict)],
             "validity": g(tp, "method", "flag_validity") or {},
             "data_through": tp.get("data_through")}
+    team["trending"] = sorted(team["rising"] + team["sliding"],
+                           key=lambda t: -abs(t["z"]) if t["z"] is not None else 0)
     player = {"available": bool(pp.get("available")), "reason": pp.get("reason"),
               "early": bool(pp.get("early_season")), "text": section_text(pp),
               "hot": [player_trend_view(p, True) for p in pp.get("hot") or []
@@ -783,6 +1230,7 @@ def brief_view(brief: dict) -> dict:
                            if isinstance(e, dict)],
                 "latest": iw.get("latest_snapshot"), "baseline": iw.get("baseline_snapshot"),
                 "sources": iw.get("sources") or []}
+    injuries.update(injury_split(injuries))
     vm = sc.get("vs_market") if isinstance(sc.get("vs_market"), dict) else None
     score = {"n": sc.get("n") or 0, "correct": sc.get("correct") or 0,
              "incorrect": sc.get("incorrect") or 0, "accuracy": sc.get("accuracy"),
@@ -798,7 +1246,9 @@ def brief_view(brief: dict) -> dict:
         picks = {"correct": lsum.get("picks_correct") or 0, "n": lsum["picks_scored"]}
     return {
         "meta": meta, "day": meta.get("day"), "masthead": masthead(brief, cards, tonight),
+        "sixty": sixty_view(brief, cards, tonight, team, player, injuries, score),
         "last_night": {"day": ln.get("day") or meta.get("last_night_day"), "cards": cards,
+                       **card_tiers(cards),
                        "picks": picks, "text": section_text(ln), "summary": lsum},
         "team": team, "player": player, "injuries": injuries,
         "tonight": {"day": tn.get("day") or meta.get("day"), "games": tonight,

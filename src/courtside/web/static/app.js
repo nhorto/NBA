@@ -1,4 +1,4 @@
-/* Courtside: theme toggle, tabs, active section in the section nav. No dependencies. */
+/* Courtside: theme toggle, tabs, open-on-hash, active section in the section nav. No dependencies. */
 (function () {
   "use strict";
   var root = document.documentElement;
@@ -53,6 +53,15 @@
       });
     });
   });
+
+  // ---- a link to a collapsed row (e.g. a "Decided early" game) opens it
+  function openTarget() {
+    var id = location.hash.slice(1);
+    var el = id && document.getElementById(id);
+    if (el && el.tagName === "DETAILS") el.open = true;
+  }
+  window.addEventListener("hashchange", openTarget);
+  openTarget();
 
   // ---- highlight the section in view
   var links = document.querySelectorAll(".secnav a[href^='#']");

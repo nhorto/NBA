@@ -67,6 +67,58 @@ per device.
 To keep it running, use a `systemd --user` service (Linux) or a launchd agent (macOS) running
 `uv run courtside serve`, alongside the collector timers in `deploy/`.
 
+## The home page is a brief, not a dump
+
+The home page should give someone the whole night in roughly 6–10 phone screens. Depth lives on
+`/game/<id>`, or behind `<details>`/`<summary>` disclosures that work without JS. All
+collapsed content is still in the HTML. Measured on the 2026-02-20 Brief with everything
+collapsed: **phone (390 px) 7,945 px** (was ~29,600) and **desktop (1440 px) 4,574 px** (was
+~15,300).
+
+- **Masthead.** The headline, a four-number strip (games, picks, tonight, season), and **the
+  60-second version**: 3–5 takeaways written deterministically from the facts by
+  `view.sixty_view`. They are the game of the night, the strongest team trend (or a hot player),
+  the biggest injury plus a high-impact new absence, tonight's marquee game (best combined power
+  rank and closest odds, skipping the upset game), and the top upset-watch game. A Scorecard
+  line fills in when there are fewer than five. **Writer hook:** if the Brief carries
+  `sixty_seconds: {"bullets": [str, ...]}`, those bullets replace the deterministic ones. The
+  old "what you need to know" dek is now the page's `<meta name="description">`.
+- **Last Night is ordered by interest** (`view.interest`). When the analytics provide them,
+  `facts.excitement` (sum of |ΔWP|) and `facts.comeback_wp.min_wp` drive the order. Otherwise
+  margin, overtime and the score comeback do. Upsets (the market favourite lost, or our pick
+  missed) and 40/50-point nights or triple-doubles add to the score. Cards get up to two tags
+  (Thriller, Overtime, Comeback, Upset, 40-point night...). Layout by tier (`view.card_tiers`):
+  - The top four competitive games get full cards. If there are five or fewer, all of them do.
+  - The remaining competitive games become compact rows under **Also last night**.
+  - Wins by 20+ points, without a star line, become compact rows under **Decided early**.
+- **Compact card:** score, our pick ✓/✗, the headline, and the story *lead*. The lead is the
+  first sentence, plus the second when the first is short; `view.story_lead` only splits on
+  sentence boundaries. Then two beat lines: the turning point, and the featured player. "Read
+  more" opens the rest of the story, the full turning point, the hero's "why" chips, clutch,
+  notable lines, the betting result and incidents. "Full breakdown →" goes to `/game/<id>`.
+- **Unsung-hero guard** (`view.hero_qualifies`). Single-game on/off is noisy. The home card only
+  features a candidate with **≥ 15 minutes AND (pts + reb + ast + stocks ≥ 10 OR plus-minus
+  ≥ +8)**. It takes the first candidate that qualifies; if none does, it shows the winning side's
+  top performer, labelled "Top line". The game page still lists every candidate.
+- **Team Pulse:** the three strongest trends (by |z|) as rows. Each row shows record, last 10,
+  streak, net rating and a one-line why, and opens to show the dumbbell, splits, blurb and
+  absences. "See all" holds the rest. The power ranking is a top-10 strip that scrolls sideways
+  on phones. Streaks and movers are chips.
+- **Player Pulse:** the top three hot and top three cold; "See all" holds the rest. Leaders, role
+  changes, streaks and career highs sit in one disclosure.
+- **Injury Watch:** up to five impact players out tonight (Courtside Impact ≥ 10, or ≥ 24 mpg
+  when impact is unknown), and the three biggest changes since yesterday. The full lists are
+  behind "See all".
+- **Tonight:** one row per game: matchup, our win-probability bar with the market tick, upset
+  watch, tip-off, the line, and one key factor (the side missing the most minutes, else
+  schedule). Tap a row to see our line vs the market's, the edge, the preview, every factor and
+  form.
+- **Scorecard:** one card with the record, Brier vs market, last night, a hit-rate-by-confidence
+  chart and a one-line verdict. The calibration chart, its table and the full us-vs-market table
+  are collapsed.
+- **Section nav:** a sticky horizontal scroller (fades at the right edge on phones). It
+  highlights the section in view, and a link to a collapsed game opens it.
+
 ## Design notes
 
 - **Type.** Noto Serif Display Bold carries the editorial voice: masthead, section titles, card
@@ -95,15 +147,20 @@ To keep it running, use a `systemd --user` service (Linux) or a launchd agent (m
 - **Empty states.** Every section has its own message (off day, early season, no injury
   snapshots, no graded picks). Sub-panels with nothing to show are dropped, not drawn as empty
   boxes.
-- **JS** (`static/app.js`) does three things: the theme toggle, accessible tabs (last-10
-  leaders), and highlighting the active section in the sticky section nav. Everything still
-  works without JS (`<details>` for collapsibles).
+- **JS** (`static/app.js`) does four things: the theme toggle, accessible tabs (last-10
+  leaders), opening a collapsed row when a link targets it, and highlighting the active section
+  in the sticky section nav. Everything still works without JS: every collapsible is a native
+  `<details>`, and a summary is a keyboard-focusable control with a visible focus ring.
+  Chevron transitions are disabled under `prefers-reduced-motion`.
 
 ## Visual QA
 
 Screenshots come from a headless Chromium that Playwright launches itself. It never attaches to
 an existing browser. The shots are taken at 390×844 and 1440×900, in light and dark, and saved to
-`var/screenshots/`.
+`var/screenshots/` (`var/screenshots/v2/` for the compact home page: collapsed, one card
+expanded, and an empty off day). Run your QA server on a spare port (for example
+`COURTSIDE_DATA=/tmp/qa uv run courtside serve --port 8790`) so you don't disturb a running
+instance.
 
 ```bash
 uv run --with playwright python -m playwright install chromium-headless-shell

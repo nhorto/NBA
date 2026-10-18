@@ -149,32 +149,211 @@
 {% endif %}
 {%- endmacro %}
 
-{% macro game_card(c) -%}
-<article class="card game-card" aria-labelledby="g{{ c.game_id }}">
-  <p class="gc-meta"><span class="gc-status">{{ c.status }}</span>{% if c.season_type %}<span class="tag">{{ c.season_type }}</span>{% endif %}{% if c.arena %}<span class="gc-arena">{{ c.arena }}</span>{% endif %}</p>
-  <div class="gc-top">
-    {{ scoreline(c) }}
+{# --------------------------------------------------------------- compact home cards #}
+{% macro pick_mark(c) -%}
+{% if c.pick %}
+{% set ok = c.pick.correct %}
+<span class="pk{% if ok is sameas true %} is-right{% elif ok is sameas false %} is-wrong{% endif %}" title="Our pregame pick: {{ c.pick.team.code }} {{ c.pick.prob|pct }}">
+  <span class="pk-k">Pick</span> <b>{{ c.pick.team.code }}</b>
+  {% if ok is sameas true %}<span class="pk-mark">{{ icon("check") }}<span class="sr">correct</span></span>{% elif ok is sameas false %}<span class="pk-mark">{{ icon("x") }}<span class="sr">wrong</span></span>{% endif %}
+</span>
+{% endif %}
+{%- endmacro %}
+
+{% macro compact_beats(c) -%}
+{% if c.turning_beat or c.featured %}
+<dl class="gc-beats">
+  {% if c.turning_beat %}<div><dt>Turning point</dt><dd>{{ c.turning_beat }}</dd></div>{% endif %}
+  {% if c.featured %}<div><dt>{{ "Unsung" if c.featured.kind == "unsung" else "Top line" }}</dt><dd><strong>{{ c.featured.name }}</strong> <span class="team-tag">{{ c.featured.team.code }}</span>{% if c.featured_beat %} <span class="gc-beat-sub">{{ c.featured_beat }}</span>{% endif %}</dd></div>{% endif %}
+</dl>
+{% endif %}
+{%- endmacro %}
+
+{% macro more_body(c) -%}
+{% set has_more = c.story_rest or c.turning or c.featured or c.notable or (c.clutch and c.clutch.had) or c.incidents or c.market %}
+{% if has_more %}
+<details class="gc-more">
+  <summary>{{ "Read more" if c.story_rest else "More from this game" }}</summary>
+  <div class="gc-more-body">
+    {% if c.story_rest %}<p class="gc-story gc-rest">{{ c.story_rest }}</p>{% endif %}
+    {% if c.turning or c.featured or c.notable or (c.clutch and c.clutch.had) %}
+    <dl class="beats">
+      {% if c.turning %}{{ turning_beat(c.turning) }}{% endif %}
+      {% if c.featured %}{{ hero_beat(c.featured, c.featured.label) }}{% endif %}
+      {{ clutch_beat(c.clutch) }}
+      {{ notable_beat(c.notable, 4, compact=True) }}
+    </dl>
+    {% endif %}
+    {{ verdict(c) }}
+    {% if c.incidents %}<ul class="incidents">{% for i in c.incidents[:3] %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
   </div>
-  {{ verdict(c) }}
-  <div class="gc-body">
-    {% if c.headline %}<h3 class="gc-head" id="g{{ c.game_id }}">{{ c.headline }}</h3>{% else %}<h3 class="gc-head sr" id="g{{ c.game_id }}">{{ c.away.nickname }} at {{ c.home.nickname }}</h3>{% endif %}
-    {% if c.story %}<p class="gc-story">{{ c.story }}</p>{% endif %}
+</details>
+{% endif %}
+{%- endmacro %}
+
+{% macro compact_card(c) -%}
+<article class="card gc" id="g{{ c.game_id }}" aria-labelledby="gh{{ c.game_id }}">
+  <div class="gc-meta">
+    <span class="gc-status">{{ c.status }}</span>
+    {% if c.season_type %}<span class="tag">{{ c.season_type }}</span>{% endif %}
+    {% for t in c.tags %}<span class="tag tag-hl">{{ t }}</span>{% endfor %}
+    {{ pick_mark(c) }}
   </div>
-  {% if c.turning or c.hero or c.notable or (c.clutch and c.clutch.had) %}
-  <dl class="beats">
-    {% if c.turning %}{{ turning_beat(c.turning) }}{% endif %}
-    {% if c.hero %}{{ hero_beat(c.hero) }}{% endif %}
-    {{ clutch_beat(c.clutch) }}
-    {{ notable_beat(c.notable, 3, compact=True) }}
-  </dl>
-  {% elif not c.has_facts and c.final %}
-  <p class="gc-nofacts">Play-by-play breakdown isn&rsquo;t available for this game.</p>
-  {% endif %}
-  {% if c.incidents %}
-  <ul class="incidents">{% for i in c.incidents[:2] %}<li>{{ i }}</li>{% endfor %}</ul>
-  {% endif %}
-  <a class="card-link" href="/game/{{ c.game_id }}">Game breakdown {{ icon("arrow") }}</a>
+  {{ scoreline(c) }}
+  {% if c.headline %}<h3 class="gc-head" id="gh{{ c.game_id }}">{{ c.headline }}</h3>{% else %}<h3 class="gc-head sr" id="gh{{ c.game_id }}">{{ c.away.nickname }} at {{ c.home.nickname }}</h3>{% endif %}
+  {% if c.story_lead %}<p class="gc-story">{{ c.story_lead }}</p>{% endif %}
+  {% if not c.has_facts and c.final %}<p class="gc-nofacts">Play-by-play breakdown isn&rsquo;t available for this game.</p>{% endif %}
+  {{ compact_beats(c) }}
+  <div class="gc-foot">
+    {{ more_body(c) }}
+    <a class="card-link gc-link" href="/game/{{ c.game_id }}">Full breakdown {{ icon("arrow") }}</a>
+  </div>
 </article>
+{%- endmacro %}
+
+{% macro mini_card(c) -%}
+{% set win = c.home if c.home.winner else c.away %}
+{% set lose = c.away if c.home.winner else c.home %}
+<details class="gm" id="g{{ c.game_id }}">
+  <summary>
+    <span class="gm-score">
+      <span class="gm-team" title="{{ win.name }}">{{ badge(win, "sm") }}<b class="tabnum">{{ win.score }}</b></span>
+      <span class="gm-team is-loss" title="{{ lose.name }}">{{ badge(lose, "sm") }}<span class="tabnum">{{ lose.score }}</span></span>
+      {% if c.status != "Final" %}<span class="gm-status">{{ c.status }}</span>{% endif %}
+      {{ pick_mark(c) }}
+    </span>
+    <span class="sr">{{ win.nickname }} {{ win.score }}, {{ lose.nickname }} {{ lose.score }}.</span>
+    {% if c.headline %}<span class="gm-head">{{ c.headline }}</span>{% endif %}
+  </summary>
+  <div class="gm-body">
+    {% if c.story %}<p class="gc-story">{{ c.story }}</p>{% endif %}
+    {{ compact_beats(c) }}
+    <a class="card-link" href="/game/{{ c.game_id }}">Full breakdown {{ icon("arrow") }}</a>
+  </div>
+</details>
+{%- endmacro %}
+
+{% macro wp_mini(t) -%}
+{% if t.pred %}
+{% set ap = t.pred.away_prob %}
+<span class="wpm" role="img" aria-label="Our win probability: {{ t.away.code }} {{ ap|pct }}, {{ t.home.code }} {{ t.pred.home_prob|pct }}{% if t.market and t.market.home_prob is not none %}; market {{ t.market.fav }} {{ t.market.fav_prob|pct }}{% endif %}">
+  <b class="wpm-v{% if ap >= 0.5 %} is-fav{% endif %}">{{ ap|pct }}</b>
+  <span class="wp-bar wpm-bar">
+    <span class="wp-seg wp-away" style="--w:{{ '%.1f'|format(ap * 100) }}%;--c1:{{ t.away.bar }}"></span>
+    <span class="wp-seg wp-home" style="--c1:{{ t.home.bar }}"></span>
+    {% if t.market and t.market.home_prob is not none %}<span class="wp-mkt" style="--x:{{ '%.1f'|format((1 - t.market.home_prob) * 100) }}%"></span>{% endif %}
+  </span>
+  <b class="wpm-v{% if ap < 0.5 %} is-fav{% endif %}">{{ t.pred.home_prob|pct }}</b>
+</span>
+{% endif %}
+{%- endmacro %}
+
+{% macro tonight_row(t) -%}
+<details class="tn{% if t.upset is not none %} is-upset{% endif %}" id="t{{ t.game_id }}">
+  <summary>
+    <span class="tn-teams">
+      <span class="tn-team">{{ badge(t.away, "sm") }}<b>{{ t.away.nickname }}</b></span>
+      <span class="tn-at">at</span>
+      <span class="tn-team tn-home">{{ badge(t.home, "sm") }}<b>{{ t.home.nickname }}</b></span>
+    </span>
+    {{ wp_mini(t) }}
+    <span class="tn-key">
+      {% if t.upset is not none %}<span class="tn-upset">{{ icon("bolt") }}Upset watch</span>{% endif %}
+      {% if t.tipoff %}<span class="tn-time">{{ t.tipoff }}</span>{% endif %}
+      {% if t.market and t.market.spread != "—" %}<span>Line <b>{{ t.market.spread }}</b></span>{% endif %}
+      {% for k in t.key[:1] %}<span>{{ k }}</span>{% endfor %}
+    </span>
+  </summary>
+  <div class="tn-body">
+    <p class="tn-form">{% for s in [t.away, t.home] %}<span>{{ dot(s) }}<b>{{ s.code }}</b>{% if s.record %} {{ s.record|record }}{% endif %}{% if s.last10 %}, {{ s.last10|record }} last 10{% endif %}{% if s.streak %}, {{ s.streak }}{% endif %}{% if s.power_rank %} &middot; #{{ s.power_rank }}{% endif %}</span>{% endfor %}{% if t.pred and t.pred.confidence %}<span class="tag tag-conf">{{ t.pred.confidence }}</span>{% endif %}</p>
+    {% if t.pred or t.market %}
+    <table class="mu-nums">
+      <thead><tr><th scope="col"><span class="sr">Measure</span></th><th scope="col">Us</th><th scope="col">Market</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Line</th><td>{{ t.pred.margin if t.pred else DASH }}</td><td>{{ t.market.spread if t.market else DASH }}</td></tr>
+        <tr><th scope="row">Total</th><td>{{ (t.pred.total|num) if t.pred else DASH }}</td><td>{{ (t.market.total|num) if t.market else DASH }}</td></tr>
+      </tbody>
+    </table>
+    {% endif %}
+    {% if t.edge %}
+    <p class="edge{% if t.edge.big %} is-big{% endif %}"><span class="edge-k">Us vs market</span>
+      <span class="edge-v">{{ dot(t.edge.team) }}<b>{{ t.edge.win_prob|pct_points }}</b> on {{ t.edge.team.code }}{% if t.edge.margin is not none %}<span class="edge-sub"> &middot; {{ t.edge.margin|num }} pts of spread</span>{% endif %}</span></p>
+    {% endif %}
+    {% if t.upset %}<p class="upset-note">Market makes {{ t.upset.favorite.code }} a {{ (1 - t.upset.market_prob)|pct }} favourite; we give {{ t.upset.underdog.code }} {{ t.upset.model_prob|pct }}.</p>{% endif %}
+    {% if t.preview %}<p class="mu-preview">{{ t.preview }}</p>{% endif %}
+    {% if t.sched or t.inj_chips %}
+    <ul class="chips">
+      {% for c in t.sched %}<li class="chip">{% if c.team %}{{ dot(c.team) }}<b>{{ c.team.code }}</b> {% endif %}{{ c.label }}</li>{% endfor %}
+      {% for c in t.inj_chips %}<li class="chip chip-inj" title="{{ c.detail }}">{{ dot(c.team) }}<span><b>{{ c.team.code }} out</b> {{ c.label }}</span></li>{% endfor %}
+    </ul>
+    {% endif %}
+    <a class="card-link" href="/game/{{ t.game_id }}">Matchup details {{ icon("arrow") }}</a>
+  </div>
+</details>
+{%- endmacro %}
+
+{% macro trend_row(t) -%}
+<details class="row-d trow trend-{{ t.direction }}">
+  <summary>
+    {{ badge(t.team, "sm") }}
+    <span class="trow-main">
+      <span class="trow-name"><b>{{ t.team.nickname }}</b> <span class="dir dir-{{ t.direction }}">{{ icon(t.direction) }}{{ "Rising" if t.direction == "up" else "Sliding" }}</span></span>
+      <span class="trow-form tabnum">{{ t.record|record }}{% if t.last10 %} &middot; {{ t.last10|record }} L10{% endif %}{% if t.streak %} &middot; {{ t.streak }}{% endif %}</span>
+    </span>
+    <span class="trow-val"><b class="{{ 'pos' if t.direction == 'up' else 'neg' }}">{{ t.net.last10_adj|signed }}</b><small>net L10</small></span>
+    {% if t.why %}<span class="trow-why">{{ t.why }}</span>{% endif %}
+  </summary>
+  <div class="row-body">
+    <div class="tr-metric">
+      <div class="tr-spark">{{ t.spark|safe }}<p class="tr-scale"><span>season {{ t.net.season_adj|signed }}</span><span>last 10 {{ t.net.last10_adj|signed }}</span></p></div>
+    </div>
+    <dl class="tr-split">
+      <div><dt>Offense</dt><dd>{{ t.off.last10|num }} <span class="muted">vs {{ t.off.season|num }}</span></dd></div>
+      <div><dt>Defense</dt><dd>{{ t.def.last10|num }} <span class="muted">vs {{ t.def.season|num }}</span></dd></div>
+      {% if t.trend.z is not none %}<div><dt>Signal</dt><dd>z {{ t.trend.z|signed }}</dd></div>{% endif %}
+    </dl>
+    {% if t.blurb %}<p class="tr-blurb">{{ t.blurb }}</p>{% endif %}
+    {% if t.chips %}<ul class="chips chips-plain">{% for c in t.chips %}<li class="chip">{{ c }}</li>{% endfor %}</ul>{% endif %}
+    {% if t.absences %}<p class="tr-abs"><span class="muted">Without</span> {% for a in t.absences %}<strong>{{ a.player }}</strong> <span class="muted">({{ a.team_games_missed }} games{% if a.mpg_before %}, {{ a.mpg_before|num }} mpg{% endif %})</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  </div>
+</details>
+{%- endmacro %}
+
+{% macro player_row(p) -%}
+<details class="row-d prw">
+  <summary>
+    <span class="prw-main">
+      <span class="prw-name"><b>{{ p.player }}</b> <span class="team-tag">{{ dot(p.team) }}{{ p.team.code }}</span></span>
+      <span class="prw-line tabnum">{% if p.recent.pts is not none %}{{ p.recent.pts|num }} pts{% if p.d_pts is not none %} <i class="{{ 'pos' if p.d_pts >= 0 else 'neg' }}">{{ p.d_pts|signed }}</i>{% endif %}{% endif %}{% if p.window %} &middot; {{ p.window }}{% endif %}</span>
+    </span>
+    <span class="prw-val tabnum"><span class="muted">{{ p.impact_baseline|num }}</span> {{ icon("arrow") }} <b class="{{ 'pos' if p.hot else 'neg' }}">{{ p.impact_recent|num }}</b><small>impact</small></span>
+  </summary>
+  <div class="row-body">
+    <div class="prow-spark"><span class="prow-from tabnum">{{ p.impact_baseline|num }}</span>{{ p.spark|safe }}<span class="prow-to tabnum {{ 'pos' if p.hot else 'neg' }}">{{ p.impact_recent|num }}</span></div>
+    <p class="prow-line">
+      {% if p.recent.pts is not none %}<span><b>{{ p.recent.pts|num }}</b> pts{% if p.d_pts is not none %} <i class="{{ 'pos' if p.d_pts >= 0 else 'neg' }}">{{ p.d_pts|signed }}</i>{% endif %}</span>{% endif %}
+      {% if p.recent.reb is not none %}<span><b>{{ p.recent.reb|num }}</b> reb</span>{% endif %}
+      {% if p.recent.ast is not none %}<span><b>{{ p.recent.ast|num }}</b> ast</span>{% endif %}
+      {% if p.recent.ts_pct is not none %}<span><b>{{ p.recent.ts_pct|ts }}</b> TS{% if p.d_ts is not none %} <i class="{{ 'pos' if p.d_ts >= 0 else 'neg' }}">{{ p.d_ts|signed }}</i>{% endif %}</span>{% endif %}
+      {% if p.recent.min is not none %}<span><b>{{ p.recent.min|num }}</b> min{% if p.d_min is not none %} <i class="{{ 'pos' if p.d_min >= 0 else 'neg' }}">{{ p.d_min|signed }}</i>{% endif %}</span>{% endif %}
+    </p>
+    {% if p.blurb %}<p class="prow-blurb">{{ p.blurb }}</p>{% endif %}
+  </div>
+</details>
+{%- endmacro %}
+
+{% macro out_row(i) -%}
+<li class="inj-row">
+  {{ badge(i.team, "sm") }}
+  <div class="inj-main"><p><strong>{{ i.player }}</strong></p>
+    {% if i.reason or i.opponent %}<p class="inj-reason">{% if i.opponent %}vs {{ i.opponent }}{% if i.reason %} &middot; {% endif %}{% endif %}{{ i.reason }}</p>{% endif %}</div>
+  <div class="inj-side">{{ status_pill(i.status) }}{% if i.mpg is not none %}<span class="inj-mpg tabnum">{{ i.mpg|num }} mpg</span>{% endif %}</div>
+</li>
+{%- endmacro %}
+
+{% macro chg_row(i) -%}
+<li class="chg"><span class="chg-who">{{ dot(i.team) }}<span class="chg-team">{{ i.team.code }}</span> <strong>{{ i.player }}</strong>{% if i.tonight %} <span class="chg-tn">plays tonight</span>{% endif %}</span>
+  <span class="chg-st">{% if i.from_status %}<span class="muted">{{ i.from_status }}</span> {{ icon("arrow") }} {% endif %}{{ status_pill(i.to_status) }}</span></li>
 {%- endmacro %}
 
 {# --------------------------------------------------------------- tonight card #}

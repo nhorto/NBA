@@ -275,3 +275,249 @@ def test_fallback_card_text_uses_only_facts():
         assert c["home"]["nickname"] in c["headline"] or c["away"]["nickname"] in c["headline"]
         for n in re.findall(r"\d+", c["story"]):   # every number in the story is in the facts
             assert n in json.dumps(g, ensure_ascii=False), (n, c["story"])
+
+
+# ------------------------------------------------------------------ compact home page
+
+from html.parser import HTMLParser  # noqa: E402
+
+
+class _DetailsText(HTMLParser):
+    """Collects text that sits inside a <details> body vs. text outside any <details>.
+    Text inside <summary> counts as visible (it is what a collapsed row shows)."""
+
+    VOID = {"br", "img", "meta", "link", "input", "hr", "source", "path", "circle", "line",
+            "polyline", "rect"}
+
+    def __init__(self):
+        super().__init__()
+        self.stack: list[str] = []
+        self.hidden: list[str] = []
+        self.visible: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag not in self.VOID:
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag in self.stack:
+            while self.stack and self.stack.pop() != tag:
+                pass
+
+    def handle_data(self, data):
+        if not data.strip() or "script" in self.stack:
+            return
+        # visible only if, for every enclosing <details>, we are inside its <summary>
+        levels: list[bool] = []
+        for t in self.stack:
+            if t == "details":
+                levels.append(False)
+            elif t == "summary" and levels:
+                levels[-1] = True
+        (self.visible if all(levels) else self.hidden).append(data)
+
+
+def split_text(html: str) -> tuple[str, str]:
+    p = _DetailsText()
+    p.feed(html)
+    norm = lambda xs: re.sub(r"\s+", " ", " ".join(xs))  # noqa: E731
+    return norm(p.visible), norm(p.hidden)
+
+
+def test_collapsed_content_is_in_the_html_inside_details(client):
+    html = client.get("/").text
+    visible, hidden = split_text(html)
+    vm = view.brief_view(sample())
+    ln = vm["last_night"]
+    # featured cards: the lead is visible, the rest of the story is one tap away
+    for c in ln["featured"]:
+        assert c["story_lead"] in visible
+        if c["story_rest"]:
+            assert c["story_rest"] in hidden and c["story_rest"] not in visible
+    # compact rows: score + headline visible, story collapsed
+    for c in ln["also"] + ln["blowouts"]:
+        assert c["headline"] in visible
+        assert c["story"] in hidden
+    assert ln["blowouts"], "the sample has 20+ point games"
+    # see-all lists, tonight rows, scorecard detail
+    for p in vm["player"]["hot"][3:] + vm["player"]["cold"][3:]:
+        assert p["player"] in hidden
+    for i in vm["injuries"]["rest"]:
+        assert i["player"] in hidden
+    assert "Matchup details" in hidden and "Matchup details" not in visible
+    assert "Calibration" in hidden and "Log loss" in hidden
+    assert "Last-10 leaders" in hidden
+    # every collapsible is a real <details>/<summary>, so it works without JS
+    assert html.count("<details") == html.count("</details>") > 20
+    assert html.count("<summary") == html.count("<details")
+
+
+def test_unsung_hero_threshold():
+    q = view.hero_qualifies
+    # the noisy single-game on/off pick: 1 pt on 0-2, 13 minutes
+    assert not q({"name": "Jordan Miller", "line": "1 pts (0-2 FG, 0-2 3P, 1-2 FT), 4 ast",
+                  "minutes": 13.2, "plus_minus": 6, "stocks": 1})
+    # 15+ minutes and pts+reb+ast+stocks >= 10
+    assert q({"name": "Kris Dunn", "line": "2 pts (1-4 FG), 8 reb, 8 ast, 2 stl",
+              "minutes": 29.4, "plus_minus": 2, "stocks": 2})
+    # low box production but +8 or better
+    assert q({"name": "X", "line": "3 pts (1-4 FG), 2 reb", "minutes": 20, "plus_minus": 8})
+    assert not q({"name": "X", "line": "3 pts (1-4 FG), 2 reb", "minutes": 20, "plus_minus": 7})
+    # minutes floor applies even with big production; missing minutes never qualifies
+    assert not q({"name": "X", "line": "14 pts, 6 reb", "minutes": 14.9, "plus_minus": 12})
+    assert not q({"name": "X", "line": "14 pts, 6 reb", "plus_minus": 12})
+    # stocks fall back to stl + blk from the line
+    assert q({"name": "X", "line": "4 pts, 2 reb, 1 ast, 2 stl, 1 blk", "minutes": 18,
+              "plus_minus": 0})
+    assert view.hero_production({"line": "4 pts, 2 reb, 1 ast, 2 stl, 1 blk"}) == 10
+
+
+def test_featured_player_skips_weak_candidates_and_falls_back_to_top_performer():
+    b = sample()
+    g = next(x for x in b["last_night"]["games"] if x["game_id"] == "0022500801")
+    names = [u["name"] for u in g["facts"]["unsung_hero"]]
+    assert names[0] == "Jordan Miller"                  # the analytics' (noisy) first pick
+    c = view.card_view(copy.deepcopy(g))
+    assert c["featured"]["kind"] == "unsung" and c["featured"]["name"] == "Kris Dunn"
+    # nobody clears the bar -> the winning side's top performer
+    g2 = copy.deepcopy(g)
+    g2["facts"]["unsung_hero"] = g2["facts"]["unsung_hero"][:2]
+    c2 = view.card_view(g2)
+    assert c2["featured"]["kind"] == "top"
+    assert c2["featured"]["name"] == "Bennedict Mathurin"
+    assert c2["featured"]["team"]["code"] == "LAC"
+
+
+def test_weak_candidate_not_on_home_card_but_still_on_game_page(client):
+    visible, hidden = split_text(client.get("/").text)
+    assert "Jordan Miller" not in visible and "Jordan Miller" not in hidden
+    assert "Jordan Miller" in client.get("/game/0022500801").text
+
+
+def _card(gid, margin, **kw):
+    winner = "BOS"
+    c = {"game_id": gid, "status": "final", "final": True,
+         "home": {"team": "BOS", "score": 100 + margin}, "away": {"team": "NYK", "score": 100},
+         "result": {"home_score": 100 + margin, "away_score": 100, "winner": winner,
+                    "margin": margin, "overtimes": kw.pop("ots", 0)},
+         "facts": {"winner": winner, "notable_lines": kw.pop("notable", []),
+                   "comeback": kw.pop("comeback", None), **kw.pop("facts", {})},
+         "facts_available": True, "market": kw.pop("market", None),
+         "prediction": None, "correct": kw.pop("correct", None)}
+    return view.card_view(c)
+
+
+def test_card_ordering_by_interest():
+    cards = [
+        _card("blowout", 28),
+        _card("plain", 12),
+        _card("close", 2),
+        _card("upset", 9, market={"home_spread": 4.5, "favorite_won": False}),
+        _card("star", 14, notable=[{"name": "A B", "team": "BOS",
+                                    "flags": ["40_point_game"]}]),
+        _card("comeback", 6, comeback={"team": "BOS", "deficit": 18}),
+        _card("ot", 4, ots=1),
+    ]
+    order = [c["game_id"] for c in view.order_cards(cards)]
+    assert order[0] in ("close", "ot", "comeback")
+    assert order[-1] == "blowout" and order[-2] == "plain"
+    assert order.index("upset") < order.index("plain")
+    assert order.index("star") < order.index("plain")
+    tiers = view.card_tiers(view.order_cards(cards))
+    assert [c["game_id"] for c in tiers["blowouts"]] == ["blowout"]
+    assert len(tiers["featured"]) == view.FEATURED_MAX and tiers["also"]
+    by_id = {c["game_id"]: c for c in cards}
+    assert "Thriller" in by_id["close"]["tags"] and "Comeback" in by_id["comeback"]["tags"]
+    assert "Upset" in by_id["upset"]["tags"] and "Overtime" in by_id["ot"]["tags"]
+    # a 40-point night keeps a 20+ point win out of the blowout group
+    big = _card("bigstar", 25, notable=[{"name": "A B", "team": "BOS",
+                                         "flags": ["50_point_game"]}])
+    assert not big["blowout"]
+
+
+def test_card_ordering_uses_win_probability_facts_when_present():
+    calm = _card("calm", 2, facts={"excitement": 0.6})          # close score, never in doubt
+    wild = _card("wild", 11, facts={"excitement": 4.2,
+                                    "comeback_wp": {"team": "BOS", "min_wp": 0.04}})
+    order = [c["game_id"] for c in view.order_cards([calm, wild])]
+    assert order == ["wild", "calm"]
+    assert "Comeback" in wild["tags"]
+
+
+def test_sample_home_page_order(client):
+    vm = view.brief_view(sample())
+    ids = [c["game_id"] for c in vm["last_night"]["cards"]]
+    assert ids[0] == "0022500801"                      # the one-point LAC comeback leads
+    assert all(c["blowout"] for c in vm["last_night"]["blowouts"])
+    assert ids[-len(vm["last_night"]["blowouts"]):] == \
+        [c["game_id"] for c in vm["last_night"]["blowouts"]]
+    html = client.get("/").text
+    assert html.index('id="g0022500801"') < html.index('id="g0022500793"')   # CLE rout last
+
+
+def test_sixty_second_version_renders(client):
+    html = client.get("/").text
+    assert "The 60-second version" in html
+    s60 = html[html.index('class="s60 card"'):html.index("</aside>")]
+    items = re.findall(r"<li>", s60)
+    assert 3 <= len(items) <= 5
+    for label in ("Game of the night", "Injury", "Tonight", "Upset watch"):
+        assert label in s60
+    assert "Clippers 115, Nuggets 114" in s60
+    no_none(s60)
+
+
+def test_sixty_second_bullets_use_only_facts():
+    b = sample()
+    vm = view.brief_view(b)
+    blob = json.dumps(b, ensure_ascii=False)
+    for it in vm["sixty"]["bullets"]:
+        for n in re.findall(r"\d+(?:\.\d+)?", it["text"].replace("−", "-")):
+            assert n in blob, (n, it["text"])
+
+
+def test_sixty_second_version_on_an_empty_brief(data_dir):
+    write(data_dir, empty_brief())
+    html = TestClient(create_app(data_dir)).get("/brief/2026-02-15").text
+    assert "The 60-second version" in html
+    assert "No games last night" in html and "Nothing on the schedule tonight" in html
+    no_none(html)
+
+
+def test_sixty_second_writer_hook(data_dir):
+    b = sample()
+    b["sixty_seconds"] = {"bullets": ["Writer bullet one.", None, "  ", "Writer bullet two."]}
+    write(data_dir, b)
+    html = TestClient(create_app(data_dir)).get("/").text
+    s60 = html[html.index('class="s60 card"'):html.index("</aside>")]
+    assert "Writer bullet one." in s60 and "Writer bullet two." in s60
+    assert "Game of the night" not in s60
+    no_none(html)
+
+
+def test_story_lead_keeps_whole_sentences():
+    story = ("The Clippers trailed by 10. A 17-5 run turned a 74-64 deficit into an 81-79 lead "
+             "with 35.6 seconds left. Kelly Oubre Jr. scored 20. Kris Dunn added 8 assists.")
+    lead, rest = view.story_lead(story)
+    assert f"{lead} {rest}" == story
+    assert lead.endswith(".") and rest and "35.6" in lead + rest
+    assert "Oubre Jr. scored" in rest                 # no split after "Jr."
+    assert view.story_lead("One sentence only.") == ("One sentence only.", "")
+    assert view.story_lead(None) == ("", "")
+
+
+def test_no_none_anywhere_with_new_fields(data_dir):
+    b = sample()
+    for i, g in enumerate(b["last_night"]["games"]):
+        g["facts"]["excitement"] = None if i % 2 else 1.5 + i / 10
+        g["facts"]["comeback_wp"] = None if i % 3 else {"team": None, "min_wp": None, "at": None}
+        g["facts"]["unsung_hero"] = [{"name": "No Minutes", "team": g["home"]["team"],
+                                      "line": None, "minutes": None, "plus_minus": None}]
+    b["tonight"]["games"][0]["factors"] = [{"kind": "injury", "team": "CHA",
+                                            "value": {"player": "A B", "status": None}}]
+    write(data_dir, b)
+    c = TestClient(create_app(data_dir))
+    for url in ("/", "/archive", f"/game/{b['last_night']['games'][0]['game_id']}"):
+        r = c.get(url)
+        assert r.status_code == 200
+        no_none(r.text)
