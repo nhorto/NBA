@@ -1,0 +1,551 @@
+{
+ "arena": "Smoothie King Center",
+ "away": {
+  "name": "San Antonio Spurs",
+  "periods": [
+   30,
+   27,
+   25,
+   25,
+   13
+  ],
+  "score": 120,
+  "team": "SAS"
+ },
+ "clutch": {
+  "had_clutch": true,
+  "key_plays": [
+   {
+    "clock": "1:14",
+    "kind": "steal",
+    "label": "Q4",
+    "player": "Zion Williamson",
+    "score": {
+     "NOP": 102,
+     "SAS": 104
+    },
+    "team": "NOP"
+   },
+   {
+    "clock": "1:07",
+    "kind": "tying",
+    "label": "Q4",
+    "player": "Trey Murphy III",
+    "score": {
+     "NOP": 104,
+     "SAS": 104
+    },
+    "team": "NOP"
+   },
+   {
+    "clock": "0:32.2",
+    "kind": "go_ahead",
+    "label": "Q4",
+    "player": "Zion Williamson",
+    "score": {
+     "NOP": 106,
+     "SAS": 104
+    },
+    "team": "NOP"
+   },
+   {
+    "clock": "0:21",
+    "kind": "go_ahead",
+    "label": "Q4",
+    "player": "Stephon Castle",
+    "score": {
+     "NOP": 106,
+     "SAS": 107
+    },
+    "team": "SAS"
+   },
+   {
+    "clock": "0:12.2",
+    "kind": "tying",
+    "label": "Q4",
+    "player": "Zion Williamson",
+    "score": {
+     "NOP": 107,
+     "SAS": 107
+    },
+    "team": "NOP"
+   },
+   {
+    "clock": "4:42",
+    "decisive": true,
+    "kind": "go_ahead",
+    "label": "OT",
+    "player": "Victor Wembanyama",
+    "score": {
+     "NOP": 107,
+     "SAS": 109
+    },
+    "team": "SAS"
+   }
+  ],
+  "players": [
+   {
+    "ast": 1,
+    "blk": 0,
+    "fg": "2-4",
+    "ft": "1-2",
+    "id": 1629627,
+    "name": "Zion Williamson",
+    "plus_minus": -3,
+    "pts": 5,
+    "stl": 1,
+    "team": "NOP",
+    "tov": 0
+   },
+   {
+    "ast": 2,
+    "blk": 0,
+    "fg": "1-2",
+    "ft": "1-2",
+    "id": 1642264,
+    "name": "Stephon Castle",
+    "plus_minus": 3,
+    "pts": 4,
+    "stl": 0,
+    "team": "SAS",
+    "tov": 3
+   },
+   {
+    "ast": 0,
+    "blk": 1,
+    "fg": "2-4",
+    "ft": "0-0",
+    "id": 1641705,
+    "name": "Victor Wembanyama",
+    "plus_minus": -2,
+    "pts": 4,
+    "stl": 0,
+    "team": "SAS",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "2-3",
+    "ft": "0-0",
+    "id": 1630530,
+    "name": "Trey Murphy III",
+    "plus_minus": -3,
+    "pts": 4,
+    "stl": 1,
+    "team": "NOP",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "1-1",
+    "ft": "0-0",
+    "id": 1630577,
+    "name": "Julian Champagnie",
+    "plus_minus": 7,
+    "pts": 3,
+    "stl": 0,
+    "team": "SAS",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "1-2",
+    "ft": "0-0",
+    "id": 1630170,
+    "name": "Devin Vassell",
+    "plus_minus": 3,
+    "pts": 3,
+    "stl": 0,
+    "team": "SAS",
+    "tov": 1
+   }
+  ],
+  "points": {
+   "NOP": 15,
+   "SAS": 18
+  },
+  "seconds": 391.5
+ },
+ "comeback": {
+  "at": {
+   "clock": "8:10",
+   "label": "Q4",
+   "score": {
+    "NOP": 94,
+    "SAS": 86
+   }
+  },
+  "deficit": 8,
+  "team": "SAS"
+ },
+ "date": "2025-10-24",
+ "game_id": "0022500095",
+ "garbage_time": {
+  "seconds": 0.0
+ },
+ "home": {
+  "name": "New Orleans Pelicans",
+  "periods": [
+   27,
+   31,
+   22,
+   27,
+   9
+  ],
+  "score": 116,
+  "team": "NOP"
+ },
+ "incidents": {
+  "ejections": [],
+  "foul_outs": [
+   {
+    "clock": "9:58",
+    "id": 1629640,
+    "label": "Q4",
+    "name": "Keldon Johnson",
+    "team": "SAS"
+   },
+   {
+    "clock": "4:17",
+    "id": 1641705,
+    "label": "OT",
+    "name": "Victor Wembanyama",
+    "team": "SAS"
+   },
+   {
+    "clock": "1:38",
+    "id": 1642852,
+    "label": "OT",
+    "name": "Derik Queen",
+    "team": "NOP"
+   }
+  ],
+  "possible_injuries": []
+ },
+ "largest_lead": {
+  "NOP": {
+   "clock": "8:10",
+   "label": "Q4",
+   "lead": 8,
+   "score": {
+    "NOP": 94,
+    "SAS": 86
+   }
+  },
+  "SAS": {
+   "clock": "4:23",
+   "label": "Q3",
+   "lead": 9,
+   "score": {
+    "NOP": 69,
+    "SAS": 78
+   }
+  }
+ },
+ "lead_changes": 15,
+ "margin": 4,
+ "notable_lines": [
+  {
+   "flags": [
+    "20_10",
+    "10_stocks"
+   ],
+   "id": 1641705,
+   "line": "29 pts (13-23 FG, 0-3 3P, 3-4 FT), 11 reb, 9 blk",
+   "name": "Victor Wembanyama",
+   "team": "SAS"
+  },
+  {
+   "flags": [
+    "20_10"
+   ],
+   "id": 1630530,
+   "line": "24 pts (9-18 FG, 3-8 3P, 3-3 FT), 10 reb, 5 ast, 3 stl",
+   "name": "Trey Murphy III",
+   "team": "NOP"
+  },
+  {
+   "flags": [
+    "20_10"
+   ],
+   "id": 1629627,
+   "line": "27 pts (8-18 FG, 11-16 FT), 10 reb, 7 ast, 3 stl",
+   "name": "Zion Williamson",
+   "team": "NOP"
+  },
+  {
+   "flags": [
+    "6_threes"
+   ],
+   "id": 1630170,
+   "line": "23 pts (8-19 FG, 6-14 3P, 1-2 FT), 5 reb",
+   "name": "Devin Vassell",
+   "team": "SAS"
+  },
+  {
+   "flags": [
+    "9_turnovers"
+   ],
+   "id": 1642264,
+   "line": "16 pts (5-12 FG, 3-8 3P, 3-6 FT), 5 reb, 6 ast",
+   "name": "Stephon Castle",
+   "team": "SAS"
+  }
+ ],
+ "overtimes": 1,
+ "runs": [
+  {
+   "from": {
+    "clock": "6:28",
+    "label": "Q2",
+    "score": {
+     "NOP": 43,
+     "SAS": 42
+    }
+   },
+   "minutes": 2.8,
+   "run": "11-3",
+   "team": "SAS",
+   "to": {
+    "clock": "3:38",
+    "label": "Q2",
+    "score": {
+     "NOP": 46,
+     "SAS": 53
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "2:50",
+    "label": "Q2",
+    "score": {
+     "NOP": 46,
+     "SAS": 53
+    }
+   },
+   "minutes": 2.3,
+   "run": "10-2",
+   "team": "NOP",
+   "to": {
+    "clock": "0:32",
+    "label": "Q2",
+    "score": {
+     "NOP": 56,
+     "SAS": 55
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "0:31.7",
+    "label": "Q3",
+    "score": {
+     "NOP": 76,
+     "SAS": 82
+    }
+   },
+   "includes_unanswered": "11-0",
+   "minutes": 4.4,
+   "run": "18-4",
+   "team": "NOP",
+   "to": {
+    "clock": "8:10",
+    "label": "Q4",
+    "score": {
+     "NOP": 94,
+     "SAS": 86
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "7:56",
+    "label": "Q4",
+    "score": {
+     "NOP": 94,
+     "SAS": 86
+    }
+   },
+   "minutes": 2.5,
+   "run": "14-0",
+   "team": "SAS",
+   "to": {
+    "clock": "5:28",
+    "label": "Q4",
+    "score": {
+     "NOP": 94,
+     "SAS": 100
+    }
+   },
+   "unanswered": true
+  },
+  {
+   "from": {
+    "clock": "0:21",
+    "label": "Q4",
+    "score": {
+     "NOP": 106,
+     "SAS": 104
+    }
+   },
+   "minutes": 3.7,
+   "run": "14-4",
+   "team": "SAS",
+   "to": {
+    "clock": "1:38",
+    "label": "OT",
+    "score": {
+     "NOP": 110,
+     "SAS": 118
+    }
+   },
+   "unanswered": false
+  }
+ ],
+ "schema": 1,
+ "times_tied": 10,
+ "top_performers": [
+  {
+   "game_score": 23.9,
+   "id": 1630530,
+   "line": "24 pts (9-18 FG, 3-8 3P, 3-3 FT), 10 reb, 5 ast, 3 stl",
+   "minutes": 45.8,
+   "name": "Trey Murphy III",
+   "plus_minus": -2,
+   "team": "NOP",
+   "ts_pct": 0.621
+  },
+  {
+   "game_score": 23.7,
+   "id": 1629627,
+   "line": "27 pts (8-18 FG, 11-16 FT), 10 reb, 7 ast, 3 stl",
+   "minutes": 37.0,
+   "name": "Zion Williamson",
+   "plus_minus": 6,
+   "team": "NOP",
+   "ts_pct": 0.539
+  },
+  {
+   "game_score": 28.5,
+   "id": 1641705,
+   "line": "29 pts (13-23 FG, 0-3 3P, 3-4 FT), 11 reb, 9 blk",
+   "minutes": 32.3,
+   "name": "Victor Wembanyama",
+   "plus_minus": -12,
+   "team": "SAS",
+   "ts_pct": 0.586
+  },
+  {
+   "game_score": 19.6,
+   "id": 1628436,
+   "line": "14 pts (6-9 FG, 2-4 FT), 12 reb, 4 ast",
+   "minutes": 34.5,
+   "name": "Luke Kornet",
+   "plus_minus": 11,
+   "team": "SAS",
+   "ts_pct": 0.651
+  }
+ ],
+ "turning_point": {
+  "from": {
+   "clock": "7:56",
+   "label": "Q4",
+   "score": {
+    "NOP": 94,
+    "SAS": 86
+   }
+  },
+  "method": "run",
+  "minutes": 2.5,
+  "reason": "flipped_lead",
+  "run": "14-0",
+  "team": "SAS",
+  "to": {
+   "clock": "5:28",
+   "label": "Q4",
+   "score": {
+    "NOP": 94,
+    "SAS": 100
+   }
+  }
+ },
+ "unsung_hero": [
+  {
+   "bench": true,
+   "id": 1628436,
+   "line": "14 pts (6-9 FG, 2-4 FT), 12 reb, 4 ast",
+   "minutes": 34.5,
+   "name": "Luke Kornet",
+   "on_off": 35.7,
+   "plus_minus": 11,
+   "score": 20.34,
+   "stocks": 1,
+   "team": "SAS",
+   "ts_pct": 0.651,
+   "why": [
+    "+11 on the floor",
+    "team +35.7 per 100 better with him on",
+    "65% TS",
+    "9 offensive rebounds",
+    "+14 during the decisive run"
+   ],
+   "winner": true
+  },
+  {
+   "bench": false,
+   "id": 203084,
+   "line": "7 pts (2-5 FG, 1-3 3P, 2-2 FT), 5 ast, 2 blk",
+   "minutes": 34.2,
+   "name": "Harrison Barnes",
+   "on_off": 38.6,
+   "plus_minus": 12,
+   "score": 14.74,
+   "stocks": 3,
+   "team": "SAS",
+   "ts_pct": 0.595,
+   "why": [
+    "+12 on the floor",
+    "team +38.6 per 100 better with him on",
+    "3 stocks",
+    "5 assists",
+    "+14 during the decisive run"
+   ],
+   "winner": true
+  },
+  {
+   "bench": false,
+   "id": 1630577,
+   "line": "7 pts (3-8 FG, 1-6 3P), 9 reb, 3 ast",
+   "minutes": 36.0,
+   "name": "Julian Champagnie",
+   "on_off": 37.0,
+   "plus_minus": 11,
+   "score": 11.03,
+   "stocks": 1,
+   "team": "SAS",
+   "ts_pct": 0.438,
+   "why": [
+    "+11 on the floor",
+    "team +37.0 per 100 better with him on",
+    "+14 during the decisive run"
+   ],
+   "winner": true
+  }
+ ],
+ "validation": {
+  "anomalies": 0,
+  "max_minutes_diff_s": 0.0,
+  "minutes_mismatches": 0,
+  "ok": true,
+  "players": 19,
+  "plus_minus_mismatches": 0
+ },
+ "winner": "SAS"
+}

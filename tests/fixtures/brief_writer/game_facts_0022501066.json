@@ -1,0 +1,488 @@
+{
+ "arena": "Gainbridge Fieldhouse",
+ "away": {
+  "name": "LA Clippers",
+  "periods": [
+   21,
+   29,
+   36,
+   28
+  ],
+  "score": 114,
+  "team": "LAC"
+ },
+ "clutch": {
+  "had_clutch": true,
+  "key_plays": [
+   {
+    "clock": "4:00",
+    "kind": "go_ahead",
+    "label": "Q4",
+    "player": "Obi Toppin",
+    "score": {
+     "IND": 103,
+     "LAC": 101
+    },
+    "team": "IND"
+   },
+   {
+    "clock": "0:01",
+    "decisive": true,
+    "kind": "go_ahead",
+    "label": "Q4",
+    "player": "Kawhi Leonard",
+    "score": {
+     "IND": 113,
+     "LAC": 114
+    },
+    "team": "LAC"
+   }
+  ],
+  "players": [
+   {
+    "ast": 1,
+    "blk": 0,
+    "fg": "3-3",
+    "ft": "0-0",
+    "id": 1630167,
+    "name": "Obi Toppin",
+    "plus_minus": 4,
+    "pts": 7,
+    "stl": 0,
+    "team": "IND",
+    "tov": 0
+   },
+   {
+    "ast": 1,
+    "blk": 0,
+    "fg": "2-4",
+    "ft": "1-2",
+    "id": 202695,
+    "name": "Kawhi Leonard",
+    "plus_minus": -2,
+    "pts": 5,
+    "stl": 1,
+    "team": "LAC",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "1-3",
+    "ft": "2-2",
+    "id": 1629636,
+    "name": "Darius Garland",
+    "plus_minus": -2,
+    "pts": 5,
+    "stl": 0,
+    "team": "LAC",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "1-2",
+    "ft": "0-0",
+    "id": 1630174,
+    "name": "Aaron Nesmith",
+    "plus_minus": 2,
+    "pts": 3,
+    "stl": 0,
+    "team": "IND",
+    "tov": 1
+   },
+   {
+    "ast": 1,
+    "blk": 0,
+    "fg": "1-3",
+    "ft": "0-0",
+    "id": 1627783,
+    "name": "Pascal Siakam",
+    "plus_minus": 2,
+    "pts": 2,
+    "stl": 0,
+    "team": "IND",
+    "tov": 1
+   },
+   {
+    "ast": 1,
+    "blk": 1,
+    "fg": "0-1",
+    "ft": "0-0",
+    "id": 1629614,
+    "name": "Andrew Nembhard",
+    "plus_minus": 2,
+    "pts": 0,
+    "stl": 0,
+    "team": "IND",
+    "tov": 2
+   }
+  ],
+  "points": {
+   "IND": 12,
+   "LAC": 10
+  },
+  "seconds": 296.0
+ },
+ "comeback": {
+  "at": {
+   "clock": "9:55",
+   "label": "Q2",
+   "score": {
+    "IND": 45,
+    "LAC": 21
+   }
+  },
+  "deficit": 24,
+  "team": "LAC"
+ },
+ "date": "2026-03-27",
+ "game_id": "0022501066",
+ "garbage_time": {
+  "seconds": 0.0
+ },
+ "home": {
+  "name": "Indiana Pacers",
+  "periods": [
+   42,
+   18,
+   28,
+   25
+  ],
+  "score": 113,
+  "team": "IND"
+ },
+ "incidents": {
+  "ejections": [],
+  "foul_outs": [],
+  "possible_injuries": [
+   {
+    "id": 1641716,
+    "last_on_floor": {
+     "clock": "7:37",
+     "label": "Q1"
+    },
+    "minutes": 4.4,
+    "name": "Jarace Walker",
+    "note": "left the game and did not return",
+    "source": "heuristic",
+    "team": "IND"
+   }
+  ]
+ },
+ "largest_lead": {
+  "IND": {
+   "clock": "9:55",
+   "label": "Q2",
+   "lead": 24,
+   "score": {
+    "IND": 45,
+    "LAC": 21
+   }
+  },
+  "LAC": {
+   "clock": "11:32",
+   "label": "Q1",
+   "lead": 3,
+   "score": {
+    "IND": 0,
+    "LAC": 3
+   }
+  }
+ },
+ "lead_changes": 2,
+ "margin": 1,
+ "notable_lines": [
+  {
+   "flags": [
+    "30_point_game",
+    "6_threes",
+    "efficient_scoring"
+   ],
+   "id": 1629636,
+   "line": "30 pts (10-19 FG, 6-11 3P, 4-4 FT), 5 ast",
+   "name": "Darius Garland",
+   "team": "LAC"
+  },
+  {
+   "flags": [
+    "bench_scoring"
+   ],
+   "id": 1630167,
+   "line": "20 pts (8-11 FG, 4-7 3P), 8 reb, 4 ast",
+   "name": "Obi Toppin",
+   "team": "IND"
+  },
+  {
+   "flags": [
+    "efficient_scoring"
+   ],
+   "id": 1630174,
+   "line": "26 pts (10-14 FG, 4-5 3P, 2-2 FT), 7 reb",
+   "name": "Aaron Nesmith",
+   "team": "IND"
+  },
+  {
+   "flags": [
+    "cold_shooting"
+   ],
+   "id": 1627783,
+   "line": "11 pts (4-16 FG, 0-3 3P, 3-4 FT), 6 reb, 3 ast",
+   "name": "Pascal Siakam",
+   "team": "IND"
+  }
+ ],
+ "overtimes": 0,
+ "runs": [
+  {
+   "from": {
+    "clock": "8:57",
+    "label": "Q1",
+    "score": {
+     "IND": 8,
+     "LAC": 11
+    }
+   },
+   "includes_unanswered": "13-0",
+   "minutes": 5.8,
+   "run": "24-5",
+   "team": "IND",
+   "to": {
+    "clock": "3:10",
+    "label": "Q1",
+    "score": {
+     "IND": 32,
+     "LAC": 16
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "2:00",
+    "label": "Q1",
+    "score": {
+     "IND": 32,
+     "LAC": 18
+    }
+   },
+   "includes_unanswered": "8-0",
+   "minutes": 4.1,
+   "run": "13-3",
+   "team": "IND",
+   "to": {
+    "clock": "9:55",
+    "label": "Q2",
+    "score": {
+     "IND": 45,
+     "LAC": 21
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "9:36",
+    "label": "Q2",
+    "score": {
+     "IND": 45,
+     "LAC": 21
+    }
+   },
+   "minutes": 5.8,
+   "run": "19-7",
+   "team": "LAC",
+   "to": {
+    "clock": "3:45",
+    "label": "Q2",
+    "score": {
+     "IND": 52,
+     "LAC": 40
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "1:23",
+    "label": "Q2",
+    "score": {
+     "IND": 60,
+     "LAC": 42
+    }
+   },
+   "includes_unanswered": "13-0",
+   "minutes": 3.4,
+   "run": "16-2",
+   "team": "LAC",
+   "to": {
+    "clock": "9:59",
+    "label": "Q3",
+    "score": {
+     "IND": 62,
+     "LAC": 58
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "8:54",
+    "label": "Q4",
+    "score": {
+     "IND": 97,
+     "LAC": 88
+    }
+   },
+   "minutes": 2.7,
+   "run": "13-4",
+   "team": "LAC",
+   "to": {
+    "clock": "6:13",
+    "label": "Q4",
+    "score": {
+     "IND": 101,
+     "LAC": 101
+    }
+   },
+   "unanswered": false
+  }
+ ],
+ "schema": 1,
+ "times_tied": 5,
+ "top_performers": [
+  {
+   "game_score": 19.7,
+   "id": 1630167,
+   "line": "20 pts (8-11 FG, 4-7 3P), 8 reb, 4 ast",
+   "minutes": 22.9,
+   "name": "Obi Toppin",
+   "plus_minus": 6,
+   "team": "IND",
+   "ts_pct": 0.909
+  },
+  {
+   "game_score": 18.1,
+   "id": 1630174,
+   "line": "26 pts (10-14 FG, 4-5 3P, 2-2 FT), 7 reb",
+   "minutes": 35.4,
+   "name": "Aaron Nesmith",
+   "plus_minus": -11,
+   "team": "IND",
+   "ts_pct": 0.874
+  },
+  {
+   "game_score": 22.8,
+   "id": 202695,
+   "line": "28 pts (13-26 FG, 1-6 3P, 1-2 FT), 8 reb, 4 ast, 3 stl",
+   "minutes": 34.5,
+   "name": "Kawhi Leonard",
+   "plus_minus": 17,
+   "team": "LAC",
+   "ts_pct": 0.521
+  },
+  {
+   "game_score": 19.8,
+   "id": 1629636,
+   "line": "30 pts (10-19 FG, 6-11 3P, 4-4 FT), 5 ast",
+   "minutes": 34.5,
+   "name": "Darius Garland",
+   "plus_minus": 2,
+   "team": "LAC",
+   "ts_pct": 0.723
+  }
+ ],
+ "turning_point": {
+  "from": {
+   "clock": "8:54",
+   "label": "Q4",
+   "score": {
+    "IND": 97,
+    "LAC": 88
+   }
+  },
+  "method": "run",
+  "minutes": 2.7,
+  "reason": "levelled",
+  "run": "13-4",
+  "team": "LAC",
+  "to": {
+   "clock": "6:13",
+   "label": "Q4",
+   "score": {
+    "IND": 101,
+    "LAC": 101
+   }
+  }
+ },
+ "unsung_hero": [
+  {
+   "bench": false,
+   "id": 201572,
+   "line": "16 pts (6-11 FG, 3-6 3P, 1-1 FT), 9 reb, 4 ast, 2 blk",
+   "minutes": 33.2,
+   "name": "Brook Lopez",
+   "on_off": 43.5,
+   "plus_minus": 10,
+   "score": 15.93,
+   "stocks": 2,
+   "team": "LAC",
+   "ts_pct": 0.699,
+   "why": [
+    "+10 on the floor",
+    "team +43.5 per 100 better with him on",
+    "70% TS",
+    "+7 during the decisive run"
+   ],
+   "winner": true
+  },
+  {
+   "bench": true,
+   "id": 1631097,
+   "line": "17 pts (2-8 FG, 1-3 3P, 12-15 FT), 7 reb",
+   "minutes": 29.2,
+   "name": "Bennedict Mathurin",
+   "on_off": 5.8,
+   "plus_minus": 2,
+   "score": 5.13,
+   "stocks": 1,
+   "team": "LAC",
+   "ts_pct": 0.582,
+   "why": [
+    "+2 on the floor",
+    "team +5.8 per 100 better with him on",
+    "+9 during the decisive run"
+   ],
+   "winner": true
+  },
+  {
+   "bench": false,
+   "id": 1629614,
+   "line": "13 pts (4-13 FG, 2-7 3P, 3-3 FT), 10 ast",
+   "minutes": 32.2,
+   "name": "Andrew Nembhard",
+   "on_off": 39.2,
+   "plus_minus": 8,
+   "score": 12.19,
+   "stocks": 2,
+   "team": "IND",
+   "ts_pct": 0.454,
+   "why": [
+    "+8 on the floor",
+    "team +39.2 per 100 better with him on",
+    "10 assists",
+    "+13 during the decisive run"
+   ],
+   "winner": false
+  }
+ ],
+ "validation": {
+  "anomalies": 0,
+  "max_minutes_diff_s": 0.0,
+  "minutes_mismatches": 0,
+  "ok": true,
+  "players": 22,
+  "plus_minus_mismatches": 0
+ },
+ "winner": "LAC"
+}

@@ -1,0 +1,1726 @@
+{
+ "schema": 1,
+ "as_of": "2026-02-15",
+ "season": "2025-26",
+ "data_through": "2026-02-12",
+ "games_per_team_median": 55,
+ "early_season": false,
+ "notes": [],
+ "method": {
+  "net_ratings": "points per 100 possessions; adj = opponent- and venue-adjusted",
+  "flag_rule": "last-10 adj net vs baseline (earlier games + 16 pseudo-games of prior season), |z| >= 2.25, |gap| >= 4.0, >= 15 games",
+  "flag_validity": {
+   "sample": "2015-16..2024-25, 5,708 team-checkpoints, constants fit on 2001-02..2014-15",
+   "rising": {
+    "n": 133,
+    "next10_beat_rating_pct": 61.7,
+    "next10_vs_rating": 1.5
+   },
+   "sliding": {
+    "n": 110,
+    "next10_below_rating_pct": 64.5,
+    "next10_vs_rating": -2.1
+   },
+   "base_rate_pct": 49.7,
+   "share_expected_by_chance": 0.72,
+   "reading": "a flag means real but modest carry-over: most of a 10-game gap is noise"
+  },
+  "impact_metric": "CI = GmSc + 0.5*(PTS - 2*TSA*par_TS) + 0.15*on-court rel +/-",
+  "hot_cold_validity": {
+   "hot": {
+    "n": 1029,
+    "next10_beat_baseline_pct": 76.0,
+    "next10_vs_baseline": 2.45
+   },
+   "cold": {
+    "n": 398,
+    "next10_below_baseline_pct": 68.3,
+    "next10_vs_baseline": -1.47
+   },
+   "base_rate_pct": 54.5,
+   "share_expected_by_chance": 0.61
+  },
+  "hot_cold_rule": "|z| >= 2.0 vs own baseline, rotation players (>= 20 mpg, >= 8 games)"
+ },
+ "teams": {
+  "rising": [
+   {
+    "team": "NYK",
+    "name": "New York Knicks",
+    "record": "35-20",
+    "last10": "8-2",
+    "streak": "W1",
+    "power_rank": 4,
+    "net": {
+     "season_raw": 6.2,
+     "last10_raw": 15.2,
+     "season_adj": 4.8,
+     "last10_adj": 14.3
+    },
+    "off": {
+     "season": 118.9,
+     "last10": 118.5
+    },
+    "def": {
+     "season": 112.7,
+     "last10": 103.3
+    },
+    "trend": {
+     "delta": 11.1,
+     "z": 2.66,
+     "baseline": 3.2,
+     "score": 1.3
+    },
+    "sos_last10": {
+     "opp_adj_net": -0.9,
+     "home_games": 5,
+     "rank": 24,
+     "of": 30
+    },
+    "reasons": [
+     {
+      "kind": "net_trend",
+      "value": 11.1,
+      "z": 2.66,
+      "detail": "adj net +14.3 last 10 vs +3.2 baseline (z +2.7); raw net +15.2 vs +6.2 season"
+     },
+     {
+      "kind": "defense_surge",
+      "value": -12.0,
+      "detail": "DRtg 103.3 last 10 vs 112.7 season"
+     },
+     {
+      "kind": "last10_record",
+      "value": 8,
+      "detail": "8-2 in last 10"
+     }
+    ],
+    "key_absences": [
+     {
+      "player": "OG Anunoby",
+      "team_games_missed": 4,
+      "mpg_before": 34.2,
+      "last_played": "2026-02-04"
+     },
+     {
+      "player": "Miles McBride",
+      "team_games_missed": 9,
+      "mpg_before": 31.0,
+      "last_played": "2026-01-27"
+     }
+    ]
+   },
+   {
+    "team": "CLE",
+    "name": "Cleveland Cavaliers",
+    "record": "34-21",
+    "last10": "9-1",
+    "streak": "W5",
+    "power_rank": 6,
+    "net": {
+     "season_raw": 4.0,
+     "last10_raw": 13.7,
+     "season_adj": 4.0,
+     "last10_adj": 12.1
+    },
+    "off": {
+     "season": 117.4,
+     "last10": 123.8
+    },
+    "def": {
+     "season": 113.4,
+     "last10": 110.1
+    },
+    "trend": {
+     "delta": 9.4,
+     "z": 2.26,
+     "baseline": 2.7,
+     "score": 1.1
+    },
+    "sos_last10": {
+     "opp_adj_net": -2.1,
+     "home_games": 4,
+     "rank": 29,
+     "of": 30
+    },
+    "reasons": [
+     {
+      "kind": "net_trend",
+      "value": 9.4,
+      "z": 2.26,
+      "detail": "adj net +12.1 last 10 vs +2.7 baseline (z +2.3); raw net +13.7 vs +4.0 season"
+     },
+     {
+      "kind": "offense_surge",
+      "value": 5.9,
+      "detail": "ORtg 123.8 last 10 vs 117.4 season"
+     },
+     {
+      "kind": "streak",
+      "value": 5,
+      "detail": "won 5 straight"
+     },
+     {
+      "kind": "last10_record",
+      "value": 9,
+      "detail": "9-1 in last 10"
+     },
+     {
+      "kind": "schedule_soft",
+      "value": -2.1,
+      "detail": "last 10 opponents avg adj net -2.1 (2nd easiest of 30)"
+     }
+    ],
+    "key_absences": [
+     {
+      "player": "Darius Garland",
+      "team_games_missed": 13,
+      "mpg_before": 30.4,
+      "last_played": "2026-01-14"
+     },
+     {
+      "player": "Evan Mobley",
+      "team_games_missed": 7,
+      "mpg_before": 34.6,
+      "last_played": "2026-01-26"
+     }
+    ]
+   }
+  ],
+  "sliding": [
+   {
+    "team": "CHI",
+    "name": "Chicago Bulls",
+    "record": "24-31",
+    "last10": "1-9",
+    "streak": "L6",
+    "power_rank": 24,
+    "net": {
+     "season_raw": -3.7,
+     "last10_raw": -12.5,
+     "season_adj": -3.4,
+     "last10_adj": -11.8
+    },
+    "off": {
+     "season": 113.7,
+     "last10": 108.9
+    },
+    "def": {
+     "season": 117.4,
+     "last10": 121.3
+    },
+    "trend": {
+     "delta": -9.9,
+     "z": -2.37,
+     "baseline": -2.0,
+     "score": -1.1
+    },
+    "sos_last10": {
+     "opp_adj_net": 0.1,
+     "home_games": 3,
+     "rank": 15,
+     "of": 30
+    },
+    "reasons": [
+     {
+      "kind": "net_trend",
+      "value": -9.9,
+      "z": -2.37,
+      "detail": "adj net -11.8 last 10 vs -2.0 baseline (z -2.4); raw net -12.5 vs -3.7 season"
+     },
+     {
+      "kind": "streak",
+      "value": -6,
+      "detail": "lost 6 straight"
+     },
+     {
+      "kind": "last10_record",
+      "value": 1,
+      "detail": "1-9 in last 10"
+     }
+    ],
+    "key_absences": [
+     {
+      "player": "Coby White",
+      "team_games_missed": 4,
+      "mpg_before": 31.1,
+      "last_played": "2026-02-03"
+     },
+     {
+      "player": "Jalen Smith",
+      "team_games_missed": 3,
+      "mpg_before": 26.8,
+      "last_played": "2026-02-05"
+     },
+     {
+      "player": "Tre Jones",
+      "team_games_missed": 11,
+      "mpg_before": 26.9,
+      "last_played": "2026-01-22"
+     },
+     {
+      "player": "Josh Giddey",
+      "team_games_missed": 8,
+      "mpg_before": 28.2,
+      "last_played": "2026-01-28"
+     }
+    ]
+   }
+  ],
+  "power_top10": [
+   {
+    "rank": 1,
+    "team": "OKC",
+    "record": "42-14",
+    "power": 9.7,
+    "adj_net": 10.1,
+    "last10_adj_net": 5.5,
+    "change_7d": 0
+   },
+   {
+    "rank": 2,
+    "team": "DET",
+    "record": "40-13",
+    "power": 6.3,
+    "adj_net": 5.7,
+    "last10_adj_net": 11.7,
+    "change_7d": 1
+   },
+   {
+    "rank": 3,
+    "team": "BOS",
+    "record": "35-19",
+    "power": 6.1,
+    "adj_net": 6.1,
+    "last10_adj_net": 6.2,
+    "change_7d": -1
+   },
+   {
+    "rank": 4,
+    "team": "NYK",
+    "record": "35-20",
+    "power": 5.7,
+    "adj_net": 4.8,
+    "last10_adj_net": 14.3,
+    "change_7d": 0
+   },
+   {
+    "rank": 5,
+    "team": "SAS",
+    "record": "38-16",
+    "power": 4.9,
+    "adj_net": 4.4,
+    "last10_adj_net": 9.9,
+    "change_7d": 2
+   },
+   {
+    "rank": 6,
+    "team": "CLE",
+    "record": "34-21",
+    "power": 4.8,
+    "adj_net": 4.0,
+    "last10_adj_net": 12.1,
+    "change_7d": 0
+   },
+   {
+    "rank": 7,
+    "team": "HOU",
+    "record": "33-20",
+    "power": 4.2,
+    "adj_net": 4.6,
+    "last10_adj_net": 0.7,
+    "change_7d": -2
+   },
+   {
+    "rank": 8,
+    "team": "MIN",
+    "record": "34-22",
+    "power": 4.2,
+    "adj_net": 3.8,
+    "last10_adj_net": 7.4,
+    "change_7d": 0
+   },
+   {
+    "rank": 9,
+    "team": "DEN",
+    "record": "35-20",
+    "power": 3.1,
+    "adj_net": 3.1,
+    "last10_adj_net": 3.3,
+    "change_7d": 0
+   },
+   {
+    "rank": 10,
+    "team": "MIA",
+    "record": "29-27",
+    "power": 2.1,
+    "adj_net": 1.9,
+    "last10_adj_net": 3.6,
+    "change_7d": 1
+   }
+  ],
+  "power_movers_7d": [
+   {
+    "team": "LAC",
+    "rank": 12,
+    "rank_7d_ago": 17,
+    "change_7d": 5
+   },
+   {
+    "team": "PHI",
+    "rank": 19,
+    "rank_7d_ago": 16,
+    "change_7d": -3
+   }
+  ],
+  "streaks": [
+   {
+    "team": "SAC",
+    "streak": "L14",
+    "record": "12-44",
+    "detail": "lost 14 straight"
+   },
+   {
+    "team": "DAL",
+    "streak": "L9",
+    "record": "19-35",
+    "detail": "lost 9 straight"
+   },
+   {
+    "team": "SAS",
+    "streak": "W6",
+    "record": "38-16",
+    "detail": "won 6 straight"
+   },
+   {
+    "team": "CHI",
+    "streak": "L6",
+    "record": "24-31",
+    "detail": "lost 6 straight"
+   },
+   {
+    "team": "CLE",
+    "streak": "W5",
+    "record": "34-21",
+    "detail": "won 5 straight"
+   }
+  ]
+ },
+ "players": {
+  "hot": [
+   {
+    "player_id": 1641716,
+    "player": "Jarace Walker",
+    "team": "IND",
+    "z": 3.54,
+    "window": "last 10",
+    "impact_recent": 13.2,
+    "impact_baseline": 4.9,
+    "impact_season": 6.4,
+    "impact_prior_season": 4.7,
+    "recent": {
+     "games": 10,
+     "min": 28.3,
+     "pts": 17.1,
+     "reb": 5.4,
+     "ast": 2.3,
+     "stocks": 1.7,
+     "fg3m": 1.9,
+     "ts_pct": 0.611,
+     "usg_pct": 0.238,
+     "plus_minus": -4.8,
+     "impact": 13.2
+    },
+    "season": {
+     "games": 54,
+     "min": 24.0,
+     "pts": 10.5,
+     "reb": 4.5,
+     "ast": 2.0,
+     "stocks": 1.1,
+     "fg3m": 1.6,
+     "ts_pct": 0.531,
+     "usg_pct": 0.196,
+     "plus_minus": -5.6,
+     "impact": 6.4
+    },
+    "detail": "CI 13.2 over last 10 vs 4.9 baseline (z +3.5); 17.1 pts, 5.4 reb, 2.3 ast, TS 61.1% vs season 10.5/4.5/2.0, TS 53.1%"
+   },
+   {
+    "player_id": 1628386,
+    "player": "Jarrett Allen",
+    "team": "CLE",
+    "z": 3.54,
+    "window": "last 5",
+    "impact_recent": 28.9,
+    "impact_baseline": 14.2,
+    "impact_season": 15.4,
+    "impact_prior_season": 16.3,
+    "recent": {
+     "games": 5,
+     "min": 29.6,
+     "pts": 24.4,
+     "reb": 12.0,
+     "ast": 2.2,
+     "stocks": 2.2,
+     "fg3m": 0.0,
+     "ts_pct": 0.752,
+     "usg_pct": 0.238,
+     "plus_minus": 12.0,
+     "impact": 28.9
+    },
+    "season": {
+     "games": 43,
+     "min": 27.4,
+     "pts": 14.6,
+     "reb": 8.3,
+     "ast": 2.0,
+     "stocks": 1.8,
+     "fg3m": 0.0,
+     "ts_pct": 0.661,
+     "usg_pct": 0.185,
+     "plus_minus": 3.9,
+     "impact": 15.4
+    },
+    "detail": "CI 28.9 over last 5 vs 14.2 baseline (z +3.5); 24.4 pts, 12.0 reb, 2.2 ast, TS 75.2% vs season 14.6/8.3/2.0, TS 66.1%"
+   },
+   {
+    "player_id": 203954,
+    "player": "Joel Embiid",
+    "team": "PHI",
+    "z": 3.45,
+    "window": "last 10",
+    "impact_recent": 30.4,
+    "impact_baseline": 18.4,
+    "impact_season": 22.0,
+    "impact_prior_season": 19.0,
+    "recent": {
+     "games": 10,
+     "min": 35.6,
+     "pts": 33.1,
+     "reb": 8.6,
+     "ast": 5.2,
+     "stocks": 1.5,
+     "fg3m": 1.8,
+     "ts_pct": 0.649,
+     "usg_pct": 0.344,
+     "plus_minus": 6.0,
+     "impact": 30.4
+    },
+    "season": {
+     "games": 31,
+     "min": 31.3,
+     "pts": 26.6,
+     "reb": 7.5,
+     "ast": 3.9,
+     "stocks": 1.7,
+     "fg3m": 1.3,
+     "ts_pct": 0.606,
+     "usg_pct": 0.338,
+     "plus_minus": 4.1,
+     "impact": 22.0
+    },
+    "detail": "CI 30.4 over last 10 vs 18.4 baseline (z +3.5); 33.1 pts, 8.6 reb, 5.2 ast, TS 64.9% vs season 26.6/7.5/3.9, TS 60.6%"
+   },
+   {
+    "player_id": 1641796,
+    "player": "Pelle Larsson",
+    "team": "MIA",
+    "z": 3.16,
+    "window": "last 10",
+    "impact_recent": 14.3,
+    "impact_baseline": 6.4,
+    "impact_season": 8.8,
+    "impact_prior_season": 3.5,
+    "recent": {
+     "games": 10,
+     "min": 27.7,
+     "pts": 13.5,
+     "reb": 5.3,
+     "ast": 4.1,
+     "stocks": 1.2,
+     "fg3m": 0.9,
+     "ts_pct": 0.698,
+     "usg_pct": 0.155,
+     "plus_minus": 2.7,
+     "impact": 14.3
+    },
+    "season": {
+     "games": 45,
+     "min": 24.0,
+     "pts": 10.2,
+     "reb": 3.3,
+     "ast": 3.3,
+     "stocks": 0.9,
+     "fg3m": 0.9,
+     "ts_pct": 0.6,
+     "usg_pct": 0.157,
+     "plus_minus": 0.7,
+     "impact": 8.8
+    },
+    "detail": "CI 14.3 over last 10 vs 6.4 baseline (z +3.2); 13.5 pts, 5.3 reb, 4.1 ast, TS 69.8% vs season 10.2/3.3/3.3, TS 60.0%"
+   },
+   {
+    "player_id": 1642849,
+    "player": "Nolan Traore",
+    "team": "BKN",
+    "z": 3.1,
+    "window": "last 5",
+    "impact_recent": 13.5,
+    "impact_baseline": 2.7,
+    "impact_season": 4.4,
+    "impact_prior_season": null,
+    "recent": {
+     "games": 5,
+     "min": 30.2,
+     "pts": 15.2,
+     "reb": 3.2,
+     "ast": 7.2,
+     "stocks": 0.8,
+     "fg3m": 1.6,
+     "ts_pct": 0.642,
+     "usg_pct": 0.204,
+     "plus_minus": -0.8,
+     "impact": 13.5
+    },
+    "season": {
+     "games": 31,
+     "min": 21.1,
+     "pts": 7.5,
+     "reb": 1.6,
+     "ast": 3.5,
+     "stocks": 0.8,
+     "fg3m": 1.0,
+     "ts_pct": 0.507,
+     "usg_pct": 0.181,
+     "plus_minus": -3.5,
+     "impact": 4.4
+    },
+    "detail": "CI 13.5 over last 5 vs 2.7 baseline (z +3.1); 15.2 pts, 3.2 reb, 7.2 ast, TS 64.2% vs season 7.5/1.6/3.5, TS 50.7%"
+   }
+  ],
+  "cold": [
+   {
+    "player_id": 1630532,
+    "player": "Franz Wagner",
+    "team": "ORL",
+    "z": -2.83,
+    "window": "last 5",
+    "impact_recent": 7.9,
+    "impact_baseline": 18.7,
+    "impact_season": 16.9,
+    "impact_prior_season": 18.2,
+    "recent": {
+     "games": 5,
+     "min": 19.6,
+     "pts": 11.6,
+     "reb": 3.6,
+     "ast": 2.8,
+     "stocks": 0.6,
+     "fg3m": 1.4,
+     "ts_pct": 0.533,
+     "usg_pct": 0.251,
+     "plus_minus": -2.6,
+     "impact": 7.9
+    },
+    "season": {
+     "games": 28,
+     "min": 31.8,
+     "pts": 21.3,
+     "reb": 5.8,
+     "ast": 3.6,
+     "stocks": 1.4,
+     "fg3m": 1.5,
+     "ts_pct": 0.591,
+     "usg_pct": 0.252,
+     "plus_minus": 1.3,
+     "impact": 16.9
+    },
+    "detail": "CI 7.9 over last 5 vs 18.7 baseline (z -2.8); 11.6 pts, 3.6 reb, 2.8 ast, TS 53.3% vs season 21.3/5.8/3.6, TS 59.1%"
+   },
+   {
+    "player_id": 1630559,
+    "player": "Austin Reaves",
+    "team": "LAL",
+    "z": -2.28,
+    "window": "last 10",
+    "impact_recent": 14.2,
+    "impact_baseline": 23.5,
+    "impact_season": 22.3,
+    "impact_prior_season": 17.3,
+    "recent": {
+     "games": 10,
+     "min": 27.6,
+     "pts": 19.1,
+     "reb": 3.9,
+     "ast": 4.6,
+     "stocks": 1.0,
+     "fg3m": 1.8,
+     "ts_pct": 0.608,
+     "usg_pct": 0.29,
+     "plus_minus": -3.1,
+     "impact": 14.2
+    },
+    "season": {
+     "games": 28,
+     "min": 33.5,
+     "pts": 25.4,
+     "reb": 5.0,
+     "ast": 6.0,
+     "stocks": 1.2,
+     "fg3m": 2.5,
+     "ts_pct": 0.665,
+     "usg_pct": 0.28,
+     "plus_minus": 2.2,
+     "impact": 22.3
+    },
+    "detail": "CI 14.2 over last 10 vs 23.5 baseline (z -2.3); 19.1 pts, 3.9 reb, 4.6 ast, TS 60.8% vs season 25.4/5.0/6.0, TS 66.5%"
+   },
+   {
+    "player_id": 1630166,
+    "player": "Deni Avdija",
+    "team": "POR",
+    "z": -2.16,
+    "window": "last 5",
+    "impact_recent": 10.1,
+    "impact_baseline": 20.4,
+    "impact_season": 20.6,
+    "impact_prior_season": 14.3,
+    "recent": {
+     "games": 5,
+     "min": 26.2,
+     "pts": 17.0,
+     "reb": 7.8,
+     "ast": 4.2,
+     "stocks": 1.2,
+     "fg3m": 1.6,
+     "ts_pct": 0.517,
+     "usg_pct": 0.284,
+     "plus_minus": -9.2,
+     "impact": 10.1
+    },
+    "season": {
+     "games": 46,
+     "min": 34.3,
+     "pts": 25.2,
+     "reb": 7.2,
+     "ast": 6.6,
+     "stocks": 1.4,
+     "fg3m": 2.2,
+     "ts_pct": 0.606,
+     "usg_pct": 0.284,
+     "plus_minus": -0.4,
+     "impact": 20.6
+    },
+    "detail": "CI 10.1 over last 5 vs 20.4 baseline (z -2.2); 17.0 pts, 7.8 reb, 4.2 ast, TS 51.7% vs season 25.2/7.2/6.6, TS 60.6%"
+   },
+   {
+    "player_id": 1642883,
+    "player": "Sion James",
+    "team": "CHA",
+    "z": -2.13,
+    "window": "last 10",
+    "impact_recent": 0.6,
+    "impact_baseline": 5.1,
+    "impact_season": 4.3,
+    "impact_prior_season": null,
+    "recent": {
+     "games": 10,
+     "min": 18.3,
+     "pts": 3.2,
+     "reb": 3.5,
+     "ast": 1.6,
+     "stocks": 0.3,
+     "fg3m": 0.7,
+     "ts_pct": 0.468,
+     "usg_pct": 0.109,
+     "plus_minus": -1.1,
+     "impact": 0.6
+    },
+    "season": {
+     "games": 55,
+     "min": 23.9,
+     "pts": 5.6,
+     "reb": 3.4,
+     "ast": 1.9,
+     "stocks": 0.9,
+     "fg3m": 1.0,
+     "ts_pct": 0.543,
+     "usg_pct": 0.106,
+     "plus_minus": -1.0,
+     "impact": 4.3
+    },
+    "detail": "CI 0.6 over last 10 vs 5.1 baseline (z -2.1); 3.2 pts, 3.5 reb, 1.6 ast, TS 46.8% vs season 5.6/3.4/1.9, TS 54.3%"
+   },
+   {
+    "player_id": 1629023,
+    "player": "P.J. Washington",
+    "team": "DAL",
+    "z": -2.12,
+    "window": "last 10",
+    "impact_recent": 5.3,
+    "impact_baseline": 11.1,
+    "impact_season": 9.5,
+    "impact_prior_season": 11.4,
+    "recent": {
+     "games": 10,
+     "min": 26.8,
+     "pts": 10.9,
+     "reb": 5.0,
+     "ast": 1.7,
+     "stocks": 1.7,
+     "fg3m": 0.8,
+     "ts_pct": 0.465,
+     "usg_pct": 0.198,
+     "plus_minus": -8.7,
+     "impact": 5.3
+    },
+    "season": {
+     "games": 39,
+     "min": 30.6,
+     "pts": 14.1,
+     "reb": 7.0,
+     "ast": 1.9,
+     "stocks": 2.3,
+     "fg3m": 1.2,
+     "ts_pct": 0.528,
+     "usg_pct": 0.203,
+     "plus_minus": -5.1,
+     "impact": 9.5
+    },
+    "detail": "CI 5.3 over last 10 vs 11.1 baseline (z -2.1); 10.9 pts, 5.0 reb, 1.7 ast, TS 46.5% vs season 14.1/7.0/1.9, TS 52.8%"
+   }
+  ],
+  "role_changes": [
+   {
+    "player_id": 1642363,
+    "player": "Nique Clifford",
+    "team": "SAC",
+    "kinds": [
+     "minutes_up",
+     "usage_up",
+     "starter_minutes"
+    ],
+    "details": [
+     "34.8 mpg last 5 vs 19.9 before (+14.9)",
+     "usage 20.7% last 5 vs 14.5% before (+6.2 pts)",
+     "top-5 minutes on SAC over the last 5 (rank 1, was 10; 19.9 -> 34.8 mpg): likely a new starter (proxy, game logs have no starter flag)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 34.8,
+     "minutes_up.mpg_before": 19.9,
+     "minutes_up.change": 14.9,
+     "usage_up.usg_recent": 0.207,
+     "usage_up.usg_before": 0.145,
+     "usage_up.change": 0.062,
+     "starter_minutes.minutes_rank_recent": 1,
+     "starter_minutes.minutes_rank_before": 10,
+     "starter_minutes.mpg_recent": 34.8,
+     "starter_minutes.mpg_before": 19.9
+    }
+   },
+   {
+    "player_id": 1642849,
+    "player": "Nolan Traore",
+    "team": "BKN",
+    "kinds": [
+     "minutes_up",
+     "starter_minutes"
+    ],
+    "details": [
+     "30.2 mpg last 5 vs 19.3 before (+10.9)",
+     "top-5 minutes on BKN over the last 5 (rank 1, was 9; 19.3 -> 30.2 mpg): likely a new starter (proxy, game logs have no starter flag)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 30.2,
+     "minutes_up.mpg_before": 19.3,
+     "minutes_up.change": 10.9,
+     "starter_minutes.minutes_rank_recent": 1,
+     "starter_minutes.minutes_rank_before": 9,
+     "starter_minutes.mpg_recent": 30.2,
+     "starter_minutes.mpg_before": 19.3
+    }
+   },
+   {
+    "player_id": 1631248,
+    "player": "Baylor Scheierman",
+    "team": "BOS",
+    "kinds": [
+     "minutes_up",
+     "starter_minutes"
+    ],
+    "details": [
+     "24.6 mpg last 5 vs 13.2 before (+11.4)",
+     "top-5 minutes on BOS over the last 5 (rank 5, was 10; 13.2 -> 24.6 mpg): likely a new starter (proxy, game logs have no starter flag)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 24.6,
+     "minutes_up.mpg_before": 13.2,
+     "minutes_up.change": 11.4,
+     "starter_minutes.minutes_rank_recent": 5,
+     "starter_minutes.minutes_rank_before": 10,
+     "starter_minutes.mpg_recent": 24.6,
+     "starter_minutes.mpg_before": 13.2
+    }
+   },
+   {
+    "player_id": 1630311,
+    "player": "Pat Spencer",
+    "team": "GSW",
+    "kinds": [
+     "minutes_up",
+     "starter_minutes"
+    ],
+    "details": [
+     "29.8 mpg last 5 vs 13.4 before (+16.4)",
+     "top-5 minutes on GSW over the last 5 (rank 2, was 11; 13.4 -> 29.8 mpg): likely a new starter (proxy, game logs have no starter flag)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 29.8,
+     "minutes_up.mpg_before": 13.4,
+     "minutes_up.change": 16.4,
+     "starter_minutes.minutes_rank_recent": 2,
+     "starter_minutes.minutes_rank_before": 11,
+     "starter_minutes.mpg_recent": 29.8,
+     "starter_minutes.mpg_before": 13.4
+    }
+   },
+   {
+    "player_id": 1630611,
+    "player": "Gui Santos",
+    "team": "GSW",
+    "kinds": [
+     "minutes_up",
+     "starter_minutes"
+    ],
+    "details": [
+     "29.6 mpg last 5 vs 12.8 before (+16.8)",
+     "top-5 minutes on GSW over the last 5 (rank 3, was 12; 12.8 -> 29.6 mpg): likely a new starter (proxy, game logs have no starter flag)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 29.6,
+     "minutes_up.mpg_before": 12.8,
+     "minutes_up.change": 16.8,
+     "starter_minutes.minutes_rank_recent": 3,
+     "starter_minutes.minutes_rank_before": 12,
+     "starter_minutes.mpg_recent": 29.6,
+     "starter_minutes.mpg_before": 12.8
+    }
+   },
+   {
+    "player_id": 201572,
+    "player": "Brook Lopez",
+    "team": "LAC",
+    "kinds": [
+     "minutes_up",
+     "starter_minutes"
+    ],
+    "details": [
+     "30.2 mpg last 5 vs 17.2 before (+13.0)",
+     "top-5 minutes on LAC over the last 5 (rank 3, was 11; 17.2 -> 30.2 mpg): likely a new starter (proxy, game logs have no starter flag)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 30.2,
+     "minutes_up.mpg_before": 17.2,
+     "minutes_up.change": 13.0,
+     "starter_minutes.minutes_rank_recent": 3,
+     "starter_minutes.minutes_rank_before": 11,
+     "starter_minutes.mpg_recent": 30.2,
+     "starter_minutes.mpg_before": 17.2
+    }
+   },
+   {
+    "player_id": 1642879,
+    "player": "Ben Saraf",
+    "team": "BKN",
+    "kinds": [
+     "new_in_rotation"
+    ],
+    "details": [
+     "17.4 mpg over the last 5 after 6.2 mpg (DNPs as 0) in 48 earlier team games"
+    ],
+    "numbers": {
+     "new_in_rotation.mpg_recent": 17.4,
+     "new_in_rotation.mpg_before": 6.2,
+     "new_in_rotation.games_before": 17
+    }
+   },
+   {
+    "player_id": 1628418,
+    "player": "Thomas Bryant",
+    "team": "CLE",
+    "kinds": [
+     "new_in_rotation"
+    ],
+    "details": [
+     "15.0 mpg over the last 5 after 7.1 mpg (DNPs as 0) in 47 earlier team games"
+    ],
+    "numbers": {
+     "new_in_rotation.mpg_recent": 15.0,
+     "new_in_rotation.mpg_before": 7.1,
+     "new_in_rotation.games_before": 34
+    }
+   },
+   {
+    "player_id": 1631124,
+    "player": "Julian Strawther",
+    "team": "DEN",
+    "kinds": [
+     "new_in_rotation"
+    ],
+    "details": [
+     "25.4 mpg over the last 5 after 6.4 mpg (DNPs as 0) in 49 earlier team games"
+    ],
+    "numbers": {
+     "new_in_rotation.mpg_recent": 25.4,
+     "new_in_rotation.mpg_before": 6.4,
+     "new_in_rotation.games_before": 27
+    }
+   },
+   {
+    "player_id": 1642880,
+    "player": "Kam Jones",
+    "team": "IND",
+    "kinds": [
+     "new_in_rotation"
+    ],
+    "details": [
+     "25.2 mpg over the last 5 after 4.0 mpg (DNPs as 0) in 22 earlier team games"
+    ],
+    "numbers": {
+     "new_in_rotation.mpg_recent": 25.2,
+     "new_in_rotation.mpg_before": 4.0,
+     "new_in_rotation.games_before": 13
+    }
+   },
+   {
+    "player_id": 1628467,
+    "player": "Maxi Kleber",
+    "team": "LAL",
+    "kinds": [
+     "new_in_rotation"
+    ],
+    "details": [
+     "17.0 mpg over the last 5 after 6.2 mpg (DNPs as 0) in 40 earlier team games"
+    ],
+    "numbers": {
+     "new_in_rotation.mpg_recent": 17.0,
+     "new_in_rotation.mpg_before": 6.2,
+     "new_in_rotation.games_before": 24
+    }
+   },
+   {
+    "player_id": 1641765,
+    "player": "Olivier-Maxence Prosper",
+    "team": "MEM",
+    "kinds": [
+     "new_in_rotation"
+    ],
+    "details": [
+     "24.5 mpg over the last 5 after 6.2 mpg (DNPs as 0) in 48 earlier team games"
+    ],
+    "numbers": {
+     "new_in_rotation.mpg_recent": 24.5,
+     "new_in_rotation.mpg_before": 6.2,
+     "new_in_rotation.games_before": 24
+    }
+   },
+   {
+    "player_id": 1628997,
+    "player": "Caleb Martin",
+    "team": "DAL",
+    "kinds": [
+     "minutes_up"
+    ],
+    "details": [
+     "24.0 mpg last 4 vs 13.1 before (+10.9)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 24.0,
+     "minutes_up.mpg_before": 13.1,
+     "minutes_up.change": 10.9
+    }
+   },
+   {
+    "player_id": 1630194,
+    "player": "Paul Reed",
+    "team": "DET",
+    "kinds": [
+     "minutes_up"
+    ],
+    "details": [
+     "22.8 mpg last 4 vs 11.5 before (+11.2)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 22.8,
+     "minutes_up.mpg_before": 11.5,
+     "minutes_up.change": 11.2
+    }
+   },
+   {
+    "player_id": 1642857,
+    "player": "Kasparas Jakučionis",
+    "team": "MIA",
+    "kinds": [
+     "minutes_up"
+    ],
+    "details": [
+     "24.8 mpg last 4 vs 15.8 before (+8.9)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 24.8,
+     "minutes_up.mpg_before": 15.8,
+     "minutes_up.change": 8.9
+    }
+   },
+   {
+    "player_id": 1642268,
+    "player": "Isaiah Collier",
+    "team": "UTA",
+    "kinds": [
+     "minutes_up"
+    ],
+    "details": [
+     "35.4 mpg last 5 vs 24.4 before (+11.0)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 35.4,
+     "minutes_up.mpg_before": 24.4,
+     "minutes_up.change": 11.0
+    }
+   },
+   {
+    "player_id": 1642846,
+    "player": "Ace Bailey",
+    "team": "UTA",
+    "kinds": [
+     "minutes_up"
+    ],
+    "details": [
+     "34.8 mpg last 5 vs 25.3 before (+9.5)"
+    ],
+    "numbers": {
+     "minutes_up.mpg_recent": 34.8,
+     "minutes_up.mpg_before": 25.3,
+     "minutes_up.change": 9.5
+    }
+   },
+   {
+    "player_id": 1628386,
+    "player": "Jarrett Allen",
+    "team": "CLE",
+    "kinds": [
+     "usage_up"
+    ],
+    "details": [
+     "usage 23.8% last 5 vs 17.8% before (+6.1 pts)"
+    ],
+    "numbers": {
+     "usage_up.usg_recent": 0.238,
+     "usage_up.usg_before": 0.178,
+     "usage_up.change": 0.061
+    }
+   },
+   {
+    "player_id": 1642843,
+    "player": "Cooper Flagg",
+    "team": "DAL",
+    "kinds": [
+     "usage_up"
+    ],
+    "details": [
+     "usage 31.2% last 4 vs 24.2% before (+7.0 pts)"
+    ],
+    "numbers": {
+     "usage_up.usg_recent": 0.312,
+     "usage_up.usg_before": 0.242,
+     "usage_up.change": 0.07
+    }
+   },
+   {
+    "player_id": 1629130,
+    "player": "Duncan Robinson",
+    "team": "DET",
+    "kinds": [
+     "usage_up"
+    ],
+    "details": [
+     "usage 20.0% last 5 vs 14.7% before (+5.3 pts)"
+    ],
+    "numbers": {
+     "usage_up.usg_recent": 0.2,
+     "usage_up.usg_before": 0.147,
+     "usage_up.change": 0.053
+    }
+   }
+  ],
+  "leaders_last10": {
+   "impact": [
+    {
+     "player": "Joel Embiid",
+     "team": "PHI",
+     "value": 28.9,
+     "games": 6,
+     "line": "33.0/7.7/5.0",
+     "ts_pct": 0.635,
+     "min": 34.7,
+     "impact": 28.9
+    },
+    {
+     "player": "Nikola Jokić",
+     "team": "DEN",
+     "value": 26.8,
+     "games": 7,
+     "line": "24.4/13.0/9.4",
+     "ts_pct": 0.629,
+     "min": 33.1,
+     "impact": 26.8
+    },
+    {
+     "player": "Luka Dončić",
+     "team": "LAL",
+     "value": 25.5,
+     "games": 6,
+     "line": "29.3/8.0/7.7",
+     "ts_pct": 0.652,
+     "min": 30.2,
+     "impact": 25.5
+    },
+    {
+     "player": "Donovan Mitchell",
+     "team": "CLE",
+     "value": 24.7,
+     "games": 10,
+     "line": "29.5/3.3/6.9",
+     "ts_pct": 0.621,
+     "min": 32.2,
+     "impact": 24.7
+    },
+    {
+     "player": "Victor Wembanyama",
+     "team": "SAS",
+     "value": 23.8,
+     "games": 10,
+     "line": "24.4/11.9/2.4",
+     "ts_pct": 0.636,
+     "min": 30.0,
+     "impact": 23.8
+    }
+   ],
+   "pts": [
+    {
+     "player": "Joel Embiid",
+     "team": "PHI",
+     "value": 33.0,
+     "games": 6,
+     "line": "33.0/7.7/5.0",
+     "ts_pct": 0.635,
+     "min": 34.7,
+     "impact": 28.9
+    },
+    {
+     "player": "Donovan Mitchell",
+     "team": "CLE",
+     "value": 29.5,
+     "games": 10,
+     "line": "29.5/3.3/6.9",
+     "ts_pct": 0.621,
+     "min": 32.2,
+     "impact": 24.7
+    },
+    {
+     "player": "Luka Dončić",
+     "team": "LAL",
+     "value": 29.3,
+     "games": 6,
+     "line": "29.3/8.0/7.7",
+     "ts_pct": 0.652,
+     "min": 30.2,
+     "impact": 25.5
+    },
+    {
+     "player": "Cooper Flagg",
+     "team": "DAL",
+     "value": 28.6,
+     "games": 8,
+     "line": "28.6/8.0/4.0",
+     "ts_pct": 0.576,
+     "min": 34.9,
+     "impact": 22.4
+    },
+    {
+     "player": "Anthony Edwards",
+     "team": "MIN",
+     "value": 27.8,
+     "games": 9,
+     "line": "27.8/5.2/4.0",
+     "ts_pct": 0.598,
+     "min": 37.0,
+     "impact": 22.4
+    }
+   ],
+   "reb": [
+    {
+     "player": "Karl-Anthony Towns",
+     "team": "NYK",
+     "value": 14.2,
+     "games": 9,
+     "line": "16.3/14.2/2.9",
+     "ts_pct": 0.55,
+     "min": 29.7,
+     "impact": 15.0
+    },
+    {
+     "player": "Donovan Clingan",
+     "team": "POR",
+     "value": 13.8,
+     "games": 10,
+     "line": "13.1/13.8/2.6",
+     "ts_pct": 0.579,
+     "min": 28.2,
+     "impact": 15.4
+    },
+    {
+     "player": "Nikola Jokić",
+     "team": "DEN",
+     "value": 13.0,
+     "games": 7,
+     "line": "24.4/13.0/9.4",
+     "ts_pct": 0.629,
+     "min": 33.1,
+     "impact": 26.8
+    },
+    {
+     "player": "Jalen Johnson",
+     "team": "ATL",
+     "value": 12.4,
+     "games": 8,
+     "line": "23.9/12.4/9.4",
+     "ts_pct": 0.545,
+     "min": 36.5,
+     "impact": 22.2
+    },
+    {
+     "player": "Victor Wembanyama",
+     "team": "SAS",
+     "value": 11.9,
+     "games": 10,
+     "line": "24.4/11.9/2.4",
+     "ts_pct": 0.636,
+     "min": 30.0,
+     "impact": 23.8
+    }
+   ],
+   "ast": [
+    {
+     "player": "Isaiah Collier",
+     "team": "UTA",
+     "value": 10.4,
+     "games": 10,
+     "line": "15.5/3.3/10.4",
+     "ts_pct": 0.575,
+     "min": 34.1,
+     "impact": 15.6
+    },
+    {
+     "player": "Jalen Johnson",
+     "team": "ATL",
+     "value": 9.4,
+     "games": 8,
+     "line": "23.9/12.4/9.4",
+     "ts_pct": 0.545,
+     "min": 36.5,
+     "impact": 22.2
+    },
+    {
+     "player": "Nikola Jokić",
+     "team": "DEN",
+     "value": 9.4,
+     "games": 7,
+     "line": "24.4/13.0/9.4",
+     "ts_pct": 0.629,
+     "min": 33.1,
+     "impact": 26.8
+    },
+    {
+     "player": "Cade Cunningham",
+     "team": "DET",
+     "value": 9.3,
+     "games": 10,
+     "line": "25.5/5.0/9.3",
+     "ts_pct": 0.599,
+     "min": 32.6,
+     "impact": 23.6
+    },
+    {
+     "player": "Jamal Murray",
+     "team": "DEN",
+     "value": 8.9,
+     "games": 9,
+     "line": "24.7/4.6/8.9",
+     "ts_pct": 0.586,
+     "min": 36.4,
+     "impact": 21.7
+    }
+   ],
+   "stocks": [
+    {
+     "player": "Victor Wembanyama",
+     "team": "SAS",
+     "value": 4.3,
+     "games": 10,
+     "line": "24.4/11.9/2.4",
+     "ts_pct": 0.636,
+     "min": 30.0,
+     "impact": 23.8
+    },
+    {
+     "player": "Scottie Barnes",
+     "team": "TOR",
+     "value": 4.0,
+     "games": 10,
+     "line": "17.5/9.2/6.0",
+     "ts_pct": 0.571,
+     "min": 33.3,
+     "impact": 18.5
+    },
+    {
+     "player": "Ausar Thompson",
+     "team": "DET",
+     "value": 3.7,
+     "games": 10,
+     "line": "7.6/5.9/3.1",
+     "ts_pct": 0.542,
+     "min": 24.9,
+     "impact": 10.6
+    },
+    {
+     "player": "Jalen Suggs",
+     "team": "ORL",
+     "value": 3.6,
+     "games": 10,
+     "line": "11.8/4.8/7.5",
+     "ts_pct": 0.493,
+     "min": 29.5,
+     "impact": 11.9
+    },
+    {
+     "player": "Myles Turner",
+     "team": "MIL",
+     "value": 3.6,
+     "games": 9,
+     "line": "14.9/7.3/1.8",
+     "ts_pct": 0.629,
+     "min": 29.6,
+     "impact": 13.9
+    }
+   ],
+   "fg3m": [
+    {
+     "player": "Luka Dončić",
+     "team": "LAL",
+     "value": 4.3,
+     "games": 6,
+     "line": "29.3/8.0/7.7",
+     "ts_pct": 0.652,
+     "min": 30.2,
+     "impact": 25.5
+    },
+    {
+     "player": "LaMelo Ball",
+     "team": "CHA",
+     "value": 3.8,
+     "games": 10,
+     "line": "19.2/3.9/6.8",
+     "ts_pct": 0.508,
+     "min": 28.9,
+     "impact": 13.1
+    },
+    {
+     "player": "Trey Murphy III",
+     "team": "NOP",
+     "value": 3.7,
+     "games": 10,
+     "line": "22.3/4.3/4.9",
+     "ts_pct": 0.556,
+     "min": 35.4,
+     "impact": 16.8
+    },
+    {
+     "player": "Kon Knueppel",
+     "team": "CHA",
+     "value": 3.7,
+     "games": 10,
+     "line": "18.7/5.5/3.7",
+     "ts_pct": 0.69,
+     "min": 31.7,
+     "impact": 17.1
+    },
+    {
+     "player": "Collin Gillespie",
+     "team": "PHX",
+     "value": 3.6,
+     "games": 9,
+     "line": "12.6/4.3/4.0",
+     "ts_pct": 0.556,
+     "min": 28.4,
+     "impact": 9.4
+    }
+   ],
+   "ts_pct": [
+    {
+     "player": "Jarrett Allen",
+     "team": "CLE",
+     "value": 0.729,
+     "games": 10,
+     "line": "18.3/9.5/1.8",
+     "ts_pct": 0.729,
+     "min": 28.7,
+     "impact": 21.2
+    },
+    {
+     "player": "Desmond Bane",
+     "team": "ORL",
+     "value": 0.711,
+     "games": 10,
+     "line": "22.7/2.7/2.8",
+     "ts_pct": 0.711,
+     "min": 34.6,
+     "impact": 19.5
+    },
+    {
+     "player": "Jalen Duren",
+     "team": "DET",
+     "value": 0.703,
+     "games": 8,
+     "line": "16.9/8.9/1.8",
+     "ts_pct": 0.703,
+     "min": 25.0,
+     "impact": 18.8
+    },
+    {
+     "player": "Ty Jerome",
+     "team": "MEM",
+     "value": 0.69,
+     "games": 6,
+     "line": "19.7/2.2/6.0",
+     "ts_pct": 0.69,
+     "min": 20.3,
+     "impact": 20.1
+    },
+    {
+     "player": "Kon Knueppel",
+     "team": "CHA",
+     "value": 0.69,
+     "games": 10,
+     "line": "18.7/5.5/3.7",
+     "ts_pct": 0.69,
+     "min": 31.7,
+     "impact": 17.1
+    }
+   ]
+  },
+  "streaks": [
+   {
+    "player_id": 1628983,
+    "player": "Shai Gilgeous-Alexander",
+    "team": "OKC",
+    "kind": "20_point_games",
+    "games": 121,
+    "games_this_season": 49,
+    "at_least": false,
+    "since": "2024-11-01",
+    "avg_pts": 32.5,
+    "avg_reb": 4.7,
+    "avg_ast": 6.4,
+    "detail": "121 straight 20-point games (49 this season), avg 32.5 pts/4.7 reb/6.4 ast"
+   },
+   {
+    "player_id": 202695,
+    "player": "Kawhi Leonard",
+    "team": "LAC",
+    "kind": "20_point_games",
+    "games": 33,
+    "games_this_season": 33,
+    "at_least": false,
+    "since": "2025-11-28",
+    "avg_pts": 29.0,
+    "avg_reb": 6.7,
+    "avg_ast": 3.8,
+    "detail": "33 straight 20-point games, avg 29.0 pts/6.7 reb/3.8 ast"
+   },
+   {
+    "player_id": 203954,
+    "player": "Joel Embiid",
+    "team": "PHI",
+    "kind": "20_point_games",
+    "games": 22,
+    "games_this_season": 22,
+    "at_least": false,
+    "since": "2025-12-12",
+    "avg_pts": 30.0,
+    "avg_reb": 8.3,
+    "avg_ast": 4.3,
+    "detail": "22 straight 20-point games, avg 30.0 pts/8.3 reb/4.3 ast"
+   },
+   {
+    "player_id": 1627759,
+    "player": "Jaylen Brown",
+    "team": "BOS",
+    "kind": "20_point_games",
+    "games": 16,
+    "games_this_season": 16,
+    "at_least": false,
+    "since": "2026-01-07",
+    "avg_pts": 28.6,
+    "avg_reb": 7.9,
+    "avg_ast": 4.1,
+    "detail": "16 straight 20-point games, avg 28.6 pts/7.9 reb/4.1 ast"
+   },
+   {
+    "player_id": 1626157,
+    "player": "Karl-Anthony Towns",
+    "team": "NYK",
+    "kind": "double_doubles",
+    "games": 7,
+    "games_this_season": 7,
+    "at_least": false,
+    "since": "2026-01-30",
+    "avg_pts": 17.4,
+    "avg_reb": 13.6,
+    "avg_ast": 2.9,
+    "detail": "7 straight double doubles, avg 17.4 pts/13.6 reb/2.9 ast"
+   },
+   {
+    "player_id": 203999,
+    "player": "Nikola Jokić",
+    "team": "DEN",
+    "kind": "20_point_games",
+    "games": 5,
+    "games_this_season": 5,
+    "at_least": false,
+    "since": "2026-02-03",
+    "avg_pts": 24.8,
+    "avg_reb": 14.4,
+    "avg_ast": 10.6,
+    "detail": "5 straight 20-point games, avg 24.8 pts/14.4 reb/10.6 ast"
+   },
+   {
+    "player_id": 203999,
+    "player": "Nikola Jokić",
+    "team": "DEN",
+    "kind": "double_doubles",
+    "games": 5,
+    "games_this_season": 5,
+    "at_least": false,
+    "since": "2026-02-03",
+    "avg_pts": 24.8,
+    "avg_reb": 14.4,
+    "avg_ast": 10.6,
+    "detail": "5 straight double doubles, avg 24.8 pts/14.4 reb/10.6 ast"
+   },
+   {
+    "player_id": 203999,
+    "player": "Nikola Jokić",
+    "team": "DEN",
+    "kind": "triple_doubles",
+    "games": 4,
+    "games_this_season": 4,
+    "at_least": false,
+    "since": "2026-02-04",
+    "avg_pts": 25.0,
+    "avg_reb": 14.2,
+    "avg_ast": 12.2,
+    "detail": "4 straight triple doubles, avg 25.0 pts/14.2 reb/12.2 ast"
+   },
+   {
+    "player_id": 1628378,
+    "player": "Donovan Mitchell",
+    "team": "CLE",
+    "kind": "30_point_games",
+    "games": 3,
+    "games_this_season": 3,
+    "at_least": false,
+    "since": "2026-02-07",
+    "avg_pts": 32.3,
+    "avg_reb": 2.0,
+    "avg_ast": 6.3,
+    "detail": "3 straight 30-point games, avg 32.3 pts/2.0 reb/6.3 ast"
+   }
+  ],
+  "career_highs_last7d": [
+   {
+    "player_id": 1630241,
+    "player": "Sam Merrill",
+    "team": "CLE",
+    "stat": "pts",
+    "value": 32,
+    "previous_high": 27,
+    "date": "2026-02-11",
+    "game_id": "0022500776",
+    "prior_career_games": 173,
+    "detail": "career-high 32 pts (previous 27)"
+   },
+   {
+    "player_id": 1631172,
+    "player": "Ousmane Dieng",
+    "team": "MIL",
+    "stat": "fg3m",
+    "value": 5,
+    "previous_high": 4,
+    "date": "2026-02-11",
+    "game_id": "0022500777",
+    "prior_career_games": 109,
+    "detail": "career-high 5 fg3m (previous 4)"
+   },
+   {
+    "player_id": 1629651,
+    "player": "Nic Claxton",
+    "team": "BKN",
+    "stat": "pts",
+    "value": 28,
+    "previous_high": 27,
+    "date": "2026-02-09",
+    "game_id": "0022500762",
+    "prior_career_games": 311,
+    "detail": "career-high 28 pts (previous 27)"
+   },
+   {
+    "player_id": 1641739,
+    "player": "Toumani Camara",
+    "team": "POR",
+    "stat": "pts",
+    "value": 30,
+    "previous_high": 25,
+    "date": "2026-02-09",
+    "game_id": "0022500770",
+    "prior_career_games": 148,
+    "detail": "career-high 30 pts (previous 25)"
+   },
+   {
+    "player_id": 1642875,
+    "player": "Maxime Raynaud",
+    "team": "SAC",
+    "stat": "reb",
+    "value": 19,
+    "previous_high": 14,
+    "date": "2026-02-09",
+    "game_id": "0022500766",
+    "prior_career_games": 0,
+    "detail": "career-high 19 reb (previous 14)"
+   },
+   {
+    "player_id": 1641739,
+    "player": "Toumani Camara",
+    "team": "POR",
+    "stat": "fg3m",
+    "value": 8,
+    "previous_high": 6,
+    "date": "2026-02-09",
+    "game_id": "0022500770",
+    "prior_career_games": 148,
+    "detail": "career-high 8 fg3m (previous 6)"
+   }
+  ]
+ }
+}

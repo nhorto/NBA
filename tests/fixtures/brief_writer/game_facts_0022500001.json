@@ -1,0 +1,535 @@
+{
+ "arena": "Paycom Center",
+ "away": {
+  "name": "Houston Rockets",
+  "periods": [
+   30,
+   27,
+   22,
+   25,
+   11,
+   9
+  ],
+  "score": 124,
+  "team": "HOU"
+ },
+ "clutch": {
+  "had_clutch": true,
+  "key_plays": [
+   {
+    "clock": "1:32",
+    "kind": "go_ahead",
+    "label": "2OT",
+    "player": "Cason Wallace",
+    "score": {
+     "HOU": 119,
+     "OKC": 120
+    },
+    "team": "OKC"
+   },
+   {
+    "clock": "1:15",
+    "kind": "go_ahead",
+    "label": "2OT",
+    "player": "Kevin Durant",
+    "score": {
+     "HOU": 121,
+     "OKC": 120
+    },
+    "team": "HOU"
+   },
+   {
+    "clock": "0:59.7",
+    "kind": "tying",
+    "label": "2OT",
+    "player": "Shai Gilgeous-Alexander",
+    "score": {
+     "HOU": 122,
+     "OKC": 122
+    },
+    "team": "OKC"
+   },
+   {
+    "clock": "0:40.8",
+    "kind": "steal",
+    "label": "2OT",
+    "player": "Luguentz Dort",
+    "score": {
+     "HOU": 122,
+     "OKC": 122
+    },
+    "team": "OKC"
+   },
+   {
+    "clock": "0:32.6",
+    "kind": "go_ahead",
+    "label": "2OT",
+    "player": "Shai Gilgeous-Alexander",
+    "score": {
+     "HOU": 122,
+     "OKC": 123
+    },
+    "team": "OKC"
+   },
+   {
+    "clock": "0:11",
+    "kind": "go_ahead",
+    "label": "2OT",
+    "player": "Alperen Sengun",
+    "score": {
+     "HOU": 124,
+     "OKC": 123
+    },
+    "team": "HOU"
+   },
+   {
+    "clock": "0:02.3",
+    "kind": "tying",
+    "label": "2OT",
+    "player": "Shai Gilgeous-Alexander",
+    "score": {
+     "HOU": 124,
+     "OKC": 124
+    },
+    "team": "OKC"
+   },
+   {
+    "clock": "0:02.3",
+    "decisive": true,
+    "kind": "go_ahead",
+    "label": "2OT",
+    "player": "Shai Gilgeous-Alexander",
+    "score": {
+     "HOU": 124,
+     "OKC": 125
+    },
+    "team": "OKC"
+   }
+  ],
+  "players": [
+   {
+    "ast": 2,
+    "blk": 1,
+    "fg": "5-12",
+    "ft": "7-10",
+    "id": 1628983,
+    "name": "Shai Gilgeous-Alexander",
+    "plus_minus": 6,
+    "pts": 18,
+    "stl": 2,
+    "team": "OKC",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 1,
+    "fg": "3-6",
+    "ft": "3-4",
+    "id": 1630578,
+    "name": "Alperen Sengun",
+    "plus_minus": -4,
+    "pts": 9,
+    "stl": 0,
+    "team": "HOU",
+    "tov": 1
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "3-4",
+    "ft": "0-0",
+    "id": 1631096,
+    "name": "Chet Holmgren",
+    "plus_minus": 9,
+    "pts": 8,
+    "stl": 0,
+    "team": "OKC",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "2-3",
+    "ft": "0-0",
+    "id": 1641717,
+    "name": "Cason Wallace",
+    "plus_minus": 6,
+    "pts": 6,
+    "stl": 1,
+    "team": "OKC",
+    "tov": 1
+   },
+   {
+    "ast": 2,
+    "blk": 0,
+    "fg": "2-3",
+    "ft": "2-3",
+    "id": 201142,
+    "name": "Kevin Durant",
+    "plus_minus": -5,
+    "pts": 6,
+    "stl": 0,
+    "team": "HOU",
+    "tov": 2
+   },
+   {
+    "ast": 1,
+    "blk": 0,
+    "fg": "3-5",
+    "ft": "0-0",
+    "id": 1641708,
+    "name": "Amen Thompson",
+    "plus_minus": -8,
+    "pts": 6,
+    "stl": 0,
+    "team": "HOU",
+    "tov": 1
+   }
+  ],
+  "points": {
+   "HOU": 28,
+   "OKC": 34
+  },
+  "seconds": 837.0
+ },
+ "comeback": {
+  "at": {
+   "clock": "10:13",
+   "label": "Q3",
+   "score": {
+    "HOU": 63,
+    "OKC": 51
+   }
+  },
+  "deficit": 12,
+  "team": "OKC"
+ },
+ "date": "2025-10-21",
+ "game_id": "0022500001",
+ "garbage_time": {
+  "seconds": 0.0
+ },
+ "home": {
+  "name": "Oklahoma City Thunder",
+  "periods": [
+   27,
+   24,
+   24,
+   29,
+   11,
+   10
+  ],
+  "score": 125,
+  "team": "OKC"
+ },
+ "incidents": {
+  "ejections": [],
+  "foul_outs": [
+   {
+    "clock": "0:48.1",
+    "id": 1631096,
+    "label": "OT",
+    "name": "Chet Holmgren",
+    "team": "OKC"
+   },
+   {
+    "clock": "1:15",
+    "id": 1628392,
+    "label": "2OT",
+    "name": "Isaiah Hartenstein",
+    "team": "OKC"
+   },
+   {
+    "clock": "0:02.3",
+    "id": 201142,
+    "label": "2OT",
+    "name": "Kevin Durant",
+    "team": "HOU"
+   }
+  ],
+  "possible_injuries": []
+ },
+ "largest_lead": {
+  "HOU": {
+   "clock": "10:13",
+   "label": "Q3",
+   "lead": 12,
+   "score": {
+    "HOU": 63,
+    "OKC": 51
+   }
+  },
+  "OKC": {
+   "clock": "3:36",
+   "label": "OT",
+   "lead": 6,
+   "score": {
+    "HOU": 104,
+    "OKC": 110
+   }
+  }
+ },
+ "lead_changes": 22,
+ "margin": 1,
+ "notable_lines": [
+  {
+   "flags": [
+    "30_point_game",
+    "20_10",
+    "5_threes"
+   ],
+   "id": 1630578,
+   "line": "39 pts (12-24 FG, 5-8 3P, 10-11 FT), 11 reb, 7 ast, 2 stl",
+   "name": "Alperen Sengun",
+   "team": "HOU"
+  },
+  {
+   "flags": [
+    "30_point_game"
+   ],
+   "id": 1628983,
+   "line": "35 pts (12-26 FG, 1-9 3P, 10-14 FT), 5 reb, 5 ast, 2 stl, 2 blk",
+   "name": "Shai Gilgeous-Alexander",
+   "team": "OKC"
+  },
+  {
+   "flags": [
+    "efficient_scoring"
+   ],
+   "id": 1631096,
+   "line": "28 pts (11-17 FG, 2-5 3P, 4-4 FT), 7 reb",
+   "name": "Chet Holmgren",
+   "team": "OKC"
+  }
+ ],
+ "overtimes": 2,
+ "runs": [
+  {
+   "from": {
+    "clock": "2:46",
+    "label": "Q2",
+    "score": {
+     "HOU": 46,
+     "OKC": 45
+    }
+   },
+   "minutes": 4.5,
+   "run": "17-6",
+   "team": "HOU",
+   "to": {
+    "clock": "10:13",
+    "label": "Q3",
+    "score": {
+     "HOU": 63,
+     "OKC": 51
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "9:12",
+    "label": "Q3",
+    "score": {
+     "HOU": 63,
+     "OKC": 51
+    }
+   },
+   "minutes": 4.2,
+   "run": "12-4",
+   "team": "OKC",
+   "to": {
+    "clock": "5:03",
+    "label": "Q3",
+    "score": {
+     "HOU": 67,
+     "OKC": 63
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "3:52",
+    "label": "Q4",
+    "score": {
+     "HOU": 97,
+     "OKC": 91
+    }
+   },
+   "includes_unanswered": "8-0",
+   "minutes": 5.3,
+   "run": "19-7",
+   "team": "OKC",
+   "to": {
+    "clock": "3:36",
+    "label": "OT",
+    "score": {
+     "HOU": 104,
+     "OKC": 110
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "2:30",
+    "label": "OT",
+    "score": {
+     "HOU": 106,
+     "OKC": 112
+    }
+   },
+   "minutes": 5.0,
+   "run": "13-4",
+   "team": "HOU",
+   "to": {
+    "clock": "2:28",
+    "label": "2OT",
+    "score": {
+     "HOU": 119,
+     "OKC": 116
+    }
+   },
+   "unanswered": false
+  }
+ ],
+ "schema": 1,
+ "times_tied": 12,
+ "top_performers": [
+  {
+   "game_score": 24.6,
+   "id": 1628983,
+   "line": "35 pts (12-26 FG, 1-9 3P, 10-14 FT), 5 reb, 5 ast, 2 stl, 2 blk",
+   "minutes": 47.2,
+   "name": "Shai Gilgeous-Alexander",
+   "plus_minus": 3,
+   "team": "OKC",
+   "ts_pct": 0.544
+  },
+  {
+   "game_score": 19.4,
+   "id": 1631096,
+   "line": "28 pts (11-17 FG, 2-5 3P, 4-4 FT), 7 reb",
+   "minutes": 38.5,
+   "name": "Chet Holmgren",
+   "plus_minus": -1,
+   "team": "OKC",
+   "ts_pct": 0.746
+  },
+  {
+   "game_score": 33.1,
+   "id": 1630578,
+   "line": "39 pts (12-24 FG, 5-8 3P, 10-11 FT), 11 reb, 7 ast, 2 stl",
+   "minutes": 48.9,
+   "name": "Alperen Sengun",
+   "plus_minus": 9,
+   "team": "HOU",
+   "ts_pct": 0.676
+  },
+  {
+   "game_score": 13.4,
+   "id": 201142,
+   "line": "23 pts (9-16 FG, 0-4 3P, 5-6 FT), 9 reb, 3 ast",
+   "minutes": 47.0,
+   "name": "Kevin Durant",
+   "plus_minus": 0,
+   "team": "HOU",
+   "ts_pct": 0.617
+  }
+ ],
+ "turning_point": {
+  "from": {
+   "clock": "3:52",
+   "label": "Q4",
+   "score": {
+    "HOU": 97,
+    "OKC": 91
+   }
+  },
+  "method": "run",
+  "minutes": 5.3,
+  "reason": "flipped_lead",
+  "run": "19-7",
+  "team": "OKC",
+  "to": {
+   "clock": "3:36",
+   "label": "OT",
+   "score": {
+    "HOU": 104,
+    "OKC": 110
+   }
+  }
+ },
+ "unsung_hero": [
+  {
+   "bench": false,
+   "id": 1628392,
+   "line": "6 pts (2-5 FG, 0-1 3P, 2-2 FT), 8 reb, 5 ast, 2 stl",
+   "minutes": 36.8,
+   "name": "Isaiah Hartenstein",
+   "on_off": 31.6,
+   "plus_minus": 9,
+   "score": 15.04,
+   "stocks": 2,
+   "team": "OKC",
+   "ts_pct": 0.51,
+   "why": [
+    "+9 on the floor",
+    "team +31.6 per 100 better with him on",
+    "5 offensive rebounds",
+    "5 assists",
+    "+12 during the decisive run"
+   ],
+   "winner": true
+  },
+  {
+   "bench": false,
+   "id": 1641717,
+   "line": "14 pts (5-10 FG, 3-8 3P, 1-2 FT), 7 reb, 5 ast, 4 stl",
+   "minutes": 41.6,
+   "name": "Cason Wallace",
+   "on_off": 31.4,
+   "plus_minus": 8,
+   "score": 14.88,
+   "stocks": 4,
+   "team": "OKC",
+   "ts_pct": 0.643,
+   "why": [
+    "+8 on the floor",
+    "team +31.4 per 100 better with him on",
+    "4 stocks",
+    "5 assists",
+    "+12 during the decisive run"
+   ],
+   "winner": true
+  },
+  {
+   "bench": true,
+   "id": 1642349,
+   "line": "16 pts (6-12 FG, 3-6 3P, 1-1 FT)",
+   "minutes": 14.6,
+   "name": "Ajay Mitchell",
+   "on_off": 8.3,
+   "plus_minus": 2,
+   "score": 6.35,
+   "stocks": 1,
+   "team": "OKC",
+   "ts_pct": 0.643,
+   "why": [
+    "+2 on the floor",
+    "team +8.3 per 100 better with him on"
+   ],
+   "winner": true
+  }
+ ],
+ "validation": {
+  "anomalies": 0,
+  "max_minutes_diff_s": 0.0,
+  "minutes_mismatches": 0,
+  "ok": true,
+  "players": 20,
+  "plus_minus_mismatches": 0
+ },
+ "winner": "OKC"
+}

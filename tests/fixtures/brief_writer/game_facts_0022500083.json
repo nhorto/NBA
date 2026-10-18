@@ -1,0 +1,455 @@
+{
+ "arena": "TD Garden",
+ "away": {
+  "name": "Philadelphia 76ers",
+  "periods": [
+   26,
+   31,
+   18,
+   42
+  ],
+  "score": 117,
+  "team": "PHI"
+ },
+ "clutch": {
+  "had_clutch": true,
+  "key_plays": [
+   {
+    "clock": "1:16",
+    "decisive": true,
+    "kind": "go_ahead",
+    "label": "Q4",
+    "player": "Kelly Oubre Jr.",
+    "score": {
+     "BOS": 111,
+     "PHI": 112
+    },
+    "team": "PHI"
+   }
+  ],
+  "players": [
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "1-1",
+    "ft": "2-2",
+    "id": 1626162,
+    "name": "Kelly Oubre Jr.",
+    "plus_minus": 5,
+    "pts": 5,
+    "stl": 0,
+    "team": "PHI",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "2-4",
+    "ft": "0-0",
+    "id": 1630202,
+    "name": "Payton Pritchard",
+    "plus_minus": -1,
+    "pts": 5,
+    "stl": 0,
+    "team": "BOS",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "2-2",
+    "ft": "0-0",
+    "id": 1629674,
+    "name": "Neemias Queta",
+    "plus_minus": 2,
+    "pts": 4,
+    "stl": 0,
+    "team": "BOS",
+    "tov": 1
+   },
+   {
+    "ast": 1,
+    "blk": 0,
+    "fg": "0-0",
+    "ft": "4-4",
+    "id": 1630178,
+    "name": "Tyrese Maxey",
+    "plus_minus": 1,
+    "pts": 4,
+    "stl": 0,
+    "team": "PHI",
+    "tov": 0
+   },
+   {
+    "ast": 0,
+    "blk": 0,
+    "fg": "0-0",
+    "ft": "2-4",
+    "id": 1642845,
+    "name": "VJ Edgecombe",
+    "plus_minus": 1,
+    "pts": 2,
+    "stl": 0,
+    "team": "PHI",
+    "tov": 0
+   },
+   {
+    "ast": 1,
+    "blk": 0,
+    "fg": "1-4",
+    "ft": "0-0",
+    "id": 1627759,
+    "name": "Jaylen Brown",
+    "plus_minus": -1,
+    "pts": 2,
+    "stl": 0,
+    "team": "BOS",
+    "tov": 0
+   }
+  ],
+  "points": {
+   "BOS": 11,
+   "PHI": 12
+  },
+  "seconds": 210.0
+ },
+ "comeback": {
+  "at": {
+   "clock": "11:10",
+   "label": "Q4",
+   "score": {
+    "BOS": 88,
+    "PHI": 75
+   }
+  },
+  "deficit": 13,
+  "team": "PHI"
+ },
+ "date": "2025-10-22",
+ "game_id": "0022500083",
+ "garbage_time": {
+  "seconds": 0.0
+ },
+ "home": {
+  "name": "Boston Celtics",
+  "periods": [
+   28,
+   23,
+   35,
+   30
+  ],
+  "score": 116,
+  "team": "BOS"
+ },
+ "incidents": {
+  "ejections": [],
+  "foul_outs": [
+   {
+    "clock": "1:42",
+    "id": 1629674,
+    "label": "Q4",
+    "name": "Neemias Queta",
+    "team": "BOS"
+   }
+  ],
+  "possible_injuries": []
+ },
+ "largest_lead": {
+  "BOS": {
+   "clock": "11:10",
+   "label": "Q4",
+   "lead": 13,
+   "score": {
+    "BOS": 88,
+    "PHI": 75
+   }
+  },
+  "PHI": {
+   "clock": "0:57.1",
+   "label": "Q2",
+   "lead": 8,
+   "score": {
+    "BOS": 47,
+    "PHI": 55
+   }
+  }
+ },
+ "lead_changes": 13,
+ "margin": 1,
+ "notable_lines": [
+  {
+   "flags": [
+    "40_point_game",
+    "7_threes",
+    "efficient_scoring"
+   ],
+   "id": 1630178,
+   "line": "40 pts (13-24 FG, 7-9 3P, 7-8 FT), 6 ast, 2 stl",
+   "name": "Tyrese Maxey",
+   "team": "PHI"
+  },
+  {
+   "flags": [
+    "30_point_game",
+    "5_threes"
+   ],
+   "id": 1642845,
+   "line": "34 pts (13-26 FG, 5-13 3P, 3-6 FT), 7 reb, 3 ast",
+   "name": "VJ Edgecombe",
+   "team": "PHI"
+  }
+ ],
+ "overtimes": 0,
+ "runs": [
+  {
+   "from": {
+    "clock": "10:29",
+    "label": "Q2",
+    "score": {
+     "BOS": 28,
+     "PHI": 32
+    }
+   },
+   "minutes": 2.0,
+   "run": "11-2",
+   "team": "BOS",
+   "to": {
+    "clock": "8:27",
+    "label": "Q2",
+    "score": {
+     "BOS": 39,
+     "PHI": 34
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "3:26",
+    "label": "Q2",
+    "score": {
+     "BOS": 45,
+     "PHI": 43
+    }
+   },
+   "minutes": 2.5,
+   "run": "12-2",
+   "team": "PHI",
+   "to": {
+    "clock": "0:57.1",
+    "label": "Q2",
+    "score": {
+     "BOS": 47,
+     "PHI": 55
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "8:49",
+    "label": "Q3",
+    "score": {
+     "BOS": 56,
+     "PHI": 61
+    }
+   },
+   "minutes": 3.3,
+   "run": "16-0",
+   "team": "BOS",
+   "to": {
+    "clock": "5:32",
+    "label": "Q3",
+    "score": {
+     "BOS": 72,
+     "PHI": 61
+    }
+   },
+   "unanswered": true
+  },
+  {
+   "from": {
+    "clock": "10:43",
+    "label": "Q4",
+    "score": {
+     "BOS": 88,
+     "PHI": 75
+    }
+   },
+   "includes_unanswered": "8-0",
+   "minutes": 2.8,
+   "run": "17-6",
+   "team": "PHI",
+   "to": {
+    "clock": "7:56",
+    "label": "Q4",
+    "score": {
+     "BOS": 94,
+     "PHI": 92
+    }
+   },
+   "unanswered": false
+  },
+  {
+   "from": {
+    "clock": "3:33",
+    "label": "Q4",
+    "score": {
+     "BOS": 109,
+     "PHI": 100
+    }
+   },
+   "includes_unanswered": "8-0",
+   "minutes": 3.2,
+   "run": "15-2",
+   "team": "PHI",
+   "to": {
+    "clock": "0:22",
+    "label": "Q4",
+    "score": {
+     "BOS": 111,
+     "PHI": 115
+    }
+   },
+   "unanswered": false
+  }
+ ],
+ "schema": 1,
+ "times_tied": 9,
+ "top_performers": [
+  {
+   "game_score": 18.8,
+   "id": 1628401,
+   "line": "25 pts (7-20 FG, 4-13 3P, 7-7 FT), 3 reb, 4 ast",
+   "minutes": 35.4,
+   "name": "Derrick White",
+   "plus_minus": -3,
+   "team": "BOS",
+   "ts_pct": 0.542
+  },
+  {
+   "game_score": 16.6,
+   "id": 1627759,
+   "line": "25 pts (9-18 FG, 2-4 3P, 5-6 FT), 6 reb, 4 ast",
+   "minutes": 36.2,
+   "name": "Jaylen Brown",
+   "plus_minus": 0,
+   "team": "BOS",
+   "ts_pct": 0.606
+  },
+  {
+   "game_score": 32.5,
+   "id": 1630178,
+   "line": "40 pts (13-24 FG, 7-9 3P, 7-8 FT), 6 ast, 2 stl",
+   "minutes": 41.4,
+   "name": "Tyrese Maxey",
+   "plus_minus": 3,
+   "team": "PHI",
+   "ts_pct": 0.727
+  },
+  {
+   "game_score": 23.0,
+   "id": 1642845,
+   "line": "34 pts (13-26 FG, 5-13 3P, 3-6 FT), 7 reb, 3 ast",
+   "minutes": 42.2,
+   "name": "VJ Edgecombe",
+   "plus_minus": -2,
+   "team": "PHI",
+   "ts_pct": 0.594
+  }
+ ],
+ "turning_point": {
+  "from": {
+   "clock": "3:33",
+   "label": "Q4",
+   "score": {
+    "BOS": 109,
+    "PHI": 100
+   }
+  },
+  "method": "run",
+  "minutes": 3.2,
+  "reason": "flipped_lead",
+  "run": "15-2",
+  "team": "PHI",
+  "to": {
+   "clock": "0:22",
+   "label": "Q4",
+   "score": {
+    "BOS": 111,
+    "PHI": 115
+   }
+  }
+ },
+ "unsung_hero": [
+  {
+   "bench": true,
+   "id": 1629656,
+   "line": "10 pts (3-8 FG, 2-5 3P, 2-4 FT), 5 reb, 5 ast",
+   "minutes": 31.6,
+   "name": "Quentin Grimes",
+   "on_off": 79.0,
+   "plus_minus": 18,
+   "score": 14.4,
+   "stocks": 0,
+   "team": "PHI",
+   "ts_pct": 0.512,
+   "why": [
+    "+18 on the floor",
+    "team +79.0 per 100 better with him on",
+    "5 assists",
+    "+13 during the decisive run"
+   ],
+   "winner": true
+  },
+  {
+   "bench": false,
+   "id": 1631230,
+   "line": "13 pts (4-8 FG, 0-2 3P, 5-6 FT), 8 reb, 5 ast",
+   "minutes": 34.4,
+   "name": "Dominick Barlow",
+   "on_off": 1.4,
+   "plus_minus": 1,
+   "score": 7.62,
+   "stocks": 1,
+   "team": "PHI",
+   "ts_pct": 0.611,
+   "why": [
+    "+1 on the floor",
+    "team +1.4 per 100 better with him on",
+    "5 offensive rebounds",
+    "5 assists",
+    "+13 during the decisive run"
+   ],
+   "winner": true
+  },
+  {
+   "bench": true,
+   "id": 1631133,
+   "line": "6 pts (3-4 FG, 0-1 3P), 4 reb",
+   "minutes": 18.9,
+   "name": "Jabari Walker",
+   "on_off": 11.0,
+   "plus_minus": 3,
+   "score": 5.76,
+   "stocks": 0,
+   "team": "PHI",
+   "ts_pct": 0.75,
+   "why": [
+    "+3 on the floor",
+    "team +11.0 per 100 better with him on",
+    "75% TS"
+   ],
+   "winner": true
+  }
+ ],
+ "validation": {
+  "anomalies": 0,
+  "max_minutes_diff_s": 0.0,
+  "minutes_mismatches": 0,
+  "ok": true,
+  "players": 20,
+  "plus_minus_mismatches": 0
+ },
+ "winner": "PHI"
+}
