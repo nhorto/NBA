@@ -117,4 +117,4 @@ def test_migration_4_tables_and_latest_pretip_view():
 
 def test_earlier_migrations_unchanged_and_ordered():
     conn = db.connect()
-    assert [r[0] for r in conn.execute("SELECT version FROM schema_version")] == [1, 2, 3, 4]
+    assert [r[0] for r in conn.execute("SELECT version FROM schema_version")] == list(range(1, len(db.MIGRATIONS) + 1))

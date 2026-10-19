@@ -166,6 +166,106 @@ MIGRATIONS: list[str] = [
         version TEXT
     );
     """,
+    # 5: MLOps - model registry + lineage, monitoring metrics, data checks, drift, alerts.
+    # See docs/MLOPS.md.
+    """
+    -- One row per model *spec* (code + hyperparameters + feature set). Daily refits of the
+    -- same spec on new data are not new versions. status: candidate | shadow | champion |
+    -- retired. At most one champion per model_name.
+    CREATE TABLE model_versions (
+        version_id TEXT PRIMARY KEY,
+        model_name TEXT NOT NULL,
+        spec_hash TEXT NOT NULL,
+        code_sha TEXT,
+        params_json TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        promoted_at TEXT,
+        retired_at TEXT,
+        benchmark_json TEXT,
+        mlflow_run_id TEXT,
+        notes TEXT
+    );
+    CREATE INDEX idx_model_versions_name ON model_versions(model_name, status);
+
+    -- Append-only audit trail: register | shadow | promote | rollback | retire | reject.
+    CREATE TABLE registry_events (
+        id INTEGER PRIMARY KEY,
+        ts TEXT NOT NULL,
+        version_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        reason TEXT,
+        details_json TEXT
+    );
+
+    -- Lineage: which registered version produced a prediction, and in what role
+    -- (champion = shown to readers, shadow = logged for evaluation only).
+    ALTER TABLE predictions ADD COLUMN model_version TEXT;
+    ALTER TABLE predictions ADD COLUMN role TEXT;
+
+    -- Resolved-prediction performance per model and window, computed daily.
+    -- window: 7d | 30d | last100 | last300 | season. mkt_* are on the same games.
+    CREATE TABLE metric_snapshots (
+        as_of TEXT NOT NULL,
+        model TEXT NOT NULL,
+        model_version TEXT,
+        window TEXT NOT NULL,
+        n INTEGER,
+        log_loss REAL,
+        brier REAL,
+        accuracy REAL,
+        ece REAL,
+        home_pred REAL,
+        home_actual REAL,
+        margin_bias REAL,
+        margin_mae REAL,
+        total_bias REAL,
+        total_mae REAL,
+        mkt_n INTEGER,
+        mkt_log_loss REAL,
+        mkt_brier REAL,
+        ll_diff_vs_mkt REAL,
+        ll_diff_se REAL,
+        details_json TEXT,
+        PRIMARY KEY (as_of, model, window)
+    );
+
+    -- Data-quality / pipeline-health results. status: ok | warn | fail | skip.
+    CREATE TABLE data_checks (
+        run_at TEXT NOT NULL,
+        check_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        value REAL,
+        threshold REAL,
+        detail TEXT,
+        PRIMARY KEY (run_at, check_name)
+    );
+
+    -- Feature drift: population stability index of live features vs the training reference.
+    CREATE TABLE drift_snapshots (
+        as_of TEXT NOT NULL,
+        feature TEXT NOT NULL,
+        psi REAL,
+        ref_label TEXT,
+        cur_n INTEGER,
+        PRIMARY KEY (as_of, feature)
+    );
+
+    -- Deduplicated alerts: one open row per `key`; re-firing updates it, clearing resolves it.
+    CREATE TABLE alerts (
+        id INTEGER PRIMARY KEY,
+        key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        message TEXT NOT NULL,
+        details_json TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        resolved_at TEXT
+    );
+    CREATE INDEX idx_alerts_open ON alerts(status, key);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
