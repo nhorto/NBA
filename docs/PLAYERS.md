@@ -603,6 +603,23 @@ If the gate fails, the `/dfs` page ships with a "beta" label.
 | T2.9 ∥ S | Tonight cards + `prop_compare` (pts/reb/ast/PRA/3PM) | `web/players_view.py`, `templates/_players.html`, `proj/props.py` | → | ≥ 90% main props joined; both % shown |
 | T2.10 ★ S | Path A copula v1 (T2.7 matrices, CV-by-level fit, winner/loser shift) | `proj/copula.py` | → | §7.3 coverage/PIT; blowout curve ±1.0 DK |
 
+### Phase 2F: feature program (owner request 2026-10-19: use the depth of the data)
+
+v0 projects per-minute rates from the player's own history plus a position × tier prior; opponent, matchup, tracking, shot-quality and referee data are not used yet (the environment enters only through the market total). Phase 2F adds a **learned context layer**: per stat, rate = EB rate × exp(f(features)), with f a LightGBM fit on seasons < S (Poisson/NB objective, minutes-weighted, pregame features only), on top of minutes v1. **Every group ships only if it improves NB log-lik / DK CRPS by > 1 SE on 2023-24 and 2024-25 in the T2.1 harness**; results go in an ablation table (kept or dropped, with numbers).
+
+| ID | Group | Data | Notes |
+|---|---|---|---|
+| F0 ★ | feature store + context-layer harness + ablation protocol | `proj/features/`, T2.1 | strictly pre-tip, walk-forward; leak tests |
+| F1 ★ | **opponent availability**: absent opposing rim protector / rebounder / primary perimeter defender, opponent depth | availability scenarios, box | evaluated per sim scenario |
+| F2 ★ | **opponent defense per stat × position group** (shrunk, recency-weighted): reb / 3PA / ast / tov / FTA / blk allowed, pace beyond the total | box, PBP, team adv | DvP is noisy: heavy shrinkage |
+| F3 | tracking role signals: rebound chances, potential assists, touches, contested share | `player_tracking` (2019+) | faster-stabilising rates |
+| F4 | shot quality / shooting luck: xFG from PBP shot location, type, distance | cdn PBP 2019+ | regress 3P% luck |
+| F5 | matchups: likely primary defender (historical assignment shares × tonight's roster), defender quality (own shrunk matchup / defended-FG% vs expected) | `player_matchups` 2.17M rows (2017+), `pt_defend` | expect small; heavy shrinkage |
+| F6 | context: home/away, travel and time zones, altitude, season stage | schedule | |
+| F7 | referees: crew foul / FTA tendencies | referee assignments (live), sportsdataverse officials (history) | |
+| F8 | player vs this opponent / coach history | box | expected noise; tested and reported |
+| F9 | player prop lines (market) as features / blend | `prop_snapshots` (live since 2026-10-19) | after ≥ 3 weeks of data |
+
 ### Phase 2.5: contest builder, GPP, late swap, Showdown (Nov 15 – 21)
 
 | ID | Task | Owned files | In → out | Acceptance |

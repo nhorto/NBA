@@ -863,6 +863,19 @@ def _refresh_gamelogs_step(conn: sqlite3.Connection, day: date) -> dict:
     return {"season": season, "fetched": res["fetched"], "rows": res["rows"]}
 
 
+def _dfs_grade_step(conn: sqlite3.Connection, day: date) -> dict:
+    """Nightly DFS grading (proj/dfs/grade.py, T3.0): player and lineup grades, baselines and
+    metric snapshots for `day` (and a retry of the two days before it). A no-op, and no write,
+    on days without DFS runs or whose games are not final yet."""
+    from .proj.dfs import grade
+    res = grade.grade_recent(conn, day)
+    if res.get("status") in ("skipped", "pending"):
+        return {"status": "skipped", "reason": res.get("reason") or "games not final yet"}
+    return {"graded_players": (res.get("players") or {}).get("graded", 0),
+            "slates": {s["slate_id"]: s["status"] for s in res.get("slates", [])},
+            "seconds": res.get("seconds")}
+
+
 def _brief_step(conn: sqlite3.Connection, brief_day: date) -> dict:
     from .brief import assemble
     b = assemble.build_brief(conn, brief_day)
@@ -899,6 +912,7 @@ def run_postgame(day: date) -> dict:
         run.step("games", _games_step, conn, run, day)
         run.step("game_facts", _facts_step, conn, run, day)
         run.step("refresh_gamelogs", _refresh_gamelogs_step, conn, day)
+        run.step("dfs_grade", _dfs_grade_step, conn, day)
         run.step("rate_state", _rate_state_step, conn, day + timedelta(days=1))
         run.step("player_why", _player_why_step, conn, day)
         run.step("brief", _brief_step, conn, day + timedelta(days=1))
