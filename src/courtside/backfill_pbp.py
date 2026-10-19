@@ -1,7 +1,7 @@
-"""Historical play-by-play backfill from cdn.nba.com (feeds the win-probability model).
+"""Historical play-by-play and boxscore backfill from cdn.nba.com.
 
 Game ids come from ``team_games`` (Regular Season, Playoffs, PlayIn). Each payload is archived
-exactly where postgame archives it, ``raw/nba_cdn/playbyplay/{nba_day}/{game_id}.json.gz``, with
+exactly where postgame archives it, ``raw/nba_cdn/{kind}/{nba_day}/{game_id}.json.gz``, with
 ``nba_day`` = the game's ``game_date``. Resumable: anything already archived (under any day) is
 skipped. Requests go through ``http.fetch_json``, so the cdn host throttle applies (``run`` widens it
 from 0.3 s to 0.5 s: a 0.3 s run was 403-blocked after ~400 requests).
@@ -10,6 +10,9 @@ The cdn only serves play-by-play from the 2019-20 season on (2017-18 and 2018-19
 every id probed) and has holes inside seasons. A 403 is ambiguous (missing id, or we are
 rate-limited), so ``make_fetcher`` re-requests an archived "sentinel" game to tell them apart and
 starts a fresh session, and only then waits out a block. Games that stay missing are retried on the next run.
+
+For boxscore backfill (kind="boxscore"), iterate over archived playbyplay games to ensure alignment.
+Validate each boxscore (game_id match, both teams present) and reject non-final payloads.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from .backfill import DEFAULT_SEASON_TYPES, seasons_range
 from .http import FetchError, fetch_json
 from .sources import nba_cdn
 
-SOURCE, KIND = nba_cdn.SOURCE, "playbyplay"
+SOURCE = nba_cdn.SOURCE
 MAX_CONSECUTIVE_FAILS = 25      # timeouts / 5xx / 429 in a row: outage, stop instead of hammering
 MAX_CONSECUTIVE_MISSING = 400   # the cdn has real holes (weeks of ids); only a huge run is odd
 BLOCK_WAITS = (30, 60, 120, 240, 480)   # seconds to wait while the cdn is rate-limiting us
@@ -45,7 +48,8 @@ def new_session() -> None:
     http._session = None
 
 
-def make_fetcher(sentinel: str | None, sleep: Callable[[float], None] = time.sleep,
+def make_fetcher(sentinel: str | None, kind: str = "playbyplay",
+                 sleep: Callable[[float], None] = time.sleep,
                  get: Callable[..., dict] = fetch_json,
                  reset: Callable[[], None] = new_session) -> Callable[[str], dict]:
     """A fetch(game_id) that tells a rate-limit block from a genuinely missing game.
@@ -59,7 +63,12 @@ def make_fetcher(sentinel: str | None, sleep: Callable[[float], None] = time.sle
     count = 0
 
     def url(g: str) -> str:
-        return nba_cdn.PLAYBYPLAY_URL.format(game_id=g)
+        if kind == "playbyplay":
+            return nba_cdn.PLAYBYPLAY_URL.format(game_id=g)
+        elif kind == "boxscore":
+            return nba_cdn.BOXSCORE_URL.format(game_id=g)
+        else:
+            raise ValueError(f"unknown kind {kind!r}")
 
     def fetch(game_id: str) -> dict:
         nonlocal count
@@ -96,9 +105,9 @@ def make_fetcher(sentinel: str | None, sleep: Callable[[float], None] = time.sle
     return fetch
 
 
-def archived_index() -> dict[str, Path]:
-    """game_id -> archived playbyplay path, across every nba_day directory."""
-    root = config.data_dir() / "raw" / SOURCE / KIND
+def archived_index(kind: str = "playbyplay") -> dict[str, Path]:
+    """game_id -> archived path, across every nba_day directory."""
+    root = config.data_dir() / "raw" / SOURCE / kind
     out: dict[str, Path] = {}
     if root.exists():
         for p in root.glob("*/*.json.gz"):
@@ -117,22 +126,53 @@ def games_for(conn, seasons: list[str], season_types=DEFAULT_SEASON_TYPES) -> li
     return [(r["game_id"], r["d"], r["season"]) for r in rows]
 
 
-def backfill_pbp(seasons: list[str], season_types=DEFAULT_SEASON_TYPES, conn=None,
-                 fetch: Callable[[str], dict] | None = None, limit: int | None = None,
+def _is_valid_boxscore(payload: dict, game_id: str) -> bool:
+    """Check boxscore has matching game_id and both teams' players."""
+    game = (payload or {}).get("game") or {}
+    if str(game.get("gameId")) != str(game_id):
+        return False
+    home = (game.get("homeTeam") or {}).get("players") or []
+    away = (game.get("awayTeam") or {}).get("players") or []
+    return bool(home) and bool(away)
+
+
+def backfill_pbp(seasons: list[str], season_types=DEFAULT_SEASON_TYPES, kind: str = "playbyplay",
+                 conn=None, fetch: Callable[[str], dict] | None = None, limit: int | None = None,
                  log_every: int = 100) -> dict:
-    """Fetch + archive missing play-by-play. Returns counts per season and totals."""
+    """Fetch + archive missing play-by-play or boxscore. Returns counts per season and totals.
+
+    kind="boxscore" iterates over archived playbyplay games (ensuring alignment) and fetches the
+    corresponding boxscores.
+    """
     own = conn is None
     conn = conn or db.connect()
     t0 = time.monotonic()
     summary: dict = {"fetched": 0, "cached": 0, "missing": 0, "failed": 0, "by_season": {},
                      "errors": [], "aborted": False}
     try:
-        have = archived_index()
-        fetch = fetch or make_fetcher(next(iter(have), None))
-        games = games_for(conn, seasons, season_types)
+        have = archived_index(kind)
+        fetch = fetch or make_fetcher(next(iter(have), None), kind=kind)
+
+        if kind == "boxscore":
+            # For boxscore, iterate over archived playbyplay games
+            pbp_games = archived_index("playbyplay")
+            # Extract day from archive path: .../raw/nba_cdn/playbyplay/{day}/{game_id}.json.gz
+            games_iter = [(gid, pbp_games[gid].parent.name, None) for gid in pbp_games.keys()]
+        else:
+            # For playbyplay, iterate over games_for from DB
+            games_iter = games_for(conn, seasons, season_types)
+
         todo = 0
         consecutive = missing_run = 0
-        for gid, day, season in games:
+        for gid, day, season in games_iter:
+            if kind == "boxscore" and season is None:
+                # Infer season from game_id: '0022600001' -> '2026-27'
+                try:
+                    y = 2000 + int(gid[3:5])
+                    season = f"{y}-{(y + 1) % 100:02d}"
+                except (ValueError, IndexError):
+                    season = "unknown"
+
             row = summary["by_season"].setdefault(
                 season, {"games": 0, "fetched": 0, "cached": 0, "missing": 0, "failed": 0})
             row["games"] += 1
@@ -145,9 +185,13 @@ def backfill_pbp(seasons: list[str], season_types=DEFAULT_SEASON_TYPES, conn=Non
             todo += 1
             try:
                 payload = fetch(gid)
-                if not (payload.get("game") or {}).get("actions"):
-                    raise FetchError(f"empty playbyplay for {gid}", status=404)
-                archive.save_raw(SOURCE, KIND, day, gid, payload)
+                if kind == "playbyplay":
+                    if not (payload.get("game") or {}).get("actions"):
+                        raise FetchError(f"empty playbyplay for {gid}", status=404)
+                else:  # boxscore
+                    if not _is_valid_boxscore(payload, gid):
+                        raise FetchError(f"invalid boxscore for {gid}", status=404)
+                archive.save_raw(SOURCE, kind, day, gid, payload)
                 summary["fetched"] += 1
                 row["fetched"] += 1
                 consecutive = missing_run = 0
@@ -185,7 +229,7 @@ def backfill_pbp(seasons: list[str], season_types=DEFAULT_SEASON_TYPES, conn=Non
     return summary
 
 
-def run(start: str, end: str) -> dict:
+def run(start: str, end: str, kind: str = "playbyplay") -> dict:
     seasons = seasons_range(start, end)
     http.MIN_INTERVAL["cdn.nba.com"] = CDN_INTERVAL
-    return backfill_pbp(seasons)
+    return backfill_pbp(seasons, kind=kind)

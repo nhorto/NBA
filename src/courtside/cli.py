@@ -40,7 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
     gl.add_argument("--no-advanced", action="store_true", help="skip advanced-stat endpoints")
     gl.add_argument("--force", action="store_true", help="re-fetch even if already archived")
 
-    pb = bf.add_parser("pbp", help="play-by-play from cdn.nba.com (win-probability training data)")
+    pb = bf.add_parser("pbp", help="play-by-play and boxscore from cdn.nba.com")
+    pb.add_argument("--kind", choices=("playbyplay", "boxscore"), default="playbyplay",
+                    help="playbyplay (win-probability training) or boxscore (for stints); default playbyplay")
     pb.add_argument("--from", dest="start", default="2019-20", help="first season (cdn has 2019-20+)")
     pb.add_argument("--to", dest="end", default="2025-26", help="last season, e.g. 2025-26")
 
@@ -72,6 +74,16 @@ def build_parser() -> argparse.ArgumentParser:
     ij.add_argument("--max-pdfs", type=int, default=3000, help="cap for the hourly extras")
     ij.add_argument("--find-earliest", action="store_true",
                     help="only binary-search and print the earliest available date")
+
+    rgu = bf.add_parser("rotoguru", help="RotoGuru daily DraftKings salaries/points, 2014-10-29+")
+    rgu.add_argument("--from", dest="start", type=_parse_day, default=None,
+                     help="first game day (default 2014-10-29)")
+    rgu.add_argument("--to", dest="end", type=_parse_day, default=None,
+                     help="last game day (default: end of the 2020-21 season)")
+    rgu.add_argument("--reparse", action="store_true",
+                     help="re-parse every archived page into the table; no network")
+    rgu.add_argument("--playoffs", action="store_true",
+                     help="also fetch playoff / play-in days (default: regular season only)")
 
     wp = sub.add_parser("winprob", help="in-game win-probability model").add_subparsers(
         dest="wp_cmd", required=True)
@@ -386,6 +398,16 @@ def _backfill_injuries_cmd(args) -> int:
     return 1 if res["parse_failures"] else 0
 
 
+def _backfill_rotoguru_cmd(args) -> int:
+    from . import backfill_rotoguru as br
+    s = br.run(args.start.isoformat() if args.start else None,
+               args.end.isoformat() if args.end else None,
+               reparse=args.reparse, playoffs=args.playoffs)
+    for err in s["errors"][:20]:
+        print(f"  error: {err}", file=sys.stderr)
+    return 1 if s["failed"] or s["aborted"] else 0
+
+
 def _backfill_players_cmd(args) -> int:
     from . import backfill, backfill_players as bp
     if not args.season_tables and not args.per_game:
@@ -470,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
-        summary = backfill_pbp.run(args.start, args.end)
+        summary = backfill_pbp.run(args.start, args.end, kind=args.kind)
         print(f"fetched={summary['fetched']} cached={summary['cached']} "
               f"missing={summary['missing']} failed={summary['failed']} "
               f"aborted={summary['aborted']}")
@@ -483,6 +505,8 @@ def main(argv: list[str] | None = None) -> int:
         return _backfill_injuries_cmd(args)
     if args.cmd == "backfill" and args.what == "players":
         return _backfill_players_cmd(args)
+    if args.cmd == "backfill" and args.what == "rotoguru":
+        return _backfill_rotoguru_cmd(args)
     if args.cmd == "backfill":
         from . import backfill
         try:
