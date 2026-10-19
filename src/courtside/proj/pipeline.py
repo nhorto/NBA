@@ -627,11 +627,24 @@ def _hist_games(ctx: Context, day: date) -> pd.DataFrame:
 def _home_away(conn: sqlite3.Connection, day: date) -> pd.DataFrame:
     rows = conn.execute("SELECT game_id, team, is_home FROM team_games WHERE game_date=?",
                         (day.isoformat(),)).fetchall()
-    g: dict = {}
+    teams: dict = {}
     for gid, team, is_home in rows:
-        g.setdefault(gid, {})["home" if is_home else "away"] = team
-    return pd.DataFrame([{"game_id": k, "home": v.get("home"), "away": v.get("away")}
-                         for k, v in sorted(g.items()) if "home" in v and "away" in v])
+        teams.setdefault(gid, {})[team] = int(bool(is_home))
+    out = []
+    for gid, t in sorted(teams.items()):
+        if len(t) != 2:
+            continue
+        home = [k for k, v in t.items() if v]
+        if len(home) == 1:
+            out.append({"game_id": gid, "home": home[0],
+                        "away": next(k for k in t if k != home[0])})
+        else:
+            # Neutral site (Cup knockouts, international games): team_games marks both teams
+            # away and the nominal home team isn't stored, so the order is alphabetical and the
+            # sign of a closing spread for these few games is uncertain.
+            a, b = sorted(t)
+            out.append({"game_id": gid, "home": a, "away": b})
+    return pd.DataFrame(out, columns=["game_id", "home", "away"])
 
 
 def historical_inputs(conn: sqlite3.Connection, ctx: Context, day: date, *,

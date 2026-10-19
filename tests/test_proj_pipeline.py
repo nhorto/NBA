@@ -316,3 +316,19 @@ def test_slate_day_is_the_eastern_day_of_the_earliest_tip():
     assert pipeline._slate_day(pool) == date(2026, 10, 20)
     late_only = NS(players=[NS(start_time="2026-10-21T01:30:00.0000000Z")])
     assert pipeline._slate_day(late_only) == date(2026, 10, 20)
+
+
+def test_home_away_keeps_neutral_site_games():
+    from datetime import date
+    from courtside import db
+    from courtside.proj import pipeline
+    conn = db.connect(":memory:")
+    rows = [("g1", "MIL", 0), ("g1", "ATL", 0), ("g2", "BOS", 1), ("g2", "NYK", 0)]
+    for gid, team, home in rows:
+        conn.execute("INSERT INTO team_games (game_id, team, season, season_type, game_date, "
+                     "is_home) VALUES (?, ?, '2024-25', 'Regular Season', '2024-12-14', ?)",
+                     (gid, team, home))
+    df = pipeline._home_away(conn, date(2024, 12, 14))
+    assert df.to_dict("records") == [{"game_id": "g1", "home": "ATL", "away": "MIL"},
+                                     {"game_id": "g2", "home": "BOS", "away": "NYK"}]
+    assert list(pipeline._home_away(conn, date(2024, 12, 15)).columns) == ["game_id", "home", "away"]
