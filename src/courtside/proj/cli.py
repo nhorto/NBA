@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import sys
 
 PROJ_MODULES: tuple[str, ...] = (
     "courtside.proj.ids",
@@ -36,7 +37,12 @@ def _run(prog: str, modules: tuple[str, ...], argv: list[str]) -> int:
             mod = importlib.import_module(name)
         except ModuleNotFoundError as e:
             if e.name != name:
-                raise
+                print(f"warning: {name} unavailable ({e}); its commands are skipped",
+                      file=sys.stderr)
+            continue
+        except ImportError as e:   # one broken module must not take down the others (e.g. tick)
+            print(f"warning: {name} unavailable ({e}); its commands are skipped",
+                  file=sys.stderr)
             continue
         if hasattr(mod, "add_commands"):
             handlers.update(mod.add_commands(sub))
