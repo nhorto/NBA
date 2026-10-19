@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% macro legend(items) -%}
+<ul class="hm-legend" aria-label="Chart key">
+  {% for it in items %}<li><i class="hm-sw {{ it.cls }}"></i>{{ it.label }}</li>{% endfor %}
+</ul>
+{%- endmacro %}
+{# a metric table: rows x (7 days, 30 days, season) #}
+{% macro metric_table(title, rows, windows, note="", cap="") -%}
+<div class="card">
+  <div class="card-head-row"><h3 class="card-title">{{ title }}</h3>{% if note %}<span class="muted card-note">{{ note }}</span>{% endif %}</div>
+  <div class="table-scroll">
+  <table class="table dh-table">
+    <caption class="sr">{{ cap or title }}</caption>
+    <thead><tr><th scope="col"><span class="sr">Measure</span></th>{% for w in windows %}<th scope="col" class="num">{{ w.label }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr{% if r.ours %} class="dh-ours"{% endif %}>
+        <th scope="row">{{ r.label }}{% if r.tip %}<span class="psub">{{ r.tip }}</span>{% endif %}</th>
+        {% for c in r.cells %}<td class="num">{{ c.text }}{% if c.se or c.n %}<span class="psub">{{ c.se }}{% if c.se and c.n %} &middot; {% endif %}{{ c.n }}</span>{% endif %}</td>{% endfor %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{%- endmacro %}
+{% block title %}DFS &middot; Model Health &middot; Courtside{% endblock %}
+{% block description %}How the Courtside DFS projections and lineups are doing against real games: scores against DraftKings' own projections, interval coverage, minutes error, lock runs and alerts. Real contest results are shown separately.{% endblock %}
+
+{% block content %}
+<section class="hm-hero wrap" aria-labelledby="dh-title">
+  <div class="hm-hero-main">
+    <div class="mast-kicker">
+      <span class="kicker">Model Health</span>
+      {% if h.as_of %}<time datetime="{{ h.as_of }}">Graded through {{ h.as_of|long_date }}</time>{% endif %}
+    </div>
+    <nav class="hm-tabs" aria-label="Health sections">
+      <a href="/health">Games</a><a href="/health/dfs" aria-current="page" class="is-active">DFS</a>
+    </nav>
+    <h1 class="headline hm-headline" id="dh-title">DFS tracking</h1>
+    <p class="hm-sub">Every lineup we build is scored against the real box scores after the games. Those are <b>paper results</b>: lineups we built, not contests anyone paid to enter. The <a href="#real">real money block</a> below is your own entries and uploaded standings, kept separate.</p>
+    <dl class="stats">
+      <div><dt>Open alerts</dt><dd>{{ h.alert_counts.n }}{% if h.alert_counts.critical %}<small> {{ h.alert_counts.critical }} critical</small>{% endif %}</dd></div>
+      <div><dt>Slates (7 days)</dt><dd>{{ h.slates|length if h.slates else DASH }}</dd></div>
+      <div><dt>Real entries</dt><dd>{{ h.real.totals.entries if h.real.totals.entries else DASH }}</dd></div>
+    </dl>
+  </div>
+  <aside class="s60 card hm-champs" aria-labelledby="dv-title">
+    <h2 class="s60-title" id="dv-title"><span class="hm-crown" aria-hidden="true"></span>Projection versions</h2>
+    {% if h.versions %}
+    <ul class="champ-list">
+      {% for v in h.versions %}
+      <li><div class="champ-top"><b>{{ v.component }}</b><span class="champ-ver">{{ v.version }}</span></div>
+        <p class="champ-meta">pipeline {{ v.pipeline or DASH }} &middot; since {{ v.since }}</p></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="champ-empty">Versions are registered after the first DFS run (opening night is {{ h.opening_night|medium_date }}).</p>
+    {% endif %}
+  </aside>
+</section>
+
+{% if not h.has_data %}
+<div class="wrap"><p class="caveat hm-caveat">Nothing has been graded yet. Opening night is {{ h.opening_night|medium_date }}; the first grades appear in the early hours of {{ h.first_grades|medium_date }}. Every table below fills in from then.</p></div>
+{% endif %}
+
+<nav class="secnav" aria-label="Sections">
+  <div class="wrap secnav-in">
+    <a href="#lineups">Lineups</a>
+    <a href="#players">Projections</a>
+    <a href="#trends">Trends</a>
+    <a href="#slates">Slates</a>
+    <a href="#alerts">Alerts</a>
+    <a href="#real">Real results</a>
+  </div>
+</nav>
+
+{# ================================================================ LINEUPS (paper) #}
+<section class="section wrap" id="lineups" aria-labelledby="lineups-title">
+  {{ m.sec_head("lineups", "01", "Our lineups vs the alternatives", "Paper: scored on real games, not entered") }}
+  {% if h.lineup_tables %}
+  <p class="sec-lede">Our builds (the lineups in effect at lock) against the same pool built by DraftKings' own FPPG, by salary alone, and by hindsight. Classic slates; &plusmn; is the standard error across days, shown once there are five days.</p>
+  <div class="grid grid-2 dh-grid">
+    {% for t in h.lineup_tables %}{{ metric_table(t.title, t.rows, h.windows, t.note) }}{% endfor %}
+    {% if h.vs_rows %}{{ metric_table("Points ahead of the baselines", h.vs_rows, h.windows, "positive = we scored more") }}{% endif %}
+    {% if h.cash_rows %}{{ metric_table("Would have cashed (real cash lines)", h.cash_rows, h.windows, "only slates with an uploaded contest") }}{% endif %}
+  </div>
+  {% else %}
+  {{ m.empty("No graded lineups yet", "Once a slate's games are final the nightly job scores each stored lineup. Opening night is " ~ (h.opening_night|medium_date) ~ ".") }}
+  {% endif %}
+</section>
+
+{# ================================================================ PLAYERS #}
+<section class="section wrap" id="players" aria-labelledby="players-title">
+  {{ m.sec_head("players", "02", "Player projections", "DK points, projected minutes of 10+") }}
+  {% if h.players.mae or h.players.calib %}
+  <p class="sec-lede">Every projected player counts, a player who did not play scores zero. Error is the average miss in DraftKings points (lower is better).</p>
+  <div class="grid grid-2 dh-grid">
+    {% if h.players.mae %}{{ metric_table("DK points error per player", h.players.mae + h.players.gain, h.windows, "ours vs the baselines") }}{% endif %}
+    {% if h.players.calib %}{{ metric_table("Ranges and minutes", h.players.calib, h.windows, "80% range should hold 80%") }}{% endif %}
+  </div>
+  {% else %}
+  {{ m.empty("No graded projections yet", "Projection error, range coverage and minutes error start after the first final games.") }}
+  {% endif %}
+</section>
+
+{# ================================================================ TRENDS #}
+<section class="section wrap" id="trends" aria-labelledby="trends-title">
+  {{ m.sec_head("trends", "03", "Trends", "Rolling 7 days") }}
+  {% if h.charts %}
+  <div class="grid grid-2">
+    {% for c in h.charts %}
+    <div class="card">
+      <div class="card-head-row"><h3 class="card-title">{{ c.title }}</h3><span class="muted card-note">{{ c.note }}</span></div>
+      {{ legend(c.legend) }}
+      <div class="chart-box">{{ c.wide|safe }}{% if c.narrow %}{{ c.narrow|safe }}{% endif %}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  {{ m.empty("Trend lines start after a few game days", "A line needs at least two nightly snapshots.") }}
+  {% endif %}
+</section>
+
+{# ================================================================ SLATES #}
+<section class="section wrap" id="slates" aria-labelledby="slates-title">
+  {{ m.sec_head("slates", "04", "Last slates", "Lock runs and what they scored") }}
+  {% if h.slates %}
+  <div class="card">
+    <div class="table-scroll">
+    <table class="table dh-table dh-slates">
+      <caption class="sr">Slates of the last seven days</caption>
+      <thead><tr><th scope="col">Slate</th><th scope="col">Lock runs</th><th scope="col" class="num">Ours</th><th scope="col" class="num">FPPG</th><th scope="col" class="num">Salary</th><th scope="col" class="num">Best</th></tr></thead>
+      <tbody>
+      {% for s in h.slates %}
+      <tr>
+        <th scope="row"><a href="/dfs/{{ s.day }}/{{ s.slate_id }}">{{ s.label }}</a><span class="psub">{{ s.day|short_date }} &middot; {{ s.lock }}</span></th>
+        <td class="dh-runs"><span class="pill pill-{{ s.l45[1] }}" title="45-minute run">45: {{ s.l45[0] }}</span> <span class="pill pill-{{ s.l10[1] }}" title="10-minute run">10: {{ s.l10[0] }}</span></td>
+        <td class="num">{{ s.ours }}</td><td class="num">{{ s.fppg }}</td><td class="num">{{ s.salary }}</td><td class="num">{{ s.hindsight }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="card-sub">Scores are DK points of the cash lineup in effect at lock, the FPPG and salary optimizers, and the best lineup in hindsight. A dash means the slate is not graded yet.</p>
+  </div>
+  {% else %}
+  {{ m.empty("No slates in the last 7 days", "Slates appear once the daily capture has found them.") }}
+  {% endif %}
+</section>
+
+{# ================================================================ ALERTS #}
+<section class="section wrap" id="alerts" aria-labelledby="alerts-title">
+  {% set ameta %}{% if h.alerts %}{{ h.alerts|length }} open{% endif %}{% endset %}
+  {{ m.sec_head("alerts", "05", "DFS alerts", ameta) }}
+  {% if h.alerts %}
+  <ul class="card alert-list">
+    {% for a in h.alerts %}
+    <li class="alert-row is-{{ 'critical' if a.sev_cls == 'out' else 'warn' }}">
+      <span class="pill pill-{{ a.sev_cls }}">{{ a.sev_label }}</span>
+      <div class="alert-main"><p class="alert-msg">{{ a.message }}</p><p class="alert-meta">{{ a.kind }}{% if a.since %} &middot; since {{ a.since }}{% endif %}</p></div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  {{ m.empty("No open DFS alerts", "Minutes bias, range coverage, missed lock runs, scoring-rule checks, ID matching and reconciliation are all inside their limits.") }}
+  {% endif %}
+  <p class="card-sub">The full list of alerts, including the game models, is on <a href="/health#alerts">the Games tab</a>.</p>
+</section>
+
+{# ================================================================ REAL #}
+<section class="section wrap" id="real" aria-labelledby="real-title">
+  {% set rmeta %}{% if h.real.has_entries %}{{ h.real.totals.entries }} entr{{ 'y' if h.real.totals.entries == 1 else 'ies' }}{% endif %}{% endset %}
+  {{ m.sec_head("real", "06", "Real contests", rmeta) }}
+  <div class="rs-real-banner"><span class="rs-real-tag">Real money</span> Your own entries and the standings you uploaded. Not simulated, not backtested.</div>
+  {% if h.real.has_entries %}
+  <div class="grid grid-2 dh-grid">
+    {{ metric_table("Entries and money", h.real.table, h.windows, "winnings count once entered") }}
+    <div class="card">
+      <div class="card-head-row"><h3 class="card-title">Latest entries</h3><a class="muted card-note" href="/dfs/results">All results</a></div>
+      <div class="table-scroll">
+      <table class="table dh-table">
+        <caption class="sr">Latest real entries</caption>
+        <thead><tr><th scope="col">Contest</th><th scope="col" class="num">Pts</th><th scope="col">Place</th><th scope="col" class="num">Net</th></tr></thead>
+        <tbody>
+        {% for e in h.real.recent %}
+          <tr><th scope="row">{{ e.contest }}<span class="psub">{{ e.day|short_date if e.day else "" }} &middot; {{ e.fee }} in</span></th><td class="num">{{ e.points }}</td><td>{{ e.place }}</td><td class="num">{{ e.net }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  {{ m.empty("No real entries yet", "Upload a finished contest or add an entry by hand on the Real results page.") }}
+  {% endif %}
+  {% if h.real.contests %}
+  <div class="card dh-contests">
+    <div class="card-head-row"><h3 class="card-title">Uploaded contests</h3><a class="muted card-note" href="/dfs/results#contests">All</a></div>
+    <div class="table-scroll">
+    <table class="table dh-table">
+      <caption class="sr">Uploaded contests</caption>
+      <thead><tr><th scope="col">Contest</th><th scope="col" class="num">Field</th><th scope="col" class="num">Winner</th><th scope="col" class="num">Top 1%</th><th scope="col" class="num">Cash line</th></tr></thead>
+      <tbody>
+      {% for c in h.real.contests %}
+        <tr><th scope="row">{{ c.name }}<span class="psub">{{ c.day|short_date if c.day else "" }}</span></th><td class="num">{{ c.field }}</td><td class="num">{{ c.win }}</td><td class="num">{{ c.top1 }}</td><td class="num">{{ c.line }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endif %}
+  <p class="rs-more"><a class="btn btn-sm" href="/dfs/results">Upload results or add an entry</a></p>
+</section>
+{% endblock %}
+
+{% block foot %}
+<div class="foot-meta">
+  <p><strong>DFS tracking</strong>{% if h.as_of %} &middot; graded through {{ h.as_of|medium_date }}{% endif %} &middot; paper results use real box scores; backtests are in the research reports</p>
+</div>
+{% endblock %}

@@ -409,7 +409,7 @@ def run_after_job(conn: sqlite3.Connection, job: str, day, summary: dict | None 
     """What collect.py runs at the end of a job. Every stage is guarded; never raises.
 
     pregame:  checks + alerts.
-    postgame: checks + metrics(day+1) + drift + alerts.
+    postgame: checks + metrics(day+1) + drift + DFS registry sync + alerts (DFS alerts included).
     Returns {"checks": {...counts}, "alerts": {...}, "line": one-line summary}."""
     from . import alerts, checks, drift
     day = _as_date(day)
@@ -436,6 +436,10 @@ def run_after_job(conn: sqlite3.Connection, job: str, day, summary: dict | None 
         if dr is not None:
             out["drift_features"] = len(dr)
             out["drift_max_psi"] = max((r["psi"] for r in dr), default=None)
+        from . import dfs_monitor     # after the collect job's dfs_grade step
+        dfs = guarded("dfs", lambda: dfs_monitor.run(conn, as_of))
+        if dfs is not None:
+            out["dfs"] = dfs
     al = guarded("alerts", lambda: alerts.evaluate(conn, as_of))
     if al is not None:
         open_ = [a for a in al if a["status"] == "open"]

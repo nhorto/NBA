@@ -26,6 +26,7 @@ MODEL_INFO = {
     "elo_sched": ("Elo + schedule", "Ratings and rest only; a simple baseline"),
     MARKET: ("The market", "De-vigged betting line; the bar to clear"),
 }
+DFS_COMPONENTS = ("player_minutes", "player_rates", "player_dist", "dfs_engine")  # DFS tab
 STALE_SNAPSHOT_DAYS = 7
 MODEL_RECENT_DAYS = 14        # a model not scored in this long before the newest snapshot is hidden
 MIN_PLOT_N = 30               # rolling windows with fewer games are too noisy to draw
@@ -193,6 +194,7 @@ def build(conn: sqlite3.Connection | None, today: date | None = None) -> dict:
     snaps = _latest_snapshots(c) if c else []
     as_of = max((r["as_of"] for r in snaps), default=None)
     versions = _q(c, "SELECT * FROM model_versions ORDER BY model_name, created_at DESC") if c else []
+    versions = [v for v in versions if v["model_name"] not in DFS_COMPONENTS]
     open_alerts = _q(c, "SELECT * FROM alerts WHERE status='open'") if c else []
     open_alerts.sort(key=lambda a: (SEV_ORDER.get(a["severity"], 9), -_ts_key(a["updated_at"])))
     resolved = _q(c, "SELECT * FROM alerts WHERE status='resolved' "
@@ -541,7 +543,8 @@ def _alerts_view(open_: list[dict], resolved: list[dict]) -> dict:
     def one(a):
         lab, cls = SEV_PILL.get(a["severity"], (a["severity"].capitalize(), "unknown"))
         return {"key": a["key"], "severity": a["severity"], "sev_label": lab, "sev_cls": cls,
-                "kind": (a.get("kind") or "").capitalize(), "message": a["message"],
+                "kind": "DFS" if a.get("kind") == "dfs" else (a.get("kind") or "").capitalize(),
+                "message": a["message"],
                 "since": fmt.stamp(a.get("created_at")) or fmt.medium_date(a.get("created_at")),
                 "updated": fmt.stamp(a.get("updated_at")),
                 "resolved": fmt.stamp(a.get("resolved_at")) or fmt.medium_date(a.get("resolved_at")),
@@ -625,7 +628,9 @@ def _checks(c) -> dict:
 def _events(c) -> list[dict]:
     return _q(c, "SELECT e.id, e.ts, e.version_id, e.action, e.reason, v.model_name, v.code_sha "
                  "FROM registry_events e LEFT JOIN model_versions v ON v.version_id=e.version_id "
-                 "ORDER BY e.ts DESC, e.id DESC LIMIT 60")
+                 "WHERE v.model_name IS NULL OR v.model_name NOT IN (%s) "
+                 "ORDER BY e.ts DESC, e.id DESC LIMIT 60" % ",".join("?" * len(DFS_COMPONENTS)),
+              DFS_COMPONENTS)
 
 
 def _history_view(events: list[dict]) -> list[dict]:
@@ -648,9 +653,12 @@ def _overall(vm: dict) -> dict:
     al = vm["alerts"]
     counts = vm["checks"].get("counts") or {}
     covered = {a["key"][5:] for a in al["open"] if a["key"].startswith("data:")}
+    recon_open = any(a["key"] == "dfs:recon_gap" for a in al["open"])
     uncovered = 0
     for g in vm["checks"].get("groups", []):
         for i in g["rows"]:
+            if recon_open and i["name"].startswith("proj_recon_gap:"):
+                continue                        # covered by the one `dfs:recon_gap` alert
             if i["status"] in ("fail", "warn") and i["name"] not in covered:
                 uncovered += 1
     watch = al["warn"] + uncovered

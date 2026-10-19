@@ -27,6 +27,9 @@ data          key data:<check>    consecutive non-ok results of a check (skips i
                                    fail -> warn at 1, critical at 3; warn -> warn at 2, critical at 3
 Metric rules read the newest snapshot <= as_of and are ignored if it is > 10 days old.
 drift         key drift:<feature> latest PSI > 0.25 warn, > 0.5 critical (snapshot <= 7 days old)
+dfs           key dfs:<rule>      DFS tracking rules, see mlops/dfs_monitor.py (minutes bias, 80%
+                                   coverage, missed lock run, reconciliation gap, live minutes MAE,
+                                   projection fallback)
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ import math
 import sqlite3
 from datetime import date, datetime, timezone
 
+from . import dfs_monitor
 from . import drift as drift_mod
 from . import monitor
 
@@ -54,7 +58,7 @@ METRICS_MAX_AGE_DAYS = 10     # older metric snapshots (offseason, stalled monit
 MARKET_FREE = {"gbm_opinion", "elo_sched"}
 # docs/MODEL.md "Rung 3": regular-season walk-forward log-loss over the last 3 test seasons
 DOC_BENCHMARKS = {"gbm_market": 0.5790, "gbm_opinion": 0.5876, "elo_sched": 0.6044}
-KINDS = ("performance", "calibration", "bias", "data", "drift")
+KINDS = ("performance", "calibration", "bias", "data", "drift", "dfs")
 _SEV = {"info": 0, "warn": 1, "critical": 2}
 
 
@@ -211,6 +215,8 @@ def _data_alerts(conn: sqlite3.Connection) -> list[dict]:
     out = []
     names = [r[0] for r in conn.execute("SELECT DISTINCT check_name FROM data_checks")]
     for name in names:
+        if dfs_monitor.handles_check(name):     # turned into one `dfs:` alert instead
+            continue
         rows = conn.execute("SELECT status, detail, run_at FROM data_checks WHERE check_name=? "
                             "AND status != 'skip' ORDER BY run_at DESC LIMIT 12", (name,)).fetchall()
         if not rows or rows[0]["status"] == "ok":
@@ -254,7 +260,8 @@ def _drift_alerts(conn: sqlite3.Connection, as_of: date) -> list[dict]:
 
 def desired_alerts(conn: sqlite3.Connection, as_of) -> list[dict]:
     as_of = _as_date(as_of)
-    return _metric_alerts(conn, as_of) + _data_alerts(conn) + _drift_alerts(conn, as_of)
+    return (_metric_alerts(conn, as_of) + _data_alerts(conn) + _drift_alerts(conn, as_of)
+            + dfs_monitor.desired_alerts(conn, as_of))
 
 
 # ------------------------------------------------------------------ reconcile

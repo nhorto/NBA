@@ -20,6 +20,9 @@
       {% if h.as_of %}<time datetime="{{ h.as_of }}">As of {{ h.as_of|long_date }}</time>{% endif %}
     </div>
     <p class="hm-status is-{{ st.state }}"><span class="hm-light" aria-hidden="true"></span><span>{{ st.word }}</span></p>
+    <nav class="hm-tabs" aria-label="Health sections">
+      <a href="/health" aria-current="page" class="is-active">Games</a><a href="/health/dfs">DFS</a>
+    </nav>
     <h1 class="headline hm-headline" id="hm-title">{{ st.headline }}</h1>
     <p class="hm-sub">{{ st.sub }}</p>
     <dl class="stats">

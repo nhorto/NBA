@@ -63,6 +63,9 @@
     {% if v.prev_day %}<a class="daynav-a" href="/dfs/{{ v.prev_day }}">{{ m.icon("back") }} {{ v.prev_day|short_date }}</a>{% else %}<span></span>{% endif %}
     {% if v.next_day %}<a class="daynav-a" href="/dfs/{{ v.next_day }}">{{ v.next_day|short_date }} {{ m.icon("arrow") }}</a>{% else %}<span></span>{% endif %}
   </nav>
+  <nav class="rs-links" aria-label="DFS tools">
+    <a href="/dfs/results">Real results</a><a href="/health/dfs">DFS health</a>
+  </nav>
 
   {% if v.slates %}
   <nav class="dfs-tabs" aria-label="Slates">
