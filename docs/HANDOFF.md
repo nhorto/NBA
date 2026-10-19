@@ -46,7 +46,11 @@ Operational notes:
 
 **Phase 1: complete (2026-10-19, a week early).** T1.0 gate PASSES on every line (full runs): 2024-25 DK MAE +5.54% vs season-to-date (SE 0.47), 80% coverage 0.825, minutes MAE 4.57, RotoGuru 2019-20/2020-21 player MAE +2.3% vs best salary-implied; lineups 0.68 of hindsight vs 0.47–0.52 for salary-implied (`var/reports/evallite_20261019.txt`). Live model `pathA-v0.1`. Postgame job now also writes `rate_state` and runs the post-game why.
 
-**Phase 2 started:** T2.1 backtest harness, T2.5 sim step-0 measurement, T2.7 causal correlation v2 (agents running; heavy parts in the Mac scratch dir `~/Developer/courtside-compute/`).
+**Phase 2 / 2F / 3 (as of 2026-10-19 ~14:45 ET):**
+- Done: T2.1 backtest harness (1,091 slates: our cash 266.3 vs FPPG-optimizer 248.1, +18.2 SE 1.2; `courtside proj backtest-dfs`), T2.3 usage v1 (built, NOT live: tiny gain; the star-absence gap was composition), T2.5 sim step-0 targets, T2.7 causal correlations, T3.0 nightly grading (`dfs_grade` postgame step; `courtside dfs grade|report`).
+- Running: T2.2 minutes v1 (its WIP was swept into commit 2765e49 by a `commit -a`; live default v0.5 verified bit-identical), F0–F2 feature store + opponent features (owner wants the data's depth used; every group must pass an ablation), T3.1 DFS health tab + alerts and T3.2 results upload page.
+- Fixed today: traded players on old teams (Brown, Harris), WNBA slates, slate-day UTC/ET, 2020 bubble season label, CLI loader crash on a missing module.
+- Use `TMPDIR=~/Documents/NBA/var/tmp` for tests: /tmp is a small tmpfs with a per-user quota.
 
 **Open items:** owner to test one DK CSV upload (numeric draftable ids vs "Name (ID)"); wire `why_v0.top_stories` into the Brief; weekly availability refit not yet scheduled; 17 in-progress + 5 stub cdn boxscores to re-fetch. Then Phase 2 (§8).
 
