@@ -824,6 +824,18 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX IF NOT EXISTS idx_dk_requests_day ON dk_requests(et_day, kind);
     """,
+    # 11: starters per game (5 rows per team-game). Source: sportsdataverse lineups (first
+    # period-1 lineup, 1997+), cross-checked with cdn boxscores and RotoGuru's starter flag.
+    """
+    CREATE TABLE IF NOT EXISTS player_starts (
+        game_id TEXT NOT NULL,
+        player_id INTEGER NOT NULL,
+        team TEXT,
+        source TEXT NOT NULL,
+        PRIMARY KEY (game_id, player_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_player_starts_player ON player_starts(player_id, game_id);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",

@@ -127,6 +127,7 @@ def test_migration_9_dfs_tables():
             "player_projections", "player_projection_stats", "dfs_runs", "dfs_ownership_proxy",
             "dfs_lineups", "dfs_contest_results", "dfs_contest_ownership", "prop_compare",
             "postgame_why_v0", "stints", "player_game_oncourt", "rate_state",
-            "player_metric_snapshots", "dfs_metric_snapshots"} <= tables
+            "player_metric_snapshots", "dfs_metric_snapshots", "dk_requests",
+            "player_starts"} <= tables
     cols = {r[1] for r in conn.execute("PRAGMA table_info(dfs_salaries)")}
     assert {"starter", "swappable"} <= cols
