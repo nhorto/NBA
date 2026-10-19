@@ -426,6 +426,12 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:1] == ["mlops"]:
         from .mlops import cli as mlops_cli
         return mlops_cli.main(argv[1:])
+    if argv[:1] == ["proj"]:
+        from .proj import cli as proj_cli
+        return proj_cli.proj_main(argv[1:])
+    if argv[:1] == ["dfs"]:
+        from .proj import cli as proj_cli
+        return proj_cli.dfs_main(argv[1:])
     args = build_parser().parse_args(argv)
     if args.cmd == "db":
         from . import config, db

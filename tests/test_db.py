@@ -118,3 +118,15 @@ def test_migration_4_tables_and_latest_pretip_view():
 def test_earlier_migrations_unchanged_and_ordered():
     conn = db.connect()
     assert [r[0] for r in conn.execute("SELECT version FROM schema_version")] == list(range(1, len(db.MIGRATIONS) + 1))
+
+
+def test_migration_9_dfs_tables():
+    conn = db.connect(":memory:")
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"player_ids", "player_aliases", "dfs_hist_salaries", "dfs_slates", "dfs_contests",
+            "player_projections", "player_projection_stats", "dfs_runs", "dfs_ownership_proxy",
+            "dfs_lineups", "dfs_contest_results", "dfs_contest_ownership", "prop_compare",
+            "postgame_why_v0", "stints", "player_game_oncourt", "rate_state",
+            "player_metric_snapshots", "dfs_metric_snapshots"} <= tables
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(dfs_salaries)")}
+    assert {"starter", "swappable"} <= cols

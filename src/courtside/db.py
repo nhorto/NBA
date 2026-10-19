@@ -566,6 +566,252 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_dfs_player ON dfs_salaries(site_player_id, captured_at);
     CREATE INDEX IF NOT EXISTS idx_dfs_game ON dfs_salaries(game_id, captured_at);
     """,
+    # 9: player projections + DFS optimizer (docs/PLAYERS.md v2 §6). Historical salaries
+    # (RotoGuru), cross-source player ids, slates/contests/payouts, projections with quantiles,
+    # optimizer runs and lineups, manual contest uploads, prop comparison, post-game why v0,
+    # stints/on-court tallies and the nightly empirical-Bayes rate state.
+    """
+    ALTER TABLE dfs_salaries ADD COLUMN starter INTEGER;
+    ALTER TABLE dfs_salaries ADD COLUMN swappable INTEGER;
+
+    CREATE TABLE IF NOT EXISTS player_ids (
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        player_id INTEGER,
+        name TEXT,
+        team TEXT,
+        first_seen TEXT,
+        last_seen TEXT,
+        how TEXT,
+        confidence REAL,
+        PRIMARY KEY (source, source_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_player_ids_player ON player_ids(player_id);
+
+    CREATE TABLE IF NOT EXISTS player_aliases (
+        source TEXT NOT NULL,
+        name_norm TEXT NOT NULL,
+        team TEXT NOT NULL DEFAULT '',
+        player_id INTEGER NOT NULL,
+        note TEXT,
+        PRIMARY KEY (source, name_norm, team)
+    );
+
+    CREATE TABLE IF NOT EXISTS dfs_hist_salaries (
+        game_date TEXT NOT NULL,
+        rg_id TEXT NOT NULL,
+        player_id INTEGER,
+        name TEXT NOT NULL,
+        pos TEXT,
+        team TEXT,
+        opp TEXT,
+        home INTEGER,
+        starter INTEGER,
+        salary INTEGER,
+        dk_pts REAL,
+        minutes REAL,
+        raw_stats TEXT,
+        game_id TEXT,
+        on_slate INTEGER,
+        raw_path TEXT,
+        PRIMARY KEY (game_date, rg_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_hist_player ON dfs_hist_salaries(player_id, game_date);
+
+    CREATE TABLE IF NOT EXISTS dfs_slates (
+        slate_id TEXT PRIMARY KEY,
+        site TEXT NOT NULL DEFAULT 'dk',
+        nba_day TEXT NOT NULL,
+        game_type_id INTEGER,
+        tag TEXT,
+        game_ids_json TEXT,
+        lock_utc TEXT,
+        rules_json TEXT,
+        captured_at TEXT,
+        raw_path TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_slates_day ON dfs_slates(nba_day);
+
+    CREATE TABLE IF NOT EXISTS dfs_contests (
+        contest_id TEXT PRIMARY KEY,
+        slate_id TEXT,
+        name TEXT,
+        entry_fee REAL,
+        field_size INTEGER,
+        max_per_user INTEGER,
+        guaranteed INTEGER,
+        total_prizes REAL,
+        payout_json TEXT,
+        attrs_json TEXT,
+        captured_at TEXT NOT NULL,
+        raw_path TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_contests_slate ON dfs_contests(slate_id);
+
+    CREATE TABLE IF NOT EXISTS player_projections (
+        id INTEGER PRIMARY KEY,
+        game_id TEXT NOT NULL,
+        nba_day TEXT,
+        slate_id TEXT,
+        player_id INTEGER NOT NULL,
+        team TEXT,
+        run_id TEXT,
+        created_at TEXT NOT NULL,
+        model_version TEXT,
+        role TEXT,
+        p_play REAL,
+        minutes_json TEXT,
+        inputs_json TEXT,
+        UNIQUE (game_id, player_id, run_id, model_version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_proj_day ON player_projections(nba_day, player_id);
+    CREATE INDEX IF NOT EXISTS idx_proj_run ON player_projections(run_id);
+
+    CREATE TABLE IF NOT EXISTS player_projection_stats (
+        projection_id INTEGER NOT NULL REFERENCES player_projections(id),
+        stat TEXT NOT NULL,
+        cond TEXT NOT NULL,
+        mean REAL, sd REAL,
+        q05 REAL, q10 REAL, q25 REAL, q50 REAL, q75 REAL, q90 REAL, q95 REAL,
+        PRIMARY KEY (projection_id, stat, cond)
+    );
+
+    CREATE TABLE IF NOT EXISTS dfs_runs (
+        run_id TEXT PRIMARY KEY,
+        slate_id TEXT,
+        kind TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        model_version TEXT,
+        sim_path TEXT,
+        path TEXT,
+        late_news_json TEXT,
+        seconds REAL,
+        ok INTEGER NOT NULL DEFAULT 1,
+        detail TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_runs_slate ON dfs_runs(slate_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS dfs_ownership_proxy (
+        run_id TEXT NOT NULL,
+        player_id INTEGER NOT NULL,
+        own REAL,
+        band TEXT,
+        version TEXT,
+        PRIMARY KEY (run_id, player_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS dfs_lineups (
+        id INTEGER PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        contest_id TEXT,
+        rank INTEGER,
+        slots_json TEXT NOT NULL,
+        salary INTEGER,
+        mean REAL, p10 REAL, p50 REAL, p90 REAL,
+        p_cash REAL, p_top1 REAL, e_payout REAL, dupes REAL,
+        why_json TEXT,
+        actual REAL,
+        pct_field_proxy REAL,
+        ratio_hindsight REAL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_lineups_run ON dfs_lineups(run_id, mode, rank);
+
+    CREATE TABLE IF NOT EXISTS dfs_contest_results (
+        contest_id TEXT NOT NULL,
+        rank INTEGER NOT NULL,
+        entry_hash TEXT NOT NULL,
+        points REAL,
+        lineup_text TEXT,
+        payout REAL,
+        uploaded_at TEXT NOT NULL,
+        PRIMARY KEY (contest_id, rank, entry_hash)
+    );
+
+    CREATE TABLE IF NOT EXISTS dfs_contest_ownership (
+        contest_id TEXT NOT NULL,
+        player_id INTEGER NOT NULL,
+        name TEXT,
+        pct_drafted REAL,
+        fpts REAL,
+        PRIMARY KEY (contest_id, player_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS prop_compare (
+        projection_id INTEGER NOT NULL,
+        market TEXT NOT NULL,
+        line REAL NOT NULL,
+        captured_at TEXT NOT NULL,
+        mkt_p_above REAL,
+        our_p_above REAL,
+        PRIMARY KEY (projection_id, market, line, captured_at)
+    );
+
+    CREATE TABLE IF NOT EXISTS postgame_why_v0 (
+        game_id TEXT NOT NULL,
+        player_id INTEGER NOT NULL,
+        expected REAL,
+        actual REAL,
+        terms_json TEXT,
+        text TEXT,
+        built_at TEXT,
+        PRIMARY KEY (game_id, player_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS stints (
+        game_id TEXT NOT NULL,
+        stint_no INTEGER NOT NULL,
+        period INTEGER NOT NULL,
+        start_sec REAL NOT NULL,
+        end_sec REAL NOT NULL,
+        home5 TEXT NOT NULL,
+        away5 TEXT NOT NULL,
+        home_pts INTEGER, away_pts INTEGER,
+        home_poss REAL, away_poss REAL,
+        PRIMARY KEY (game_id, stint_no)
+    );
+
+    CREATE TABLE IF NOT EXISTS player_game_oncourt (
+        game_id TEXT NOT NULL,
+        player_id INTEGER NOT NULL,
+        team TEXT,
+        started INTEGER,
+        sec_q13 REAL, sec_q4 REAL, sec_ot REAL, sec_garbage REAL,
+        on_poss REAL, opp_on_poss REAL,
+        team_fga_on INTEGER, team_fgm_on INTEGER, team_misses_on INTEGER,
+        opp_misses_on INTEGER, tm_fgm_on INTEGER, opp_tov_on INTEGER, opp_2pa_on INTEGER,
+        PRIMARY KEY (game_id, player_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS rate_state (
+        as_of TEXT NOT NULL,
+        player_id INTEGER NOT NULL,
+        stat TEXT NOT NULL,
+        rate REAL,
+        n_eff REAL,
+        prior REAL,
+        kappa REAL,
+        PRIMARY KEY (as_of, player_id, stat)
+    );
+
+    CREATE TABLE IF NOT EXISTS player_metric_snapshots (
+        as_of TEXT NOT NULL,
+        model TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        window TEXT NOT NULL,
+        n INTEGER, value REAL, se REAL, details_json TEXT,
+        PRIMARY KEY (as_of, model, metric, window)
+    );
+
+    CREATE TABLE IF NOT EXISTS dfs_metric_snapshots (
+        as_of TEXT NOT NULL,
+        model TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        window TEXT NOT NULL,
+        n INTEGER, value REAL, se REAL, details_json TEXT,
+        PRIMARY KEY (as_of, model, metric, window)
+    );
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
