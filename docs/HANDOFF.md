@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-19 ~12:30 ET (day before the 2026-27 opener).* Read this whole file first, then `docs/PLAYERS.md` §8 (the task tables). Everything important is in the repo or in memory, not only in old chat.
+*Last updated 2026-10-19 ~11:50 ET (day before the 2026-27 opener).* Read this whole file first, then `docs/PLAYERS.md` §8 (the task tables). Everything important is in the repo or in memory, not only in old chat.
 
 ## 0. Where we are, in one paragraph
 
@@ -33,7 +33,7 @@ Operational notes:
 - **LLM prose** comes from the owner's subscription via CLI, never an API key. On geekom1 `claude -p` works. On the Mac, `claude` is "Not logged in" over SSH, so it falls back to `codex exec`, which works.
 - **The owner's client can't show host-path images.** Show UI through a live URL.
 
-## 2. State of data and jobs (updated 2026-10-19 ~12:30 ET)
+## 2. State of data and jobs (updated 2026-10-19 ~11:50 ET)
 
 - **Still running on geekom1:** per-game player backfill PID 2962632 (`var/logs/backfill_players.log`; matchups ~2022-23, then tracking/hustle). When it finishes, rsync `var/raw/nba_stats/{boxscorematchupsv3,boxscoreplayertrackv3,boxscorehustlev2}` to the Mac and run `courtside backfill players --per-game all --reparse` there.
 - **Mac prod DB was rebuilt from archives today** (schema 11): rosters + player index 2026-27, RotoGuru history, 2025-26 official injury rows (177k), DK/RotoGuru ids, starters (334k), stints (8,604 games), rate_state. Raw archives copied: rotoguru, nba_cdn boxscore + playbyplay, sportsdataverse, injury PDFs, season tables. Model bundle cached at `var/proj/bundle_2026-27.json`.
