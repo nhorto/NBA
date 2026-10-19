@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-19 ~09:50 ET (day before the 2026-27 opener).* Read this whole file first, then `docs/PLAYERS.md` §8 (the task tables). Everything important is in the repo or in memory, not only in old chat.
+*Last updated 2026-10-19 ~12:30 ET (day before the 2026-27 opener).* Read this whole file first, then `docs/PLAYERS.md` §8 (the task tables). Everything important is in the repo or in memory, not only in old chat.
 
 ## 0. Where we are, in one paragraph
 
@@ -33,64 +33,22 @@ Operational notes:
 - **LLM prose** comes from the owner's subscription via CLI, never an API key. On geekom1 `claude -p` works. On the Mac, `claude` is "Not logged in" over SSH, so it falls back to `codex exec`, which works.
 - **The owner's client can't show host-path images.** Show UI through a live URL.
 
-## 2. State of data and jobs
+## 2. State of data and jobs (updated 2026-10-19 ~12:30 ET)
 
-- **Running now on geekom1** (detached, survives compaction): the per-game player backfill, PID 2962632.
-  - Command: `courtside backfill players --per-game all --from 2017-18`
-  - Log: `var/logs/backfill_players.log`
-  - Progress: matchups were at 2,600/11,537 at 09:47 (about 3 h left), then tracking and hustle for 2019-20+, a few more hours.
-  - It's resumable: rerun the same command if it dies.
-- **When it finishes,** sync to the Mac:
-  1. rsync `var/raw/nba_stats/{boxscorematchupsv3,boxscoreplayertrackv3,boxscorehustlev2,...season tables...}` and `var/raw/nba_official/injury_report` and `var/raw/sportsdataverse` to the Mac's `var/raw/`.
-  2. On the Mac, rebuild the DB tables from the archives: `courtside backfill players --season-tables` and `--per-game all --reparse` (no network for archived items); `courtside backfill injuries` (skips archived PDFs; **check that it inserts rows for archived PDFs**, and if not, add a reparse path).
-  3. Today **the Mac DB lacks**:
-     - the 2025-26 official-report rows (177k, rescued on geekom1)
-     - all player tables (migration 7)
-     - the PBP archive (8,647 games, on geekom1 only)
-- **Have (geekom1):**
-  - game and player logs 2000-01 → 2025-26
-  - closing lines 2007 → 2026
-  - cdn PBP 2019-20 → 2025-26
-  - official injury reports 2025-12-22 → 2026-06-13 (151/151 game days)
-  - season tables, about 1.3M rows
-  - sportsdataverse lineups and possessions 1997 → 2026 (parquet, `var/raw/sportsdataverse/`)
-- **Live capture since 2026-10-19:**
-  - ESPN DK props (`prop_snapshots`, a change-log)
-  - Action Network lines (`line_snapshots`)
-  - DK salaries plus rules (`dfs_salaries`, raw under `var/raw/draftkings/`)
-  - referee assignments
-- **Not yet:**
-  - RotoGuru history (T0.2)
-  - contest payout tables (T0.7)
-  - cdn box scores 2019+ (T0.3: only about 13 are archived)
+- **Still running on geekom1:** per-game player backfill PID 2962632 (`var/logs/backfill_players.log`; matchups ~2022-23, then tracking/hustle). When it finishes, rsync `var/raw/nba_stats/{boxscorematchupsv3,boxscoreplayertrackv3,boxscorehustlev2}` to the Mac and run `courtside backfill players --per-game all --reparse` there.
+- **Mac prod DB was rebuilt from archives today** (schema 11): rosters + player index 2026-27, RotoGuru history, 2025-26 official injury rows (177k), DK/RotoGuru ids, starters (334k), stints (8,604 games), rate_state. Raw archives copied: rotoguru, nba_cdn boxscore + playbyplay, sportsdataverse, injury PDFs, season tables. Model bundle cached at `var/proj/bundle_2026-27.json`.
+- **Mac launchd:** pregame, postgame, weekly, web, and **`com.courtside.dfs-tick`** (every 5 min 11:00–23:55 ET → `courtside dfs tick`: lock45/lock10 builds, late swap).
+- **Fixed today:** DK lists WNBA draft groups under Sport NBA (filtered; one bogus slate removed from the Mac DB). Pipeline slate-day bug (UTC vs ET).
 
-## 3. What to build next (approved plan: `docs/PLAYERS.md` v2 §8)
+## 3. Build status (approved plan: `docs/PLAYERS.md` v2 §8; decisions made while building: §0.4)
 
-**Phase 0 (Oct 19–22):** T0.0 (migration **9**, `courtside proj`/`courtside dfs` CLI), T0.1, T0.2 (RotoGuru), T0.3, T0.4, T0.5 (IDs), T0.6 (rules/scoring check), T0.7 (DK starter, swappable and contest payouts), T0.8.
+**Phase 0: complete.** T0.0 migrations 9–11 + CLI; T0.1 reports verified; T0.2 RotoGuru 1,110 days / 249k rows; T0.3 cdn boxscores; T0.4 stints (99.55%); T0.5 ids; T0.6 rules/scoring (TD = +4.5 confirmed); T0.7 DK capture (slates, payouts ≤ 60 added DK requests/day); T0.8 game-env residuals (margin sd ~13.5–14, not 12.4).
 
-**Phase 1 (to about Oct 27):** T1.0 eval-lite, T1.1 rate state, T1.2 minutes v0.5 (value-play promotion), T1.3 P(play), T1.4 copula v0, T1.5 CP-SAT cash + Top N, T1.6 lock-relative watcher plus `late_news`, T1.7 `/dfs` page plus CSV, T1.8 why v0, T1.9 preseason.
+**Phase 1: 9/10 committed.** T1.1 EB rates; T1.2 minutes (MAE 4.6, value-play promotion); T1.3 P(play); T1.4 Path A copula pipeline `pathA-v0.1` (DK MAE −5.6% vs season-to-date on 2024-25, 80% coverage 0.82); T1.5 CP-SAT (= pydfs on 300/300); T1.6 runner + watcher; T1.7 `/dfs` page; T1.8 why v0; T1.9 preseason. **T1.0 eval-lite (the formal gate incl. RotoGuru salary-implied baseline) is running.**
 
-**Phase 1 gate** (from eval-lite):
-- DK FP MAE ≥ 3% better than the season average (2024-25)
-- not worse than salary-implied on 2019-21
-- 80% coverage 76–84%
-- minutes MAE ≤ 4.8
+**Open items:** owner to test one DK CSV upload (numeric draftable ids vs "Name (ID)"); wire `why_v0.top_stories` into the Brief; postgame job should run `courtside proj why`; nightly `rate_state` write + weekly availability refit not yet scheduled; 17 in-progress + 5 stub cdn boxscores to re-fetch. Then Phase 2 (§8).
 
-If it fails, label the page "beta".
-
-Then Phase 2 (models + backtest, to Nov 14), Phase 2.5 (contest builder, GPP, late swap, Showdown, to Nov 21), Phase 3 (DFS monitoring, standings import), Phase 4 (the full why engine, Dec).
-
-**Suggested first wave**, at most 3 agents on geekom1:
-- T0.0 (Sonnet), which unblocks T0.5 to T0.7 and everything in `proj/`
-- T0.2 RotoGuru (Haiku/Sonnet; ~1,200 polite requests at 1/s; run from geekom1's home IP)
-- T0.6 rules check (Sonnet)
-
-Then T0.5 and T0.7, then Phase 1. Give each agent its exact task row, owned files, acceptance criteria, and these rules:
-- no git commits (the orchestrator commits)
-- run only their own tests
-- heavy work goes to the Mac scratch dir
-- never write the prod DB from scratch jobs
-- never attach to the user's browser (headless Playwright only)
+**Agent rules** (unchanged): ≤ 3 agents on geekom1, one heavy job; agents don't commit; give each its task row, owned files, acceptance, and the no-browser/no-DK-crawl rules.
 
 ## 4. Owner decisions (binding)
 
