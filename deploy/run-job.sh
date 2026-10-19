@@ -9,7 +9,7 @@
 set -u
 
 usage() {
-  echo "usage: ${0##*/} <pregame|postgame> [--dry-run]" >&2
+  echo "usage: ${0##*/} <pregame|postgame|weekly> [--dry-run]" >&2
   exit 64
 }
 
@@ -17,7 +17,7 @@ job="${1:-}"
 dry_run=0
 [ "${2:-}" = "--dry-run" ] && dry_run=1
 case "$job" in
-  pregame | postgame) ;;
+  pregame | postgame | weekly) ;;
   *) usage ;;
 esac
 
@@ -93,8 +93,19 @@ if [ -z "$uv_bin" ]; then
   exit 127
 fi
 
-"$uv_bin" run --frozen courtside collect "$job" 2>&1 | log_lines
-rc="${PIPESTATUS[0]}"
+if [ "$job" = "weekly" ]; then
+  # MLOps: train challengers (offline gate), evaluate shadows (online gate), refresh the card.
+  rc=0
+  for cmd in "retrain --model all" "shadows" "card"; do
+    # shellcheck disable=SC2086
+    "$uv_bin" run --frozen courtside mlops $cmd 2>&1 | log_lines
+    r="${PIPESTATUS[0]}"
+    [ "$r" -ne 0 ] && rc="$r"
+  done
+else
+  "$uv_bin" run --frozen courtside collect "$job" 2>&1 | log_lines
+  rc="${PIPESTATUS[0]}"
+fi
 
 echo "[run-job] end $job exit=$rc" | log_lines
 exit "$rc"

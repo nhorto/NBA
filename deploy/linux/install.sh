@@ -32,7 +32,7 @@ run_job="$deploy_dir/run-job.sh"
 . "$deploy_dir/schedule.sh"
 
 unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-jobs="pregame postgame"
+jobs="pregame postgame weekly"
 
 run() {
   printf '+ %s\n' "$*"
@@ -55,6 +55,7 @@ times_for() {
   case "$1" in
     pregame) printf '%s' "$PREGAME_TIMES" ;;
     postgame) printf '%s' "$POSTGAME_TIMES" ;;
+    weekly) printf '%s' "$WEEKLY_TIMES" ;;
   esac
 }
 
@@ -82,7 +83,11 @@ Description=Courtside $job collection schedule (US/Eastern)
 [Timer]
 UNIT
   for t in $(times_for "$job"); do
-    printf 'OnCalendar=*-*-* %s:00 America/New_York\n' "$t"
+    if [ "$job" = "weekly" ]; then
+      printf 'OnCalendar=%s *-*-* %s:00 America/New_York\n' "$WEEKLY_DAY" "$t"
+    else
+      printf 'OnCalendar=*-*-* %s:00 America/New_York\n' "$t"
+    fi
   done
   cat <<UNIT
 Persistent=true

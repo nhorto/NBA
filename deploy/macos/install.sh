@@ -38,7 +38,7 @@ data_dir="${COURTSIDE_DATA:-$repo_root/var}"
 log_dir="$data_dir/logs"
 agents_dir="$HOME/Library/LaunchAgents"
 uid="$(id -u)"
-jobs="pregame postgame"
+jobs="pregame postgame weekly"
 
 xml_escape() {
   local s="$1"
@@ -76,6 +76,7 @@ times_for() {
   case "$1" in
     pregame) printf '%s' "$PREGAME_TIMES" ;;
     postgame) printf '%s' "$POSTGAME_TIMES" ;;
+    weekly) printf '%s' "$WEEKLY_TIMES" ;;
   esac
 }
 
@@ -100,6 +101,7 @@ PLIST
   local_times "$(times_for "$job")" | while read -r hour minute; do
     cat <<PLIST
     <dict>
+$( [ "$job" = "weekly" ] && printf '      <key>Weekday</key>\n      <integer>%s</integer>\n' "$WEEKLY_WEEKDAY" )
       <key>Hour</key>
       <integer>$hour</integer>
       <key>Minute</key>
