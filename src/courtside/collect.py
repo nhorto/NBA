@@ -268,6 +268,17 @@ def _espn_scoreboard_step(conn: sqlite3.Connection, day: date, *, apply_results:
     return out
 
 
+def _monitor_hook(conn: sqlite3.Connection, run: _Run, job: str, day: date) -> None:
+    """MLOps monitoring after a job (data checks, metrics, drift, alerts; docs/MLOPS.md). Never
+    fatal and never marks the job failed: problems show up as checks/alerts, not exit codes."""
+    try:
+        from .mlops import monitor
+        res = monitor.run_after_job(conn, job, day, run.summary)
+        run.summary["health"] = {k: v for k, v in res.items() if k != "line"}
+    except Exception:  # noqa: BLE001
+        log.exception("monitoring hook failed (ignored)")
+
+
 # ------------------------------------------------------------------ pregame steps
 
 def _nba_scoreboard_step(conn: sqlite3.Connection, day: date) -> dict:
@@ -362,6 +373,7 @@ def run_pregame(day: date) -> dict:
         run.step("official_injury_report", _official_report_step, conn, day)
         run.step("predict", _predict_step, conn, day)
         run.step("brief", _brief_step, conn, day)
+        _monitor_hook(conn, run, "pregame", day)
 
     return _run_job("pregame", day, body)
 
@@ -576,5 +588,6 @@ def run_postgame(day: date) -> dict:
         run.step("game_facts", _facts_step, conn, run, day)
         run.step("refresh_gamelogs", _refresh_gamelogs_step, conn, day)
         run.step("brief", _brief_step, conn, day + timedelta(days=1))
+        _monitor_hook(conn, run, "postgame", day)
 
     return _run_job("postgame", day, body)
