@@ -59,7 +59,7 @@ from .dfs.optimizer import Projection
 
 # Minutes engine used by the live/backtest pipeline (T2.2: v1 = LightGBM base with learned
 # promotion; walk-forward MAE 4.49 / 4.40 vs v0.5 4.63 / 4.58, DK gate 8.049 vs 8.181).
-MINUTES_VERSION = "v0.5"               # "v0.5" | "v1" (v1 held back: live path loses ~25 team minutes, see PLAYERS.md §0.4)
+MINUTES_VERSION = "v1"                 # "v0.5" | "v1"
 _VS = "" if MINUTES_VERSION == "v0.5" else f"_{MINUTES_VERSION}"
 MODEL_VERSION = C.MODEL_VERSION if MINUTES_VERSION == "v0.5" else "pathA-v0.2"
 HISTORY_SEASONS = 7            # box seasons loaded for the minutes engine (window 5 + warm-up)

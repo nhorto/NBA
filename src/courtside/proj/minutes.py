@@ -58,8 +58,13 @@ his groups / newly absent / of absent expected starters, expected starters out, 
 the removals overall and in his group, rank gain, minutes slack, available rotation size) - the
 learned promotion. Stage 2 on top (chosen on out-of-fold training predictions, fixed
 population): the softmax next man up scaled by `nmu_scale`, the pair-share term `share_coef` x
-sum_j share[i, j] base_j, the leftover `k_add` and the reconciliation `recon_cv`. Reserve, g and
-noise are refit on the OOF projections. P(plays | available) stays the v0.5 logit. S15: players
+sum_j share[i, j] base_j, the leftover `k_add` and the reconciliation `recon_cv`. g and noise
+are refit on the OOF projections; the reserve stays the v0.5 model on the v0.5 base
+(`V1Base.s_rows`: refit on the GBM base it extrapolated to 25-35 lost team minutes on
+opening-night live panels). P(plays | available): the v0.5 logit refit (`pplay_coef_v1`) on
+training candidates the live path would have (`departed` removed: live drops moved players, so
+they must not teach "new season -> DNP"), with forced extras scored as roster players
+(`forced_as_roster`). S15: players
 without box history or with < V1_MIN_GP games, and panels without the v1 columns, keep the v0.5
 base (`V1_STATS` counts them). Preseason (N2) and news features are not in the GBM: no
 historical preseason box scores or reports exist to train them (2026-27 / 2025-12-22+ only).
@@ -160,6 +165,7 @@ class MinutesParams:
     nmu_scale: float = 1.0            # v1: share of the softmax next-man-up lift kept on top
     share_coef: float = 0.0           # v1: minutes per (share x vacated minutes) on top
     recon_cv: float = RECON_CV        # reconciliation variance form (v0.5: frozen 0.2)
+    pplay_coef_v1: list = field(default_factory=list)   # v1 P(plays | available), see fit_v1
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -1053,7 +1059,8 @@ def base_and_pplay(p: pd.DataFrame, params: MinutesParams, absent=None
     v1 (params.version == "v1"): the base is the LightGBM E[min | plays] on the panel's v1
     columns plus the scenario features of `absent` (learned promotion); players failing
     `v1_ok` (no box history, < V1_MIN_GP games) and panels without v1 columns keep the v0.5
-    linear base (S15 fallback). P(plays | available) is the v0.5 logit in both versions."""
+    linear base (S15 fallback). P(plays | available): the v0.5 logit, or in v1 its refit
+    `pplay_coef_v1` with forced extras scored as roster players (see fit_v1)."""
     X = design(p, params.base_features)
     base = np.clip(X @ np.asarray(params.base_coef), 0.5, 44.0)
     if absent is None:
@@ -1063,9 +1070,63 @@ def base_and_pplay(p: pd.DataFrame, params: MinutesParams, absent=None
     q["avail_rank"], q["n_avail"] = avail_rank(q, base, absent)
     Z = design(q, params.pplay_features)
     pp = 1.0 / (1.0 + np.exp(-(Z @ np.asarray(params.pplay_coef))))
+    pp = np.clip(pp, 0.01, 0.995)
     if params.version == "v1" and params.gbm_model:
-        base = v1_base(p, params, absent, base)
-    return base, np.clip(pp, 0.01, 0.995)
+        s_rows = np.where(absent, 0.0, pp * base)      # the v0.5 reserve input, per row
+        if params.pplay_coef_v1:
+            Z1 = design(forced_as_roster(q), params.pplay_features)
+            pp = np.clip(1.0 / (1.0 + np.exp(-(Z1 @ np.asarray(params.pplay_coef_v1)))),
+                         0.01, 0.995)
+        base = v1_base(p, params, absent, base).view(V1Base)
+        base.s_rows = s_rows
+    return base, pp
+
+
+def forced_as_roster(p: pd.DataFrame) -> pd.DataFrame:
+    """v1 P(plays): candidates forced in from outside the recent roster (roster == 0 with box
+    history: DK pool / report players, new signings, returns from long absences) are scored as
+    active roster players (10 of the last 10 team games, nothing missed). In training such rows
+    exist only when they played (the oracle), so their app10 = 0 / missed-10 profile otherwise
+    reads as a deep-bench DNP (live: P(plays) 0.05-0.5 for new-team rotation players)."""
+    if "roster" not in p:
+        return p
+    f = ((p["roster"].to_numpy() == 0) & p["last_date"].notna().to_numpy()) \
+        if "last_date" in p else p["roster"].to_numpy() == 0
+    if not f.any():
+        return p
+    q = p.copy()
+    q.loc[f, "app10"] = 10.0
+    q.loc[f, "missed_now"] = 0.0
+    q.loc[f, "gsr_now"] = 10.0
+    return q
+
+
+def departed(h: History, panel: pd.DataFrame) -> np.ndarray:
+    """Training candidates that the live path would not have (pipeline.drop_moved_players
+    removes players whose current roster team differs): the player's next regular-season
+    appearance on/after the date in this season is for another team, or (at his first game of
+    a new season) he does not appear for anyone this season. Uses later box rows only to
+    reconstruct the game-day roster, never as a feature."""
+    hs = h.hist[h.hist["season_type"] == "Regular Season"][["player_id", "date", "team", "season"]]
+    hs = hs.rename(columns={"date": "n_date", "team": "n_team", "season": "n_season"})
+    q = pd.DataFrame({"player_id": panel["player_id"].to_numpy(np.int64),
+                      "date": panel["date"].to_numpy(np.int64), "i": np.arange(len(panel))})
+    q = pd.merge_asof(q.sort_values("date"), hs.sort_values("n_date").astype(
+        {"player_id": np.int64, "n_date": np.int64}), left_on="date", right_on="n_date",
+        by="player_id", direction="forward").sort_values("i")
+    same = (q["n_season"].to_numpy() == panel["season"].to_numpy())
+    moved = same & (q["n_team"].to_numpy() != panel["team"].to_numpy())
+    gone = ~same & (panel["new_season"].to_numpy() > 0)
+    roster = panel["roster"].to_numpy() == 1 if "roster" in panel else np.ones(len(panel), bool)
+    return roster & (moved | gone)
+
+
+class V1Base(np.ndarray):
+    """v1 base minutes carrying `s_rows` = P(plays | available) x the v0.5 linear base (0 if
+    absent): the input of the reserve (minutes of players outside the candidate set), which v1
+    keeps from v0.5. project_arrays reads it, so the copula path (base_and_pplay ->
+    project_arrays) needs no change. Slices lose it; run_projection passes it explicitly."""
+    s_rows = None
 
 
 # --- v1: LightGBM base with scenario features (T2.2) ------------------------------------------
@@ -1269,7 +1330,8 @@ def nmu_features(g1, g2, ew, st10, share_j, gj: int, cand: np.ndarray) -> np.nda
 
 
 def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: MinutesParams,
-                   starters=None, share=None, n_ot: float = 0.0, detail: bool = False):
+                   starters=None, share=None, n_ot: float = 0.0, detail: bool = False,
+                   s_reserve: float | None = None):
     """Scenario projection for one team-game.
 
     base, p_avail (P plays | available), g1/g2 (groups), st10, ew (minutes EWMA blend): arrays
@@ -1277,6 +1339,8 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
     starters: optional bool mask of confirmed starters; share: optional (n, n) matrix,
     share[i, j] = i's historical share of j's minutes when j sat.
     Returns mean minutes conditional on playing (0 for absent) [and a detail dict].
+    s_reserve: the reserve input (sum p x base of the available); default `base.s_rows` (v1,
+    the v0.5 base) when present, else sum p x base.
 
     Next man up (S14), per absent expected starter j (in descending base):
       params.nmu_mode == "top": the top candidate of j's group (then adjacent groups) by
@@ -1374,7 +1438,10 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
                 lift[i] += new - (adj[i] + lift[i])
             pstart[i] = 1.0
     adj = adj + lift
-    s_av = float((p * base).sum())
+    if s_reserve is None:
+        sr = getattr(base, "s_rows", None)
+        s_reserve = float(np.sum(sr)) if sr is not None and len(sr) == n else None
+    s_av = float((p * base).sum()) if s_reserve is None else float(s_reserve)
     reserve = float(reserve_minutes(params, s_av, float(avail.sum()))[0])
     total = TEAM_MIN + OT_TEAM_MIN * n_ot - reserve
     cap = CAP + 5.0 * n_ot
@@ -1609,9 +1676,12 @@ def run_projection(panel: pd.DataFrame, params: MinutesParams, starters: bool = 
     for key, idx in panel.groupby("key", sort=False).indices.items():
         share = shares.matrix(int(dates[idx[0]]), pids[idx], ab[idx]) if shares is not None \
             else None
-        res = project_arrays(base[idx], pp[idx], ab[idx], g1[idx], g2[idx], st10[idx], ew[idx],
-                             tgt[idx], params, starters=None if stt is None else stt[idx],
-                             share=share, detail=True)
+        sr = getattr(base, "s_rows", None)
+        res = project_arrays(np.asarray(base[idx]), pp[idx], ab[idx], g1[idx], g2[idx],
+                             st10[idx], ew[idx], tgt[idx], params,
+                             starters=None if stt is None else stt[idx], share=share,
+                             detail=True,
+                             s_reserve=None if sr is None else float(sr[idx].sum()))
         out_mean[idx] = res[0]
         out_lift[idx] = res[1]["lift"]
         out_prom[idx] = res[1]["promoted"]
@@ -1811,7 +1881,8 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
        over played, non-absent, v1_ok rows. Leave-one-season-out folds give out-of-fold (OOF)
        predictions and the number of rounds (early stopping on the held-out season, mean x 1.1);
        the final model is refit on all training seasons.
-    2. On the OOF base: refit the reserve, then choose (coordinate-wise) the reconciliation
+    2. On the OOF base (the reserve stays the v0.5 model on the v0.5 base), choose
+       (coordinate-wise) the reconciliation
        cv, nmu_scale, k_add and share_coef (stage 2 on top of the learned promotion) by the
        training MAE on a FIXED population: played rows whose OOF GBM base is >= 10. (The
        v0.5 criterion, rows projected >= 15, depends on the candidate itself: pushing bench
@@ -1861,11 +1932,23 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
     imp = imp / max(imp.sum(), 1e-9)
     top = sorted(zip(names, imp.tolist()), key=lambda t: -t[1])[:20]
     t_gbm = _time.time() - t0
+    # P(plays | available) for the live candidate set: departed players removed (they are
+    # dropped live, so they must not teach "new season -> DNP"), forced extras as roster
+    dep = departed(h, panel)
+    b0 = np.clip(design(panel, prm.base_features) @ np.asarray(prm.base_coef), 0.5, 44.0)
+    q = panel.copy()
+    q["avail_rank"], q["n_avail"] = avail_rank(q, b0, ab | dep)
+    keep = ~ab & ~dep
+    Z1 = design(forced_as_roster(q[keep]), prm.pplay_features)
+    prm.pplay_coef_v1 = _logit(Z1, q.loc[keep, "played"].to_numpy(float)).tolist()
     # stage 2 on the OOF base
     tp = panel.copy()
     tp["_v1_oof"] = oof
     base, pp = base_and_pplay(tp, prm, ab)
-    prm.reserve_coef = _fit_reserve(tp, base, pp[~ab])
+    base = np.asarray(base)
+    # the reserve stays the v0.5 model on the v0.5 base (V1Base.s_rows): refit on the GBM
+    # base it had slope ~1 below sum p x base = 220, a range training rarely reaches (1%) but
+    # opening-night live panels do (P(plays) skew) -> 25-35 team minutes lost (T2.2 follow-up)
 
     fixed = panel["played"].to_numpy(bool) & ~ab & (base >= 10.0)
 
@@ -1892,6 +1975,7 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
     prm.diagnostics = dict(prm.diagnostics, v1={
         "n_rounds": n_rounds, "folds": folds, "train_rows": int(rows.sum()),
         "fallback_share_train": round(float((~ok & ~ab).sum() / max((~ab).sum(), 1)), 4),
+        "pplay_departed_rows_removed": int((dep & ~ab).sum()),
         "oof_train_mae_ge15": round(best[0], 4), "grid": grid,
         "importance_gain_top20": [[n, round(v, 4)] for n, v in top],
         "noise_fit_ok": nok, "g_cells_min_n": cnt_min, "seconds_gbm": round(t_gbm, 1),

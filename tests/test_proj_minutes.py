@@ -472,9 +472,102 @@ def test_v1_fallback_s15(league_v1):
     b0, pp0 = M.base_and_pplay(p, q05)
     fb = ~M.v1_ok(p)
     assert fb.sum() == 2 and np.allclose(b1[fb], b0[fb]) and not np.allclose(b1[~fb], b0[~fb])
-    assert np.allclose(pp1, pp0)             # P(plays | available) is the v0.5 model in both
+    # P(plays | available): v1 = the v0.5 logit refit (pplay_coef_v1); forced extras (roster 0
+    # with box history) are scored as roster players
+    assert prm.pplay_coef_v1 and len(prm.pplay_coef_v1) == len(prm.pplay_coef)
+    q1 = M.MinutesParams.from_json(q05.to_json())
+    q1.pplay_coef = prm.pplay_coef_v1
+    _, ppx = M.base_and_pplay(M.forced_as_roster(p), q1)
+    assert np.allclose(pp1, ppx)
+    ro = p["roster"].to_numpy() == 1
+    assert np.allclose(pp1[ro], M.base_and_pplay(p, q1)[1][ro])
     # a panel without the v1 columns falls back entirely (and is counted)
     M.V1_STATS.update(rows=0, fallback_rows=0, panel_fallback_calls=0)
     bare = p.drop(columns=["ew_vf", "abs_len_now", "team_rank", "c_top7", "tgs"])
     b2, _ = M.base_and_pplay(bare, prm)
     assert np.allclose(b2, b0) and M.V1_STATS["panel_fallback_calls"] == 1
+
+
+def test_v1_live_path_team_minutes(league_v1):
+    """T2.2 follow-up regression: on the LIVE path (pipeline.project_games, env_mode 'live',
+    opening night, a moved player dropped, a new-team player forced in as a DK-pool extra,
+    partial availability), team minutes (cond all) must be 240 - reserve, with the reserve of
+    v0.5: v1's refit reserve once dropped ~25 minutes per team there."""
+    import sqlite3
+    from datetime import date
+    from courtside import db
+    from courtside.proj import copula as C
+    from courtside.proj import pipeline as P
+    from courtside.proj import state as ST
+    from test_proj_pipeline import _fill
+    _, _, _, _, prm1 = league_v1
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    db.migrate(conn)
+    _fill(conn)
+    season = "2022-23"
+    day = date.fromisoformat(conn.execute(
+        "SELECT MIN(game_date) FROM team_games WHERE season=?", (season,)).fetchone()[0])
+    games = P._home_away(conn, day).head(1)
+    g = games.iloc[0]
+    ctx = P.Context(conn, season)
+    prm05 = M.MinutesParams.from_json(prm1.to_json())
+    prm05.version = "v0.5"
+    # a player of a team not playing today joins the home team (DK-pool extra, new team)
+    other = conn.execute("SELECT player_id FROM player_games WHERE team NOT IN (?, ?) "
+                         "ORDER BY min DESC LIMIT 1", (g.home, g.away)).fetchone()[0]
+    extras = {(g.game_id, g.home): [int(other)]}
+    sums, sms = {}, {}
+    for name, mp in (("v0.5", prm05), ("v1", prm1)):
+        b = P.Bundle(season=season, minutes=mp, state=ST.default_params(),
+                     copula=C.default_copula_params(season))
+        panel = P.candidate_panel(ctx, day, games, extras)
+        assert int(other) in set(panel["player_id"])
+        road = panel[panel["team"] == g.away].sort_values("ew_f")["player_id"].to_numpy()
+        # questionable star + starter, one rotation player out (road team)
+        p_avail = {int(road[-1]): 0.5, int(road[-2]): 0.5, int(road[-3]): 0.0}
+        res = P.project_games(conn, day, games, ctx=ctx, bundle=b, n_sims=3000, seed=5,
+                              p_avail=p_avail, env_mode="live", extras=extras)
+        sums[name] = res.players.groupby("team")["min_mean"].sum()
+        specs = P.build_games(ctx, b, conn, day, games, panel, {}, {g.game_id: P.environment(
+            conn, g.game_id, None, mode="closing")})
+        sms[name] = {ts.team: ts.minutes for ts in (specs[0].home, specs[0].away)}
+    # v1 keeps v0.5's team minutes (same reserve model and input) ...
+    assert (sums["v1"] - sums["v0.5"]).abs().max() < 1.0
+    rng = np.random.default_rng(0)
+    for team, sm1 in sms["v1"].items():
+        sm0 = sms["v0.5"][team]
+        for k in (0, 1, 2, 3, 5):
+            ab = np.zeros(len(sm1), bool)
+            ab[rng.choice(len(sm1), size=k, replace=False)] = True
+            r1, r0 = sm1.project(ab), sm0.project(ab)
+            # ... exactly: the reserve is the v0.5 model on the v0.5 base for every absent set
+            assert np.isclose(r1["reserve"].iloc[0], r0["reserve"].iloc[0])
+            target = min(240.0 - r1["reserve"].iloc[0], M.CAP * r1["p_play"].sum())
+            assert np.isclose((r1["p_play"] * r1["mean"]).sum(), target)
+            assert r1["reserve"].iloc[0] < 15.0
+        # cond all team minutes = 240 + OT - reserve whatever the availability draws
+        r1 = sm1.project(np.zeros(len(sm1), bool))
+        ot = prm1.mean_n_ot * M.OT_TEAM_MIN
+        assert abs(sums["v1"][team] - (240.0 - r1["reserve"].iloc[0])) < 3.0 + ot
+
+
+def test_v1_departed_and_forced_extras():
+    """Training candidates the live path drops (moved / gone at a new season) are flagged;
+    forced extras are scored like roster players."""
+    pg, tg, pos = _league()
+    pg = pg.copy()
+    # player 1000 (BOS) plays for NYK from the 2021-22 season on; player 1009 retires after 2020-21
+    pg.loc[(pg["player_id"] == 1000) & (pg["season"] >= "2021-22"), "team"] = "NYK"
+    pg = pg[~((pg["player_id"] == 1009) & (pg["season"] >= "2021-22"))]
+    h = M.build_history(pg, tg, pos)
+    t = M.eval_targets(h, ["2021-22"])
+    t = t[t["team"] == "BOS"].iloc[[0]].reset_index(drop=True)
+    p = M.pregame_panel(h, t)
+    dep = dict(zip(p["player_id"], M.departed(h, p)))
+    assert dep[1000] and dep[1009] and not dep[1001]
+    p["roster"] = np.where(p["player_id"] == 1001, 0, p["roster"])
+    f = M.forced_as_roster(p)
+    row = f[f["player_id"] == 1001].iloc[0]
+    assert row["app10"] == 10 and row["missed_now"] == 0 and row["gsr_now"] == 10
+    assert (f[f["player_id"] != 1001]["app10"] == p[p["player_id"] != 1001]["app10"]).all()
