@@ -878,6 +878,18 @@ def _predict_step(conn: sqlite3.Connection, day: date) -> dict:
             "with_market": sum(1 for r in rows if r["market_home_prob"] is not None)}
 
 
+def _rate_state_step(conn: sqlite3.Connection, as_of: date) -> dict:
+    """Nightly per-minute rate state (proj/state.py) as of the next NBA day."""
+    from .proj import state
+    return {"as_of": as_of.isoformat(), "rows": state.write_state(conn, as_of)}
+
+
+def _player_why_step(conn: sqlite3.Connection, day: date) -> dict:
+    """Post-game why v0 for `day`: actual vs pregame projection per notable player."""
+    from .proj import why_v0
+    return why_v0.build(conn, day.isoformat(), llm=True)
+
+
 def run_postgame(day: date) -> dict:
     def body(conn: sqlite3.Connection, run: _Run, day: date) -> None:
         run.step("schedule", _schedule_step, conn)
@@ -887,6 +899,8 @@ def run_postgame(day: date) -> dict:
         run.step("games", _games_step, conn, run, day)
         run.step("game_facts", _facts_step, conn, run, day)
         run.step("refresh_gamelogs", _refresh_gamelogs_step, conn, day)
+        run.step("rate_state", _rate_state_step, conn, day + timedelta(days=1))
+        run.step("player_why", _player_why_step, conn, day)
         run.step("brief", _brief_step, conn, day + timedelta(days=1))
         _monitor_hook(conn, run, "postgame", day)
 
