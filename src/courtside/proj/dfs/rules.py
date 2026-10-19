@@ -447,7 +447,7 @@ _STAT_COLS = "pts, fg3m, reb, ast, stl, blk, tov, min"
 def season_of(day: date) -> str:
     """NBA season label of a calendar day ('2026-10-20' -> '2026-27')."""
     y = day.year if day.month >= 8 else day.year - 1
-    if y == 2020 and day.month <= 10:   # the 2019-20 bubble restart ran to 2020-10-11
+    if day.year == 2020 and 8 <= day.month <= 10:   # 2019-20 bubble restart ran to 2020-10-11
         y = 2019
     return f"{y}-{(y + 1) % 100:02d}"
 

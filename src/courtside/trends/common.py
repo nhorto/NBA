@@ -26,7 +26,7 @@ REGULAR = ("Regular Season",)
 def season_of(d: date) -> str:
     """NBA season label containing date ``d`` ('2026-02-15' -> '2025-26'). July is the cut."""
     start = d.year if d.month >= 7 else d.year - 1
-    if start == 2020 and d.month <= 10:   # the 2019-20 bubble restart ran to 2020-10-11
+    if d.year == 2020 and 7 <= d.month <= 10:   # 2019-20 bubble restart ran to 2020-10-11
         start = 2019
     return f"{start}-{(start + 1) % 100:02d}"
 

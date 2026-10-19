@@ -363,4 +363,7 @@ def test_season_of_bubble_2020():
         assert f(date(2020, 8, 14)) == "2019-20"
         assert f(date(2020, 10, 11)) == "2019-20"
         assert f(date(2020, 12, 22)) == "2020-21"
+        assert f(date(2021, 1, 15)) == "2020-21"
+        assert f(date(2021, 5, 16)) == "2020-21"
+        assert f(date(2020, 3, 11)) == "2019-20"
         assert f(date(2026, 10, 20)) == "2026-27"
