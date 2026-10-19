@@ -1,0 +1,108 @@
+{
+ "gameTypeId": 81,
+ "gameTypeName": "Showdown Captain Mode",
+ "gameTypeDescription": "Create your team from 1 game, while staying under the $50,000 salary cap",
+ "lineupConfigurationId": 66,
+ "salaryCap": {
+  "isEnabled": true,
+  "minValue": 0,
+  "maxValue": 50000
+ },
+ "gameCount": {
+  "isEnabled": false,
+  "minValue": null,
+  "maxValue": null
+ },
+ "teamCount": {
+  "isEnabled": true,
+  "minValue": 2,
+  "maxValue": null
+ },
+ "uniquePlayers": true,
+ "allowLateSwap": false,
+ "lineupTemplate": [
+  {
+   "rosterSlot": {
+    "id": 476,
+    "name": "CPT",
+    "description": "Captain",
+    "positionTip": "Scores 1.5x Fantasy Points",
+    "positionTipSubtext": "1.5x",
+    "notScoring": false
+   },
+   "order": 1,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 475,
+    "name": "UTIL",
+    "description": "Utility",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 2,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 475,
+    "name": "UTIL",
+    "description": "Utility",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 3,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 475,
+    "name": "UTIL",
+    "description": "Utility",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 4,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 475,
+    "name": "UTIL",
+    "description": "Utility",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 5,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 475,
+    "name": "UTIL",
+    "description": "Utility",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 6,
+   "scoringOrder": 0
+  }
+ ],
+ "errorStatus": null,
+ "rulesUrl": "/help/rules/4/81",
+ "draftType": "SalaryCap",
+ "allowedCompetitionAttributes": null,
+ "scoringDivider": null,
+ "useOptimalLineups": false,
+ "supportsPlayersTab": false,
+ "showByeWeekInfo": false,
+ "originalDraftType": null,
+ "isSeasonLong": false,
+ "teamPositionLimits": null
+}

@@ -27,6 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
         sp = col.add_parser(job)
         sp.add_argument("--date", type=_parse_day, default=None,
                         help="NBA day (YYYY-MM-DD); default today (pregame) / yesterday (postgame)")
+        if job == "pregame":
+            sp.add_argument("--steps", default=None,
+                            help="comma-separated subset of pregame steps to run, e.g. "
+                                 "props,referees,action_network,dfs_salaries (default: all)")
 
     bf = sub.add_parser("backfill", help="historical backfills").add_subparsers(
         dest="what", required=True)
@@ -39,6 +43,35 @@ def build_parser() -> argparse.ArgumentParser:
     pb = bf.add_parser("pbp", help="play-by-play from cdn.nba.com (win-probability training data)")
     pb.add_argument("--from", dest="start", default="2019-20", help="first season (cdn has 2019-20+)")
     pb.add_argument("--to", dest="end", default="2025-26", help="last season, e.g. 2025-26")
+
+    pl = bf.add_parser("players", help="player/matchup/tracking/hustle data from stats.nba.com")
+    pl.add_argument("--season-tables", action="store_true",
+                    help="season-level tables (bio, rosters+coaches, matchups, defense, "
+                         "shot defender distance, synergy, hustle)")
+    pl.add_argument("--per-game", choices=("matchups", "tracking", "hustle", "all"), default=None,
+                    help="per-game box scores (matchups 2017-18+, tracking/hustle 2019-20+)")
+    pl.add_argument("--from", dest="start", default=None,
+                    help="first season (default: each table's/endpoint's own start)")
+    pl.add_argument("--to", dest="end", default="2025-26", help="last season, e.g. 2025-26")
+    pl.add_argument("--tables", default=None,
+                    help="--season-tables subset, comma-separated: index,roster,rollup,lsm,"
+                         "ptdefend,ptshot,synergy,hustle")
+    pl.add_argument("--force", action="store_true",
+                    help="--season-tables: re-fetch even if archived")
+    pl.add_argument("--reparse", action="store_true",
+                    help="--per-game: re-parse archived games that already have rows")
+    pl.add_argument("--limit", type=int, default=None,
+                    help="--per-game: stop after N network fetches per kind (testing)")
+
+    ij = bf.add_parser("injuries", help="official injury-report PDFs (rolling window: URGENT)")
+    ij.add_argument("--from", dest="start", type=_parse_day, default=None,
+                    help="first game day (default: earliest date still served, binary-searched)")
+    ij.add_argument("--to", dest="end", type=_parse_day, default=None, help="last game day")
+    ij.add_argument("--priority-only", action="store_true",
+                    help="only 13:30, 17:30 and pre-tip slots (skip the hourly extras)")
+    ij.add_argument("--max-pdfs", type=int, default=3000, help="cap for the hourly extras")
+    ij.add_argument("--find-earliest", action="store_true",
+                    help="only binary-search and print the earliest available date")
 
     wp = sub.add_parser("winprob", help="in-game win-probability model").add_subparsers(
         dest="wp_cmd", required=True)
@@ -333,6 +366,59 @@ def _injuries_cmd(args) -> int:
     return 0
 
 
+def _backfill_injuries_cmd(args) -> int:
+    from . import backfill_injuries as bi
+    bi.setup_logging()
+    if args.find_earliest:
+        print(bi.find_earliest_date())
+        return 0
+    try:
+        res = bi.run(start=args.start, end=args.end, extras=not args.priority_only,
+                     max_pdfs=args.max_pdfs)
+    except bi.Aborted as e:
+        print(f"aborted: {e}", file=sys.stderr)
+        return 1
+    for k, v in res.items():
+        if k != "failures":
+            print(f"{k}: {v}")
+    for f in res["failures"][:20]:
+        print(f"  parse failure: {f}", file=sys.stderr)
+    return 1 if res["parse_failures"] else 0
+
+
+def _backfill_players_cmd(args) -> int:
+    from . import backfill, backfill_players as bp
+    if not args.season_tables and not args.per_game:
+        print("error: give --season-tables and/or --per-game matchups|tracking|hustle|all",
+              file=sys.stderr)
+        return 2
+    try:
+        backfill.seasons_range(args.start or "2017-18", args.end)
+        tables = tuple(t.strip() for t in args.tables.split(",")) if args.tables else bp.TABLE_ORDER
+        if any(t not in bp.TABLE_ORDER for t in tables):
+            raise ValueError(f"--tables must be among {','.join(bp.TABLE_ORDER)}")
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    bad = False
+    if args.season_tables:
+        s = bp.run_season_tables(args.start, args.end, tables=tables, force=args.force)
+        print(f"season tables: fetched={s['fetched']} cached={s['cached']} failed={s['failed']} "
+              f"aborted={s['aborted']} rows={s['rows']}")
+        for err in s["errors"][:20]:
+            print(f"  error: {err}", file=sys.stderr)
+        bad = bool(s["failed"] or s["aborted"])
+    if args.per_game and not bad:
+        g = bp.run_per_game(args.per_game, args.start, args.end, limit=args.limit,
+                            reparse=args.reparse)
+        for kind, c in g["by_kind"].items():
+            print(f"{kind}: {c}")
+        for err in g["errors"][:20]:
+            print(f"  error: {err}", file=sys.stderr)
+        bad = g["aborted"] or any(c["failed"] for c in g["by_kind"].values())
+    return 1 if bad else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["serve"]:
@@ -350,7 +436,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "collect":
         from . import collect, config
         if args.job == "pregame":
-            summary = collect.run_pregame(args.date or config.today_nba_day())
+            only = [s.strip() for s in args.steps.split(",") if s.strip()] if args.steps else None
+            try:
+                summary = collect.run_pregame(args.date or config.today_nba_day(), only=only)
+            except ValueError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 2
         else:
             summary = collect.run_postgame(args.date or config.yesterday_nba_day())
         # The job logs its own summary; a failed step must still surface to the scheduler.
@@ -382,6 +473,10 @@ def main(argv: list[str] | None = None) -> int:
         for err in summary["errors"][:20]:
             print(f"  error: {err}", file=sys.stderr)
         return 1 if summary["failed"] or summary["aborted"] else 0
+    if args.cmd == "backfill" and args.what == "injuries":
+        return _backfill_injuries_cmd(args)
+    if args.cmd == "backfill" and args.what == "players":
+        return _backfill_players_cmd(args)
     if args.cmd == "backfill":
         from . import backfill
         try:

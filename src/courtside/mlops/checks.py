@@ -7,7 +7,9 @@ and a plain-English `detail`. Games-dependent checks `skip` on days without game
 Check names (stable; alerts key off them):
   both jobs   `<job>.job_steps`, `stale.pregame`, `stale.postgame`
   pregame     `pregame.odds_coverage`, `pregame.injury_report`, `pregame.injury_match`,
-              `pregame.prediction_coverage`, `pregame.brief_built`
+              `pregame.prediction_coverage`, `pregame.brief_built`,
+              `pregame.props_coverage`, `pregame.referee_assignments`, `pregame.dfs_salaries`
+              (pre-tip archive sources; warn-only)
   postgame    `postgame.finals_archived`, `postgame.game_facts`, `postgame.facts_validation`,
               `postgame.gamelogs_fresh`, `postgame.brief_next_day`
 """
@@ -166,6 +168,7 @@ def _pregame(conn: sqlite3.Connection, day: date, now: datetime) -> list[dict]:
         out += _skip_all(names[:4], why)
         out.append(_res(names[4], "ok", 1, 1, f"brief for {day} built {brief['built_at']}")
                    if brief else _res(names[4], "skip", detail=why + ", no brief"))
+        out += _skip_all(list(PRETIP_CHECKS), why)
         return out
     ids = [g["game_id"] for g in games]
     q = ",".join("?" * len(ids))
@@ -215,6 +218,63 @@ def _pregame(conn: sqlite3.Connection, day: date, now: datetime) -> list[dict]:
 
     out.append(_res(names[4], "ok", 1, 1, f"brief for {day} built {brief['built_at']}")
                if brief else _res(names[4], "fail", 0, 1, f"no brief stored for {day}"))
+    out += _pretip_extras(conn, day, now, ids)
+    return out
+
+
+# ------------------------------------------------------------------ pre-tip archive sources
+
+# Props / referees / DFS salaries vanish at tip-off, so a silent gap is unrecoverable. These
+# checks only ever warn (never fail): the games' own pipeline does not depend on them.
+PRETIP_CHECKS = ("pregame.props_coverage", "pregame.referee_assignments",
+                 "pregame.dfs_salaries")
+PRETIP_WARN, PRETIP_FAIL = 0.90, 0.50
+REFEREES_AFTER = time(10, 0)     # posted ~9:00 ET; look from the 10:00 ET run
+
+
+def _covered(conn: sqlite3.Connection, table: str, ids: list[str], extra: str = "",
+             params: tuple = ()) -> set[str]:
+    q = ",".join("?" * len(ids))
+    return {r[0] for r in conn.execute(
+        f"SELECT DISTINCT game_id FROM {table} WHERE game_id IN ({q}) {extra}", [*ids, *params])}
+
+
+def _pretip_extras(conn: sqlite3.Connection, day: date, now: datetime, ids: list[str]) -> list[dict]:
+    names = PRETIP_CHECKS
+    out: list[dict] = []
+
+    # props: games with at least one captured prop row / games today
+    have = _covered(conn, "prop_snapshots", ids)
+    frac = len(have) / len(ids)
+    miss = [g for g in ids if g not in have]
+    if frac >= PRETIP_WARN:
+        out.append(_res(names[0], "ok", frac, PRETIP_WARN,
+                        f"player props captured for {len(have)} of {len(ids)} games"))
+    else:
+        out.append(_res(names[0], "warn", frac, PRETIP_WARN,
+                        f"no player props captured for {len(miss)} of {len(ids)} games today "
+                        f"({', '.join(miss[:4])}{'...' if len(miss) > 4 else ''}); props vanish "
+                        f"at tip-off"))
+
+    # referees: crews are posted ~9:00 ET; expected by the 10:00 ET run on game days
+    cutoff = datetime.combine(day, REFEREES_AFTER, tzinfo=config.NBA_TZ)
+    if now < cutoff:
+        out.append(_res(names[1], "skip", detail="too early: referee assignments are checked "
+                        "from 10:00 ET on game days"))
+    else:
+        have = _covered(conn, "referee_assignments", ids, "AND nba_day=?", (day.isoformat(),))
+        frac = len(have) / len(ids)
+        out.append(_res(names[1], "ok" if frac >= PRETIP_WARN else "warn", frac, PRETIP_WARN,
+                        f"referee crews captured for {len(have)} of {len(ids)} games"
+                        if have else f"no referee assignments captured on {day} (games today; "
+                                     f"posted ~9:00 ET at official.nba.com)"))
+
+    # DFS salaries: games covered by a Classic / Showdown slate snapshot
+    have = _covered(conn, "dfs_salaries", ids)
+    frac = len(have) / len(ids)
+    out.append(_res(names[2], "ok" if frac >= PRETIP_WARN else "warn", frac, PRETIP_WARN,
+                    f"DraftKings salaries captured for {len(have)} of {len(ids)} games"
+                    if have else f"no DraftKings salaries captured for today's {len(ids)} games"))
     return out
 
 

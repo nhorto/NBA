@@ -1,0 +1,15 @@
+{
+ "athletes": [
+  {
+   "id": "4251",
+   "displayName": "Paul George"
+  },
+  {
+   "id": "3908845",
+   "displayName": "John Collins"
+  }
+ ],
+ "team": {
+  "abbreviation": "DET"
+ }
+}

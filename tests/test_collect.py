@@ -17,6 +17,7 @@ import courtside.sources as sources_pkg
 from courtside import archive, collect, config, db
 from courtside.http import FetchError
 from courtside.sources import espn, nba_cdn
+from pretip_helpers import stub_pretip_sources
 
 FIX = Path(__file__).parent / "fixtures"
 TODAY = date(2026, 10, 20)
@@ -76,6 +77,7 @@ def net(monkeypatch):
     mk(espn, "fetch_summary", lambda eid: n.summary)
     monkeypatch.setitem(sys.modules, "courtside.sources.injury_report", None)
     monkeypatch.delattr(sources_pkg, "injury_report", raising=False)
+    n.pretip = stub_pretip_sources(monkeypatch)   # props / referees / Action Network / DFS
 
     import courtside.backfill as backfill_mod
 

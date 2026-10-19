@@ -1,0 +1,17 @@
+{
+ "athletes": [
+  {
+   "id": "3078576",
+   "displayName": "Derrick White",
+   "fullName": "Derrick White"
+  },
+  {
+   "id": "4065648",
+   "displayName": "Jayson Tatum",
+   "fullName": "Jayson Tatum"
+  }
+ ],
+ "team": {
+  "abbreviation": "BOS"
+ }
+}

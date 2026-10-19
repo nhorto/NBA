@@ -18,6 +18,9 @@ Conventions
   the season's game logs are re-fetched (keeps `team_games`/`player_games` current for the model
   and trends); finally the Brief for day + 1 (the morning-of Brief) is built. Pregame ends with
   `predict_day` and a rebuild of today's Brief.
+* Pre-tip extras (props, referees, action_network, dfs_salaries) are archive-first sources
+  whose data disappears at tip-off; see the "pre-tip extras" block below for their conventions
+  (raw layout, change-log semantics, request volume).
 * Official injury report: archived as `raw/nba_official/injury_report/<report_et_date>/
   Injury-Report_YYYY-MM-DD_HH_MMPM.pdf` (stable key => never re-downloaded). Rows are stored
   with `player_name = player_name_norm` and `captured_at = report publication time (UTC)`,
@@ -33,12 +36,12 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 
-from . import archive, config, db
+from . import archive, config, db, teams
 from .http import FetchError
-from .sources import espn, nba_cdn
+from .sources import action_network, dfs, espn, espn_props, nba_cdn, referees
 
 log = logging.getLogger("courtside.collect")
 
@@ -357,22 +360,318 @@ def _official_report_step(conn: sqlite3.Connection, day: date) -> dict:
     return {**out, "parsed": True, "rows": n, "skipped_unnamed": len(parsed) - len(rows)}
 
 
-def run_pregame(day: date) -> dict:
+# ------------------------------------------------------------------ pre-tip extras
+#
+# props          ESPN/DraftKings player props     raw/espn/props/<day>/<game>_<provider>_pNN__<ts>
+# referees       official.nba.com crews (>= 9:00 ET) raw/nba_official/referee_assignments/<day>/...html
+# action_network per-book lines + opening line    raw/actionnetwork/scoreboard/<day>/scoreboard__<ts>
+# dfs_salaries   DraftKings DFS lobby + salaries  raw/draftkings/{lobby,draftgroup,rules}/<day>/...
+#
+# Request volume per pregame run (6 runs/day): props ~ 5 per upcoming game (providers + 2 pages
+# of 1000 + 2 rosters the first time a team is seen), referees 1, action_network 1, dfs 1 lobby +
+# 1 per Classic/Showdown draft group (+ rules once per day). Each source is polite (the shared
+# per-host throttle) and its failure never blocks the others.
+
+PROPS_ATHLETE_LOOKUP_CAP = 40     # athlete-document fallbacks per game (rosters cover ~all)
+DFS_MAX_GROUPS = 12
+REFEREES_AFTER_ET = dtime(9, 0)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _props_names(conn: sqlite3.Connection, game: sqlite3.Row, ids: set[str], day: date,
+                 now: datetime, reqs: dict) -> dict[str, str]:
+    """ESPN athlete id -> name: DB cache, else the two team rosters, else athlete documents."""
+    names: dict[str, str] = {}
+    if not ids:
+        return names
+    q = ",".join("?" * len(ids))
+    for aid, nm in conn.execute(
+            f"SELECT espn_athlete_id, player_name FROM prop_snapshots WHERE player_name IS NOT NULL "
+            f"AND espn_athlete_id IN ({q}) GROUP BY espn_athlete_id", sorted(ids)):
+        names[aid] = nm
+    if ids - names.keys():
+        for tri in (game["home"], game["away"]):
+            try:
+                roster = espn_props.fetch_roster(teams.by_tricode(tri).espn_abbr)
+                reqs["roster"] += 1
+                archive.save_raw("espn", "roster", day, f"{game['game_id']}_{tri}", roster,
+                                 snapshot=True, now=now)
+                names.update(espn_props.roster_names(roster))
+            except Exception as e:  # noqa: BLE001 - names are best effort
+                log.warning("espn roster %s failed: %s", tri, e)
+    for aid in sorted(ids - names.keys())[:PROPS_ATHLETE_LOOKUP_CAP]:
+        try:
+            nm = espn_props.athlete_name(espn_props.fetch_athlete(aid))
+            reqs["athlete"] += 1
+            if nm:
+                names[aid] = nm
+        except Exception as e:  # noqa: BLE001
+            log.warning("espn athlete %s lookup failed: %s", aid, e)
+    return names
+
+
+def _props_changed(conn: sqlite3.Connection, game_id: str, rows: list[dict]) -> list[dict]:
+    """Rows whose (line, over, under) differ from the latest stored state of the same market
+    (prop_snapshots is a change log; the raw pages keep every poll)."""
+    last: dict[tuple, tuple] = {}
+    for r in conn.execute(
+            "SELECT provider, espn_athlete_id, espn_team_id, market_id, kind, line, over_odds, "
+            "under_odds FROM prop_snapshots WHERE game_id=? ORDER BY captured_at, id", (game_id,)):
+        key = (r["provider"], r["espn_athlete_id"], r["espn_team_id"], r["market_id"], r["kind"],
+               r["line"] if r["kind"] == "milestone" else None)
+        last[key] = (r["line"], r["over_odds"], r["under_odds"])
+    return [r for r in rows
+            if last.get(espn_props.row_key(r)) != espn_props.row_state(r)]
+
+
+def _props_step(conn: sqlite3.Connection, run: _Run, day: date, captured_at: str) -> dict:
+    now = _utcnow()
+    games = conn.execute(
+        "SELECT game_id, espn_id, home, away, tipoff_utc FROM games WHERE nba_day=? "
+        "AND status='scheduled' AND espn_id IS NOT NULL AND (tipoff_utc IS NULL OR tipoff_utc>?) "
+        "ORDER BY tipoff_utc, game_id", (day.isoformat(), _iso(now))).fetchall()
+    if not games:
+        return {"status": "skipped", "reason": "no upcoming games with an ESPN event id"}
+    reqs = {"providers": 0, "pages": 0, "roster": 0, "athlete": 0}
+    per_game: dict[str, dict] = {}
+    failed: dict[str, str] = {}
+    total_rows = total_new = 0
+    for g in games:
+        gid, eid = g["game_id"], g["espn_id"]
+        try:
+            prov_payload = espn_props.fetch_providers(eid)
+            reqs["providers"] += 1
+            archive.save_raw("espn", "props", day, f"{gid}_providers", prov_payload,
+                             snapshot=True, now=now)
+            provs = [p for p in espn_props.providers(prov_payload) if p["has_props"]]
+            provs.sort(key=lambda p: (p["id"] != "100", p["id"]))   # DraftKings first
+            rows: list[dict] = []
+            first_path: dict[str, str] = {}
+            for p in provs:
+                def _save(n, payload, _p=p):
+                    path = archive.save_raw("espn", "props", day, f"{gid}_{_p['id']}_p{n:02d}",
+                                            payload, snapshot=True, now=now)
+                    first_path.setdefault(_p["id"], str(path))
+                    reqs["pages"] += 1
+                pages = espn_props.fetch_propbets(eid, p["id"], on_page=_save)
+                rows += [{**r, "raw_path": first_path.get(p["id"])}
+                         for r in espn_props.parse_propbets(
+                             pages, provider_id=p["id"], provider_name=p["name"])]
+            names = _props_names(conn, g, espn_props.athlete_ids(rows), day, now, reqs)
+            espn_props.attach_names(rows, names)
+            fresh = _props_changed(conn, gid, rows)
+            for r in fresh:
+                r.update(game_id=gid, captured_at=captured_at)
+            db.insert_rows(conn, "prop_snapshots", fresh)
+            total_rows += len(rows)
+            total_new += len(fresh)
+            per_game[gid] = {"providers": [p["id"] for p in provs], "rows": len(rows),
+                             "inserted": len(fresh),
+                             "unnamed": sum(1 for r in rows if r["subject"] == "player"
+                                            and not r.get("player_name"))}
+        except Exception as e:  # noqa: BLE001 - one game must not stop the others
+            log.exception("props for %s failed", gid)
+            failed[gid] = f"{type(e).__name__}: {e}"
+            run.error(f"props:{gid}", failed[gid])
+    return {"games": len(games), "rows": total_rows, "inserted": total_new,
+            "requests": sum(reqs.values()), "requests_by_kind": reqs, "per_game": per_game,
+            "failed": failed}
+
+
+def _referees_step(conn: sqlite3.Connection, day: date, captured_at: str) -> dict:
+    now = _utcnow()
+    if day != config.today_nba_day():
+        return {"status": "skipped", "reason": "day is not today"}
+    if now.astimezone(config.NBA_TZ).time() < REFEREES_AFTER_ET:
+        return {"status": "skipped", "reason": "before 9:00 ET (assignments not posted yet)"}
+    html = referees.fetch_page()
+    path = archive.save_raw_bytes("nba_official", "referee_assignments", day,
+                                  "referee-assignments", html, snapshot=True, now=now, ext=".html")
+    parsed = referees.parse_assignments(html)
+    out: dict = {"path": str(path), "page_day": parsed["nba_day"].isoformat()
+                 if parsed["nba_day"] else None, "games": len(parsed["games"])}
+    if not parsed["games"]:
+        return {**out, "inserted": 0, "empty": True}
+    if parsed["nba_day"] is not None and parsed["nba_day"] != day:
+        return {**out, "status": "skipped", "inserted": 0,
+                "reason": f"page is for {parsed['nba_day']}, not {day}"}
+    rows = referees.assignment_rows({**parsed, "nba_day": day})
+    unmatched = []
+    for r in rows:
+        r["game_id"] = None
+        if r["home"] and r["away"]:
+            g = conn.execute("SELECT game_id FROM games WHERE nba_day=? AND home=? AND away=?",
+                             (day.isoformat(), r["home"], r["away"])).fetchone()
+            r["game_id"] = g["game_id"] if g else None
+            if g is None and r["game_label"] not in unmatched:
+                unmatched.append(r["game_label"])
+    sig = lambda rs: sorted((x["game_label"] or "", x["role"], x["official_name"]) for x in rs)
+    prev = conn.execute(
+        "SELECT game_label, role, official_name FROM referee_assignments WHERE nba_day=? AND "
+        "captured_at=(SELECT MAX(captured_at) FROM referee_assignments WHERE nba_day=?)",
+        (day.isoformat(), day.isoformat())).fetchall()
+    prev_sig = sorted((x["game_label"] or "", x["role"], x["official_name"]) for x in prev)
+    out["unmatched"] = unmatched
+    if prev_sig == sig(rows):
+        return {**out, "inserted": 0, "unchanged": True}
+    for r in rows:
+        r.update(captured_at=captured_at, raw_path=str(path))
+    n = db.insert_rows(conn, "referee_assignments", [
+        {k: r[k] for k in ("nba_day", "game_id", "game_label", "home", "away", "official_name",
+                           "official_number", "role", "captured_at", "raw_path")} for r in rows])
+    return {**out, "inserted": n}
+
+
+def _action_network_step(conn: sqlite3.Connection, day: date, captured_at: str) -> dict:
+    now = _utcnow()
+    payload = action_network.fetch_scoreboard(day)
+    path = archive.save_raw("actionnetwork", "scoreboard", day, "scoreboard", payload,
+                            snapshot=True, now=now)
+    games = action_network.scoreboard_games(payload)
+    inserted, started, unmatched = 0, [], []
+    for g in games:
+        row = conn.execute("SELECT game_id, tipoff_utc FROM games WHERE nba_day=? AND home=? "
+                           "AND away=?", (day.isoformat(), g["home"], g["away"])).fetchone()
+        if row is None:
+            unmatched.append(f'{g["away"]}@{g["home"]}')
+            continue
+        if g["status"] != "scheduled" or (row["tipoff_utc"] and row["tipoff_utc"] <= _iso(now)):
+            started.append(row["game_id"])   # in-play lines are not pre-game lines
+            continue
+        rows = [{**b, "game_id": row["game_id"], "captured_at": captured_at,
+                 "source": action_network.SOURCE, "source_game_id": str(g["an_game_id"]),
+                 "raw_path": str(path)}
+                for b in g["books"]
+                if any(b[k] is not None for k in ("home_spread", "total", "home_ml", "away_ml"))]
+        inserted += db.insert_rows(conn, "line_snapshots", rows)
+    if unmatched:
+        log.warning("action network games with no matching game: %s", unmatched)
+    return {"path": str(path), "games": len(games), "inserted": inserted,
+            "started_skipped": started, "unmatched": unmatched}
+
+
+def _dfs_fingerprint(rows: list[dict]) -> tuple:
+    return tuple(sorted((r["draftable_id"], r["salary"], r["status"], r["disabled"])
+                        for r in rows))
+
+
+def _dfs_step(conn: sqlite3.Connection, day: date, captured_at: str) -> dict:
+    now = _utcnow()
+    lobby = dfs.fetch_lobby()
+    lobby_path = archive.save_raw("draftkings", "lobby", day, "lobby", lobby, snapshot=True,
+                                  now=now)
+    groups = [g for g in dfs.lobby_draft_groups(lobby, day=day,
+                                                game_types=dfs.SALARY_GAME_TYPES)
+              if g["start_utc"] and g["start_utc"] > _iso(now)][:DFS_MAX_GROUPS]
+    out: dict = {"lobby_path": str(lobby_path),
+                 "all_nba_groups": len(dfs.lobby_draft_groups(lobby, day=day)),
+                 "groups": len(groups), "requests": 1, "slates": {}, "failed": {}}
+    if not groups:
+        return {**out, "status": "skipped", "reason": "no upcoming Classic/Showdown groups"}
+    rules_by_type: dict[int, dict] = {}
+    for g in groups:
+        gt = g["game_type_id"]
+        if gt in rules_by_type:
+            continue
+        key = f"gametype_{gt}"
+        rpath = archive.raw_path("draftkings", "rules", day, key)
+        try:
+            if rpath.exists():
+                rules_by_type[gt] = archive.load_raw(rpath)
+            else:
+                rules_by_type[gt] = dfs.fetch_rules(gt)
+                out["requests"] += 1
+                archive.save_raw("draftkings", "rules", day, key, rules_by_type[gt])
+        except Exception as e:  # noqa: BLE001 - slot names are nice-to-have
+            log.warning("dk rules %s failed: %s", gt, e)
+    games_today = {(r["home"], r["away"]): r["game_id"] for r in conn.execute(
+        "SELECT game_id, home, away FROM games WHERE nba_day=?", (day.isoformat(),))}
+    total = 0
+    for g in groups:
+        sid = g["draft_group_id"]
+        try:
+            payload = dfs.fetch_draftables(sid)
+            out["requests"] += 1
+            path = archive.save_raw("draftkings", "draftgroup", day, f"draftgroup_{sid}",
+                                    payload, snapshot=True, now=now)
+            rows = dfs.parse_draftables(payload, draft_group_id=sid, game_type_id=g["game_type_id"],
+                                        rules=rules_by_type.get(g["game_type_id"]), lobby=lobby)
+            last = conn.execute("SELECT MAX(captured_at) FROM dfs_salaries WHERE site=? AND "
+                                "slate_id=?", (dfs.SITE, str(sid))).fetchone()[0]
+            prev = [dict(draftable_id=r["draftable_id"], salary=r["salary"], status=r["status"],
+                         disabled=r["disabled"]) for r in conn.execute(
+                "SELECT draftable_id, salary, status, disabled FROM dfs_salaries WHERE site=? "
+                "AND slate_id=? AND captured_at=?", (dfs.SITE, str(sid), last))] if last else []
+            unchanged = bool(prev) and _dfs_fingerprint(prev) == _dfs_fingerprint(rows)
+            for r in rows:
+                r["game_id"] = games_today.get((r["home"], r["away"]))
+                r.update(captured_at=captured_at, raw_path=str(path))
+            n = 0 if unchanged else db.insert_rows(conn, "dfs_salaries", rows)
+            total += n
+            out["slates"][str(sid)] = {
+                "game_type": g["game_type"], "label": g["suffix"], "draftables": len(rows),
+                "players": len({r["site_player_id"] for r in rows}), "inserted": n,
+                "unchanged": unchanged,
+                "games": [f'{x["away"]}@{x["home"]}' for x in dfs.slate_games(payload)]}
+        except Exception as e:  # noqa: BLE001 - one slate must not stop the others
+            log.exception("dfs draft group %s failed", sid)
+            out["failed"][str(sid)] = f"{type(e).__name__}: {e}"
+    out["inserted"] = total
+    if out["failed"] and not out["slates"]:
+        raise RuntimeError(f"all {len(groups)} draft groups failed: {out['failed']}")
+    return out
+
+
+PREGAME_STEPS = ("schedule", "nba_scoreboard", "espn_scoreboard", "nba_odds", "espn_injuries",
+                 "official_injury_report", "props", "referees", "action_network",
+                 "dfs_salaries", "predict", "brief")
+
+
+def run_pregame(day: date, only: set[str] | list[str] | tuple[str, ...] | None = None) -> dict:
+    """Pregame snapshot job. `only` restricts it to the named steps (see PREGAME_STEPS), e.g.
+    ``{"props", "referees"}`` for a props-only poll; the monitoring hook still runs."""
+    want = set(only) if only else None
+    if want is not None and want - set(PREGAME_STEPS):
+        raise ValueError(f"unknown pregame step(s): {sorted(want - set(PREGAME_STEPS))}")
+
+    def on(name: str) -> bool:
+        return want is None or name in want
+
     def body(conn: sqlite3.Connection, run: _Run, day: date) -> None:
         captured_at = _iso(datetime.now(timezone.utc))
-        run.step("schedule", _schedule_step, conn)
-        if day == config.today_nba_day():
-            run.step("nba_scoreboard", _nba_scoreboard_step, conn, day)
-        else:
-            run.summary["steps"]["nba_scoreboard"] = {"status": "skipped",
-                                                      "reason": "day is not today"}
-        run.step("espn_scoreboard", _espn_scoreboard_step, conn, day, apply_results=False,
-                 insert_odds=True, captured_at=captured_at)
-        run.step("nba_odds", _nba_odds_step, conn, day, captured_at)
-        run.step("espn_injuries", _espn_injuries_step, conn, day, captured_at)
-        run.step("official_injury_report", _official_report_step, conn, day)
-        run.step("predict", _predict_step, conn, day)
-        run.step("brief", _brief_step, conn, day)
+        if on("schedule"):
+            run.step("schedule", _schedule_step, conn)
+        if on("nba_scoreboard"):
+            if day == config.today_nba_day():
+                run.step("nba_scoreboard", _nba_scoreboard_step, conn, day)
+            else:
+                run.summary["steps"]["nba_scoreboard"] = {"status": "skipped",
+                                                          "reason": "day is not today"}
+        if on("espn_scoreboard"):
+            run.step("espn_scoreboard", _espn_scoreboard_step, conn, day, apply_results=False,
+                     insert_odds=True, captured_at=captured_at)
+        if on("nba_odds"):
+            run.step("nba_odds", _nba_odds_step, conn, day, captured_at)
+        if on("espn_injuries"):
+            run.step("espn_injuries", _espn_injuries_step, conn, day, captured_at)
+        if on("official_injury_report"):
+            run.step("official_injury_report", _official_report_step, conn, day)
+        # pre-tip archive sources (each isolated; a failure never touches the steps around it)
+        if on("props"):
+            run.step("props", _props_step, conn, run, day, captured_at)
+        if on("referees"):
+            run.step("referees", _referees_step, conn, day, captured_at)
+        if on("action_network"):
+            run.step("action_network", _action_network_step, conn, day, captured_at)
+        if on("dfs_salaries"):
+            run.step("dfs_salaries", _dfs_step, conn, day, captured_at)
+        if on("predict"):
+            run.step("predict", _predict_step, conn, day)
+        if on("brief"):
+            run.step("brief", _brief_step, conn, day)
         _monitor_hook(conn, run, "pregame", day)
 
     return _run_job("pregame", day, body)

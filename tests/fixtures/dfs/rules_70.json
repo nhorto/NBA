@@ -1,0 +1,132 @@
+{
+ "gameTypeId": 70,
+ "gameTypeName": "Classic",
+ "gameTypeDescription": "Create an 8-player lineup while staying under the $50,000 salary cap. Includes Late Swap.",
+ "lineupConfigurationId": 55,
+ "salaryCap": {
+  "isEnabled": true,
+  "minValue": 0,
+  "maxValue": 50000
+ },
+ "gameCount": {
+  "isEnabled": true,
+  "minValue": 2,
+  "maxValue": null
+ },
+ "teamCount": {
+  "isEnabled": true,
+  "minValue": 2,
+  "maxValue": null
+ },
+ "uniquePlayers": true,
+ "allowLateSwap": true,
+ "lineupTemplate": [
+  {
+   "rosterSlot": {
+    "id": 458,
+    "name": "PG",
+    "description": "Point Guard",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 1,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 459,
+    "name": "SG",
+    "description": "Shooting Guard",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 2,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 460,
+    "name": "SF",
+    "description": "Small Forward",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 3,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 461,
+    "name": "PF",
+    "description": "Power Forward",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 4,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 462,
+    "name": "C",
+    "description": "Center",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 5,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 464,
+    "name": "G",
+    "description": "Guard",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 6,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 463,
+    "name": "F",
+    "description": "Forward",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 7,
+   "scoringOrder": 0
+  },
+  {
+   "rosterSlot": {
+    "id": 465,
+    "name": "UTIL",
+    "description": "Utility",
+    "positionTip": null,
+    "positionTipSubtext": null,
+    "notScoring": false
+   },
+   "order": 8,
+   "scoringOrder": 0
+  }
+ ],
+ "errorStatus": null,
+ "rulesUrl": "/help/rules/4/70",
+ "draftType": "SalaryCap",
+ "allowedCompetitionAttributes": null,
+ "scoringDivider": null,
+ "useOptimalLineups": false,
+ "supportsPlayersTab": false,
+ "showByeWeekInfo": false,
+ "originalDraftType": null,
+ "isSeasonLong": false,
+ "teamPositionLimits": null
+}

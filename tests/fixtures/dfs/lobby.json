@@ -1,0 +1,139 @@
+{
+ "SelectedSport": "NBA",
+ "DraftGroups": [
+  {
+   "DraftGroupId": 154575,
+   "ContestTypeId": 70,
+   "StartDate": "2026-10-20T19:00:00.0000000Z",
+   "StartDateEst": "2026-10-20T15:00:00.0000000",
+   "SortOrder": 3,
+   "DraftGroupTag": "Featured",
+   "GameTypeId": 70,
+   "GameType": null,
+   "SportSortOrder": 3,
+   "Sport": "NBA",
+   "SportId": 4,
+   "GameCount": 3,
+   "ContestStartTimeSuffix": null,
+   "ContestStartTimeType": 0,
+   "Games": null,
+   "DraftGroupSeriesId": 0,
+   "GameSetKey": "0E3A5A2EE320669DBE833C45E2075541",
+   "AllowUGC": true
+  },
+  {
+   "DraftGroupId": 154823,
+   "ContestTypeId": 73,
+   "StartDate": "2026-10-20T19:00:00.0000000Z",
+   "StartDateEst": "2026-10-20T15:00:00.0000000",
+   "SortOrder": 999,
+   "DraftGroupTag": "Featured",
+   "GameTypeId": 73,
+   "GameType": null,
+   "SportSortOrder": 3,
+   "Sport": "NBA",
+   "SportId": 4,
+   "GameCount": 3,
+   "ContestStartTimeSuffix": " (NBA Tiers)",
+   "ContestStartTimeType": 0,
+   "Games": null,
+   "DraftGroupSeriesId": 0,
+   "GameSetKey": "0E3A5A2EE320669DBE833C45E2075541",
+   "AllowUGC": true
+  },
+  {
+   "DraftGroupId": 154825,
+   "ContestTypeId": 81,
+   "StartDate": "2026-10-20T19:00:00.0000000Z",
+   "StartDateEst": "2026-10-20T15:00:00.0000000",
+   "SortOrder": 999,
+   "DraftGroupTag": "Featured",
+   "GameTypeId": 81,
+   "GameType": null,
+   "SportSortOrder": 3,
+   "Sport": "NBA",
+   "SportId": 4,
+   "GameCount": 1,
+   "ContestStartTimeSuffix": " (BOS @ DET)",
+   "ContestStartTimeType": 0,
+   "Games": null,
+   "DraftGroupSeriesId": 0,
+   "GameSetKey": "F93D8547835188D8D25441C1FD7E32BD",
+   "AllowUGC": true
+  },
+  {
+   "DraftGroupId": 150563,
+   "ContestTypeId": 170,
+   "StartDate": "2026-10-20T19:00:00.0000000Z",
+   "StartDateEst": "2026-10-20T15:00:00.0000000",
+   "SortOrder": 1,
+   "DraftGroupTag": "Featured",
+   "GameTypeId": 170,
+   "GameType": null,
+   "SportSortOrder": 3,
+   "Sport": "NBA",
+   "SportId": 4,
+   "GameCount": 43,
+   "ContestStartTimeSuffix": " (Tournament)",
+   "ContestStartTimeType": 0,
+   "Games": null,
+   "DraftGroupSeriesId": 0,
+   "GameSetKey": "D8417C97C7DC633FD883DC3F47E2C90A",
+   "AllowUGC": false
+  },
+  {
+   "DraftGroupId": 155096,
+   "ContestTypeId": 81,
+   "StartDate": "2026-10-20T00:00:00.0000000Z",
+   "StartDateEst": "2026-10-19T20:00:00.0000000",
+   "SortOrder": 999,
+   "DraftGroupTag": "",
+   "GameTypeId": 81,
+   "GameType": null,
+   "SportSortOrder": 3,
+   "Sport": "NBA",
+   "SportId": 4,
+   "GameCount": 1,
+   "ContestStartTimeSuffix": " (WNBA ATL @ GSV)",
+   "ContestStartTimeType": 0,
+   "Games": null,
+   "DraftGroupSeriesId": 0,
+   "GameSetKey": "DB51E4DC47EF5C3B4D801E87BD90E1D4",
+   "AllowUGC": null
+  }
+ ],
+ "GameTypes": [
+  {
+   "GameTypeId": 70,
+   "Name": "Classic"
+  },
+  {
+   "GameTypeId": 81,
+   "Name": "Showdown Captain Mode"
+  },
+  {
+   "GameTypeId": 73,
+   "Name": "Tiers"
+  },
+  {
+   "GameTypeId": 112,
+   "Name": "In-Game Showdown (H2)"
+  },
+  {
+   "GameTypeId": 343,
+   "Name": "Single Stat - Points"
+  },
+  {
+   "GameTypeId": 170,
+   "Name": "Best Ball"
+  },
+  {
+   "GameTypeId": 188,
+   "Name": "Snake"
+  },
+  {
+   "GameTypeId": 193,
+   "Name": "Snake Showdown"
+  }
+ ]
+}

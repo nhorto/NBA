@@ -330,6 +330,242 @@ MIGRATIONS: list[str] = [
         WHERE (g.tipoff_utc IS NULL OR p.created_at <= g.tipoff_utc)
     ) WHERE rn = 1;
     """,
+    # players backfill (stats.nba.com player/matchup/tracking data; see backfill_players.py).
+    # Season tables keep key numeric columns typed; unmapped headers land in extra_json.
+    # player_matchups orientation: off_player_id is the offensive player, def_player_id the
+    # defender who guarded him; stats are the offensive player's output against that defender.
+    """
+    CREATE TABLE IF NOT EXISTS player_index (
+        player_id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, slug TEXT,
+        team_id INTEGER, team TEXT, jersey TEXT, position TEXT, height TEXT, height_in INTEGER,
+        weight INTEGER, college TEXT, country TEXT, draft_year INTEGER, draft_round INTEGER,
+        draft_number INTEGER, from_year INTEGER, to_year INTEGER, roster_status REAL,
+        is_defunct INTEGER, snapshot_season TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS team_rosters (
+        season TEXT NOT NULL, team_id INTEGER NOT NULL, team TEXT, player_id INTEGER NOT NULL,
+        player TEXT, jersey TEXT, position TEXT, height TEXT, height_in INTEGER, weight INTEGER,
+        birth_date TEXT, age REAL, exp INTEGER, school TEXT, how_acquired TEXT,
+        PRIMARY KEY (season, team_id, player_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_team_rosters_player ON team_rosters(player_id, season);
+
+    CREATE TABLE IF NOT EXISTS team_coaches (
+        season TEXT NOT NULL, team_id INTEGER NOT NULL, team TEXT, coach_id INTEGER NOT NULL,
+        coach_name TEXT, coach_type TEXT, is_assistant INTEGER, sort_sequence INTEGER,
+        PRIMARY KEY (season, team_id, coach_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS matchup_rollup (
+        season TEXT NOT NULL, season_type TEXT NOT NULL, def_player_id INTEGER NOT NULL,
+        position TEXT NOT NULL, def_player_name TEXT, pct_of_time REAL, gp INTEGER,
+        matchup_min REAL, partial_poss REAL, pts REAL, team_pts REAL, ast REAL, tov REAL,
+        blk REAL, fgm REAL, fga REAL, fg3m REAL, fg3a REAL, ftm REAL, fta REAL, sfl REAL,
+        extra_json TEXT,
+        PRIMARY KEY (season, season_type, def_player_id, position)
+    );
+
+    CREATE TABLE IF NOT EXISTS season_matchups (
+        season TEXT NOT NULL, season_type TEXT NOT NULL, off_player_id INTEGER NOT NULL,
+        def_player_id INTEGER NOT NULL, gp INTEGER, matchup_min REAL, matchup_sec REAL,
+        partial_poss REAL, pts REAL, team_pts REAL, ast REAL, tov REAL, blk REAL, fgm REAL,
+        fga REAL, fg3m REAL, fg3a REAL, help_blk REAL, help_fgm REAL, help_fga REAL,
+        ftm REAL, fta REAL, sfl REAL, extra_json TEXT,
+        PRIMARY KEY (season, season_type, off_player_id, def_player_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_season_matchups_def
+        ON season_matchups(def_player_id, season);
+
+    CREATE TABLE IF NOT EXISTS pt_defend (
+        season TEXT NOT NULL, season_type TEXT NOT NULL, category TEXT NOT NULL,
+        player_id INTEGER NOT NULL, player_name TEXT, team_id INTEGER, team TEXT, position TEXT,
+        age REAL, gp INTEGER, g INTEGER, freq REAL, d_fgm REAL, d_fga REAL, d_fg_pct REAL,
+        normal_fg_pct REAL, pct_plusminus REAL, extra_json TEXT,
+        PRIMARY KEY (season, season_type, category, player_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS pt_shot_defdist (
+        season TEXT NOT NULL, season_type TEXT NOT NULL, def_dist TEXT NOT NULL,
+        player_id INTEGER NOT NULL, player_name TEXT, team_id INTEGER, team TEXT, age REAL,
+        gp INTEGER, g INTEGER, fga_freq REAL, fgm REAL, fga REAL, fg_pct REAL, efg_pct REAL,
+        fg2a_freq REAL, fg2m REAL, fg2a REAL, fg2_pct REAL, fg3a_freq REAL, fg3m REAL,
+        fg3a REAL, fg3_pct REAL, extra_json TEXT,
+        PRIMARY KEY (season, season_type, def_dist, player_id)
+    );
+
+    -- player_id = 0 on team rows (entity 'T'); grouping is Offensive | Defensive.
+    CREATE TABLE IF NOT EXISTS synergy_playtypes (
+        season TEXT NOT NULL, season_type TEXT NOT NULL, entity TEXT NOT NULL,
+        grouping TEXT NOT NULL, play_type TEXT NOT NULL, player_id INTEGER NOT NULL,
+        team_id INTEGER NOT NULL, player_name TEXT, team TEXT, percentile REAL, gp INTEGER,
+        poss REAL, poss_pct REAL, ppp REAL, pts REAL, fgm REAL, fga REAL, fgmx REAL,
+        fg_pct REAL, efg_pct REAL, ft_poss_pct REAL, tov_poss_pct REAL, sf_poss_pct REAL,
+        plusone_poss_pct REAL, score_poss_pct REAL, extra_json TEXT,
+        PRIMARY KEY (season, season_type, entity, grouping, play_type, player_id, team_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS hustle_season (
+        season TEXT NOT NULL, season_type TEXT NOT NULL, player_id INTEGER NOT NULL,
+        player_name TEXT, team_id INTEGER, team TEXT, age REAL, gp INTEGER, min REAL,
+        contested_shots REAL, contested_2pt REAL, contested_3pt REAL, deflections REAL,
+        charges_drawn REAL, screen_assists REAL, screen_ast_pts REAL, loose_off REAL,
+        loose_def REAL, loose_total REAL, boxouts_off REAL, boxouts_def REAL,
+        boxout_team_rebs REAL, boxout_player_rebs REAL, box_outs REAL, extra_json TEXT,
+        PRIMARY KEY (season, season_type, player_id, team_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS player_matchups (
+        game_id TEXT NOT NULL, off_player_id INTEGER NOT NULL, def_player_id INTEGER NOT NULL,
+        off_team TEXT, def_team TEXT, matchup_min REAL, partial_poss REAL, pct_def_time REAL,
+        pct_off_time REAL, pct_both_time REAL, switches INTEGER, pts INTEGER, team_pts INTEGER,
+        ast INTEGER, pot_ast INTEGER, tov INTEGER, blk INTEGER, fgm INTEGER, fga INTEGER,
+        fg3m INTEGER, fg3a INTEGER, help_blk INTEGER, help_fgm INTEGER, help_fga INTEGER,
+        ftm INTEGER, fta INTEGER, sfl INTEGER,
+        PRIMARY KEY (game_id, off_player_id, def_player_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_player_matchups_off ON player_matchups(off_player_id);
+    CREATE INDEX IF NOT EXISTS idx_player_matchups_def ON player_matchups(def_player_id);
+
+    CREATE TABLE IF NOT EXISTS player_tracking (
+        game_id TEXT NOT NULL, player_id INTEGER NOT NULL, team TEXT, minutes REAL,
+        speed REAL, distance REAL, reb_chances_off INTEGER, reb_chances_def INTEGER,
+        reb_chances_total INTEGER, touches INTEGER, secondary_ast INTEGER, ft_ast INTEGER,
+        passes INTEGER, ast INTEGER, cont_fgm INTEGER, cont_fga INTEGER, uncont_fgm INTEGER,
+        uncont_fga INTEGER, def_rim_fgm INTEGER, def_rim_fga INTEGER,
+        PRIMARY KEY (game_id, player_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_player_tracking_player ON player_tracking(player_id);
+
+    CREATE TABLE IF NOT EXISTS player_hustle (
+        game_id TEXT NOT NULL, player_id INTEGER NOT NULL, team TEXT, minutes REAL,
+        points INTEGER, contested_shots INTEGER, contested_2pt INTEGER, contested_3pt INTEGER,
+        deflections INTEGER, charges_drawn INTEGER, screen_assists INTEGER,
+        screen_ast_pts INTEGER, loose_off INTEGER, loose_def INTEGER, loose_total INTEGER,
+        boxouts_off INTEGER, boxouts_def INTEGER, boxout_team_rebs INTEGER,
+        boxout_player_rebs INTEGER, box_outs INTEGER,
+        PRIMARY KEY (game_id, player_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_player_hustle_player ON player_hustle(player_id);
+    """,
+    # pre-tip archive sources that vanish after tip-off: ESPN/DraftKings player props, official
+    # referee assignments, Action Network per-book lines, DraftKings DFS salaries.
+    #  * prop_snapshots is a CHANGE LOG: a row is written when a market's line/prices differ from
+    #    the latest stored state (raw pages keep every poll). State at time T = latest row per
+    #    (game_id, provider, espn_athlete_id, espn_team_id, market_id, kind[, line for
+    #    milestones]) with captured_at <= T. kind: ou | yesno | milestone | single; over_odds
+    #    is the over / yes / N-or-more price (first item of ESPN's pair, see sources/espn_props).
+    #  * referee_assignments: one row per official and role; a new set of rows is written only
+    #    when the posted crews change (game_id NULL for replay-center rows / unmatched games).
+    #  * dfs_salaries: one row per draftable (player x roster slot), full snapshot per run.
+    """
+    CREATE TABLE IF NOT EXISTS prop_snapshots (
+        id INTEGER PRIMARY KEY,
+        game_id TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        provider_name TEXT,
+        espn_athlete_id TEXT,
+        espn_team_id TEXT,
+        player_name TEXT,
+        subject TEXT,
+        market_id TEXT NOT NULL,
+        market TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        line REAL,
+        over_odds INTEGER,
+        under_odds INTEGER,
+        open_line REAL,
+        open_over_odds INTEGER,
+        open_under_odds INTEGER,
+        last_updated TEXT,
+        side_basis TEXT,
+        raw_path TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_props_game_captured ON prop_snapshots(game_id, captured_at);
+    CREATE INDEX IF NOT EXISTS idx_props_athlete_market
+        ON prop_snapshots(espn_athlete_id, market_id, captured_at);
+
+    CREATE TABLE IF NOT EXISTS referee_assignments (
+        id INTEGER PRIMARY KEY,
+        nba_day TEXT NOT NULL,
+        game_id TEXT,
+        game_label TEXT,
+        home TEXT,
+        away TEXT,
+        official_name TEXT NOT NULL,
+        official_number INTEGER,
+        role TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        raw_path TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_refs_day_game ON referee_assignments(nba_day, game_id);
+    CREATE INDEX IF NOT EXISTS idx_refs_official ON referee_assignments(official_name);
+
+    CREATE TABLE IF NOT EXISTS line_snapshots (
+        id INTEGER PRIMARY KEY,
+        game_id TEXT NOT NULL,
+        captured_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        book TEXT NOT NULL,
+        book_id INTEGER,
+        is_open INTEGER NOT NULL DEFAULT 0,
+        home_spread REAL,
+        home_spread_price INTEGER,
+        away_spread_price INTEGER,
+        total REAL,
+        over_price INTEGER,
+        under_price INTEGER,
+        home_ml INTEGER,
+        away_ml INTEGER,
+        home_team_total REAL,
+        away_team_total REAL,
+        line_updated_at TEXT,
+        spread_home_bets_pct REAL,
+        spread_home_money_pct REAL,
+        total_over_bets_pct REAL,
+        total_over_money_pct REAL,
+        ml_home_bets_pct REAL,
+        ml_home_money_pct REAL,
+        num_bets INTEGER,
+        source_game_id TEXT,
+        raw_path TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_lines_game_captured ON line_snapshots(game_id, captured_at);
+    CREATE INDEX IF NOT EXISTS idx_lines_book ON line_snapshots(book, captured_at);
+
+    CREATE TABLE IF NOT EXISTS dfs_salaries (
+        id INTEGER PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        site TEXT NOT NULL,
+        slate_id TEXT NOT NULL,
+        game_type TEXT NOT NULL,
+        game_type_id INTEGER,
+        draftable_id TEXT,
+        player_name TEXT NOT NULL,
+        site_player_id TEXT,
+        site_player_dk_id TEXT,
+        team TEXT,
+        positions TEXT,
+        roster_slot_id INTEGER,
+        roster_slot TEXT,
+        salary INTEGER,
+        status TEXT,
+        news_status TEXT,
+        fppg REAL,
+        disabled INTEGER NOT NULL DEFAULT 0,
+        competition_id TEXT,
+        game_id TEXT,
+        game_label TEXT,
+        home TEXT,
+        away TEXT,
+        start_time TEXT,
+        raw_path TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_slate_captured ON dfs_salaries(slate_id, captured_at);
+    CREATE INDEX IF NOT EXISTS idx_dfs_player ON dfs_salaries(site_player_id, captured_at);
+    CREATE INDEX IF NOT EXISTS idx_dfs_game ON dfs_salaries(game_id, captured_at);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
@@ -429,6 +665,23 @@ def upsert_rows(conn: sqlite3.Connection, table: str, rows: list[dict]) -> int:
     conn.executemany(
         f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "
         f"VALUES ({', '.join(':' + c for c in cols)})",
+        [{c: r.get(c) for c in cols} for r in rows])
+    conn.commit()
+    return len(rows)
+
+
+def insert_rows(conn: sqlite3.Connection, table: str, rows: list[dict]) -> int:
+    """Plain INSERT of dicts into an append-only snapshot `table` (auto `id`). Keys must be
+    existing columns (others raise TypeError); missing keys -> NULL."""
+    if not rows:
+        return 0
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})") if r[1] != "id"]
+    if not cols:
+        raise ValueError(f"unknown table {table!r}")
+    for r in rows:
+        _check(r, tuple(cols))
+    conn.executemany(
+        f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(':' + c for c in cols)})",
         [{c: r.get(c) for c in cols} for r in rows])
     conn.commit()
     return len(rows)

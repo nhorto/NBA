@@ -1,0 +1,879 @@
+{
+ "draftables": [
+  {
+   "draftableId": 44461096,
+   "firstName": "Cade",
+   "lastName": "Cunningham",
+   "displayName": "Cade Cunningham",
+   "shortName": "C. Cunningham",
+   "playerId": 1232182,
+   "playerDkId": 590962,
+   "position": "PG",
+   "rosterSlotId": 476,
+   "salary": 17700,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS"
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET",
+      "isEmphasized": true
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS"
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET",
+       "isEmphasized": true
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "49.3",
+     "sortValue": "49.3"
+    },
+    {
+     "id": -2,
+     "value": "8th",
+     "sortValue": "8",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 8,
+   "teamAbbreviation": "DET",
+   "playerGameHash": "1232182-6211319"
+  },
+  {
+   "draftableId": 44461097,
+   "firstName": "Jayson",
+   "lastName": "Tatum",
+   "displayName": "Jayson Tatum",
+   "shortName": "J. Tatum",
+   "playerId": 937647,
+   "playerDkId": 32876,
+   "position": "PF",
+   "rosterSlotId": 476,
+   "salary": 16800,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS",
+      "isEmphasized": true
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET"
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS",
+       "isEmphasized": true
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET"
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "47.8",
+     "sortValue": "47.8"
+    },
+    {
+     "id": -2,
+     "value": "11th",
+     "sortValue": "11",
+     "quality": "Medium"
+    }
+   ],
+   "teamId": 2,
+   "teamAbbreviation": "BOS",
+   "playerGameHash": "937647-6211319"
+  },
+  {
+   "draftableId": 44461098,
+   "firstName": "Derrick",
+   "lastName": "White",
+   "displayName": "Derrick White",
+   "shortName": "D. White",
+   "playerId": 796009,
+   "playerDkId": 33364,
+   "position": "PG/SG",
+   "rosterSlotId": 476,
+   "salary": 14100,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS",
+      "isEmphasized": true
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET"
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS",
+       "isEmphasized": true
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET"
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "34.5",
+     "sortValue": "34.5"
+    },
+    {
+     "id": -2,
+     "value": "1st",
+     "sortValue": "1",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 2,
+   "teamAbbreviation": "BOS",
+   "playerGameHash": "796009-6211319"
+  },
+  {
+   "draftableId": 44461099,
+   "firstName": "Jalen",
+   "lastName": "Duren",
+   "displayName": "Jalen Duren",
+   "shortName": "J. Duren",
+   "playerId": 1344765,
+   "playerDkId": 649562,
+   "position": "C",
+   "rosterSlotId": 476,
+   "salary": 12900,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS"
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET",
+      "isEmphasized": true
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS"
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET",
+       "isEmphasized": true
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "36.3",
+     "sortValue": "36.3"
+    },
+    {
+     "id": -2,
+     "value": "5th",
+     "sortValue": "5",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 8,
+   "teamAbbreviation": "DET",
+   "playerGameHash": "1344765-6211319"
+  },
+  {
+   "draftableId": 44461100,
+   "firstName": "Paul",
+   "lastName": "George",
+   "displayName": "Paul George",
+   "shortName": "P. George",
+   "playerId": 469218,
+   "playerDkId": 33100,
+   "position": "SF/PF",
+   "rosterSlotId": 476,
+   "salary": 12300,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS",
+      "isEmphasized": true
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET"
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS",
+       "isEmphasized": true
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET"
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "33.2",
+     "sortValue": "33.2"
+    },
+    {
+     "id": -2,
+     "value": "9th",
+     "sortValue": "9",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 2,
+   "teamAbbreviation": "BOS",
+   "playerGameHash": "469218-6211319"
+  },
+  {
+   "draftableId": 44461055,
+   "firstName": "Cade",
+   "lastName": "Cunningham",
+   "displayName": "Cade Cunningham",
+   "shortName": "C. Cunningham",
+   "playerId": 1232182,
+   "playerDkId": 590962,
+   "position": "PG",
+   "rosterSlotId": 475,
+   "salary": 11800,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS"
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET",
+      "isEmphasized": true
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS"
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET",
+       "isEmphasized": true
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "49.3",
+     "sortValue": "49.3"
+    },
+    {
+     "id": -2,
+     "value": "8th",
+     "sortValue": "8",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 8,
+   "teamAbbreviation": "DET",
+   "playerGameHash": "1232182-6211319"
+  },
+  {
+   "draftableId": 44461056,
+   "firstName": "Jayson",
+   "lastName": "Tatum",
+   "displayName": "Jayson Tatum",
+   "shortName": "J. Tatum",
+   "playerId": 937647,
+   "playerDkId": 32876,
+   "position": "PF",
+   "rosterSlotId": 475,
+   "salary": 11200,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS",
+      "isEmphasized": true
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET"
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS",
+       "isEmphasized": true
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET"
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "47.8",
+     "sortValue": "47.8"
+    },
+    {
+     "id": -2,
+     "value": "11th",
+     "sortValue": "11",
+     "quality": "Medium"
+    }
+   ],
+   "teamId": 2,
+   "teamAbbreviation": "BOS",
+   "playerGameHash": "937647-6211319"
+  },
+  {
+   "draftableId": 44461101,
+   "firstName": "Payton",
+   "lastName": "Pritchard",
+   "displayName": "Payton Pritchard",
+   "shortName": "P. Pritchard",
+   "playerId": 945610,
+   "playerDkId": 527233,
+   "position": "PG/SG",
+   "rosterSlotId": 476,
+   "salary": 10800,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS",
+      "isEmphasized": true
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET"
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS",
+       "isEmphasized": true
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET"
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "31.9",
+     "sortValue": "31.9"
+    },
+    {
+     "id": -2,
+     "value": "1st",
+     "sortValue": "1",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 2,
+   "teamAbbreviation": "BOS",
+   "playerGameHash": "945610-6211319"
+  },
+  {
+   "draftableId": 44461057,
+   "firstName": "Derrick",
+   "lastName": "White",
+   "displayName": "Derrick White",
+   "shortName": "D. White",
+   "playerId": 796009,
+   "playerDkId": 33364,
+   "position": "PG/SG",
+   "rosterSlotId": 475,
+   "salary": 9400,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS",
+      "isEmphasized": true
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET"
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS",
+       "isEmphasized": true
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET"
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "34.5",
+     "sortValue": "34.5"
+    },
+    {
+     "id": -2,
+     "value": "1st",
+     "sortValue": "1",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 2,
+   "teamAbbreviation": "BOS",
+   "playerGameHash": "796009-6211319"
+  },
+  {
+   "draftableId": 44461058,
+   "firstName": "Jalen",
+   "lastName": "Duren",
+   "displayName": "Jalen Duren",
+   "shortName": "J. Duren",
+   "playerId": 1344765,
+   "playerDkId": 649562,
+   "position": "C",
+   "rosterSlotId": 475,
+   "salary": 8600,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS"
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET",
+      "isEmphasized": true
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS"
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET",
+       "isEmphasized": true
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "36.3",
+     "sortValue": "36.3"
+    },
+    {
+     "id": -2,
+     "value": "5th",
+     "sortValue": "5",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 8,
+   "teamAbbreviation": "DET",
+   "playerGameHash": "1344765-6211319"
+  },
+  {
+   "draftableId": 44461059,
+   "firstName": "Paul",
+   "lastName": "George",
+   "displayName": "Paul George",
+   "shortName": "P. George",
+   "playerId": 469218,
+   "playerDkId": 33100,
+   "position": "SF/PF",
+   "rosterSlotId": 475,
+   "salary": 8200,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS",
+      "isEmphasized": true
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET"
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS",
+       "isEmphasized": true
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET"
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "33.2",
+     "sortValue": "33.2"
+    },
+    {
+     "id": -2,
+     "value": "9th",
+     "sortValue": "9",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 2,
+   "teamAbbreviation": "BOS",
+   "playerGameHash": "469218-6211319"
+  },
+  {
+   "draftableId": 44461060,
+   "firstName": "Payton",
+   "lastName": "Pritchard",
+   "displayName": "Payton Pritchard",
+   "shortName": "P. Pritchard",
+   "playerId": 945610,
+   "playerDkId": 527233,
+   "position": "PG/SG",
+   "rosterSlotId": 475,
+   "salary": 7200,
+   "status": "None",
+   "isSwappable": true,
+   "isDisabled": false,
+   "newsStatus": "Recent",
+   "competition": {
+    "competitionId": 6211319,
+    "name": "BOS @ DET",
+    "nameDisplay": [
+     {
+      "value": "BOS",
+      "isEmphasized": true
+     },
+     {
+      "value": " @ "
+     },
+     {
+      "value": "DET"
+     }
+    ],
+    "startTime": "2026-10-20T19:00:00.0000000Z"
+   },
+   "competitions": [
+    {
+     "competitionId": 6211319,
+     "name": "BOS @ DET",
+     "nameDisplay": [
+      {
+       "value": "BOS",
+       "isEmphasized": true
+      },
+      {
+       "value": " @ "
+      },
+      {
+       "value": "DET"
+      }
+     ],
+     "startTime": "2026-10-20T19:00:00.0000000Z"
+    }
+   ],
+   "draftStatAttributes": [
+    {
+     "id": 219,
+     "value": "31.9",
+     "sortValue": "31.9"
+    },
+    {
+     "id": -2,
+     "value": "1st",
+     "sortValue": "1",
+     "quality": "Low"
+    }
+   ],
+   "teamId": 2,
+   "teamAbbreviation": "BOS",
+   "playerGameHash": "945610-6211319"
+  }
+ ],
+ "competitions": [
+  {
+   "competitionId": 6211319,
+   "sport": "NBA",
+   "sportId": 4,
+   "homeTeam": {
+    "teamId": 8,
+    "teamName": "Pistons",
+    "abbreviation": "DET",
+    "city": "Detroit"
+   },
+   "awayTeam": {
+    "teamId": 2,
+    "teamName": "Celtics",
+    "abbreviation": "BOS",
+    "city": "Boston"
+   },
+   "startTime": "2026-10-20T19:00:00.0000000Z",
+   "name": "BOS @ DET",
+   "venue": "Little Caesars Arena",
+   "startingLineupsAvailable": false,
+   "depthChartsAvailable": true,
+   "competitionState": "Upcoming",
+   "competitionStateDetail": "",
+   "competitionStartedEarly": false,
+   "competitionAttributes": [
+    {
+     "typeId": 23,
+     "value": "2"
+    },
+    {
+     "typeId": 27,
+     "value": "False"
+    },
+    {
+     "typeId": 32,
+     "value": "NBC"
+    }
+   ]
+  }
+ ],
+ "teamsWithoutCompetitions": [],
+ "draftAlerts": [],
+ "draftStats": [
+  {
+   "id": 219,
+   "abbr": "FPPG",
+   "name": "Fantasy Points Per Game",
+   "order": 11
+  },
+  {
+   "id": -2,
+   "abbr": "OPRK",
+   "name": "Opponent Rank",
+   "order": 20
+  }
+ ],
+ "playerGameAttributes": [],
+ "errorStatus": {}
+}
