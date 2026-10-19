@@ -44,14 +44,35 @@ Pipeline for one team-game (team T, day d, scenario = absent player_ids, optiona
    q0 + q1 x PF/36, scaled by U(0.35, 0.85); DNP-CD with probability 1 - p; then the team
    total per sim (proportional water-filling).
 
-Everything learned lives in `MinutesParams` (JSON-serialisable), produced by `fit(history, S)`
-from seasons < S only. Structural constants (EWMA alphas, RECON_CV, SHARE_K, tiers, margin
+**v1 (T2.2, `MinutesParams.version == "v1"`, `fit(..., version="v1")`).** Steps 1, 3-6 are
+kept; step 2's base becomes a LightGBM E[regulation minutes | plays] (L2, refit per season on
+the 5 seasons < S, leave-one-season-out early stopping) over the §4.2 groups: role (EWMAs incl.
+alpha 0.5, last, median 5, volatility, minutes as starter / off the bench, season mean, starts,
+team minutes rank, last game's |margin| and fouls), return (missed now, games since return,
+absence length), schedule (rest, b2b, games in the last 3 days, age, team games into the
+season, new season / new team), coach (N4: `CoachState`, coach by date from the curated
+`COACH_STINTS` + `team_coaches`, coach-level top-7 share and 30+ minute players with
+COACH_K = 40 pseudo-games, carried across teams, plus the team's rotation EWMA), his group's
+starter target, and the scenario (`scenario_features`: vacated minutes in total / by group / in
+his groups / newly absent / of absent expected starters, expected starters out, depth rank after
+the removals overall and in his group, rank gain, minutes slack, available rotation size) - the
+learned promotion. Stage 2 on top (chosen on out-of-fold training predictions, fixed
+population): the softmax next man up scaled by `nmu_scale`, the pair-share term `share_coef` x
+sum_j share[i, j] base_j, the leftover `k_add` and the reconciliation `recon_cv`. Reserve, g and
+noise are refit on the OOF projections. P(plays | available) stays the v0.5 logit. S15: players
+without box history or with < V1_MIN_GP games, and panels without the v1 columns, keep the v0.5
+base (`V1_STATS` counts them). Preseason (N2) and news features are not in the GBM: no
+historical preseason box scores or reports exist to train them (2026-27 / 2025-12-22+ only).
+
+Everything learned lives in `MinutesParams` (JSON-serialisable; v1 stores the LightGBM model
+text), produced by `fit(history, S)` from seasons < S only. Structural constants (EWMA alphas, RECON_CV, SHARE_K, tiers, margin
 bins, the 50% shrink) are fixed; RECON_CV and the variance form were chosen on the dev season
 2013-14 (fit < 2013-14), before every reported test season.
 
 Public API (consumed by T1.4 copula/pipeline)
   load_history(conn, since="2000-01") -> History            (~8 s, ~0.8 GB peak)
-  fit(history, season, window=5, log=print) -> MinutesParams  (~40-60 s)
+  fit(history, season, window=5, log=print, version="v0.5") -> MinutesParams
+                                                              (~40-60 s; v1 +~90 s)
   build_shares(history, seasons) -> PairShares               (pair "minutes when j sat")
   project_team(history, params, team, day, absent=(), starters=None, extra=(), spread=None,
                season=None, shares=None, n_ot=None) -> DataFrame
@@ -132,6 +153,13 @@ class MinutesParams:
     base_features: list = field(default_factory=lambda: list(BASE_FEATURES))
     pplay_features: list = field(default_factory=lambda: list(PPLAY_FEATURES))
     diagnostics: dict = field(default_factory=dict)
+    # --- v1 (T2.2). version "v0.5" ignores everything below.
+    version: str = "v0.5"             # "v0.5" (linear base + rules) or "v1" (LightGBM base)
+    gbm_model: str = ""               # LightGBM model text (E[min | plays] before the 240)
+    gbm_features: list = field(default_factory=list)
+    nmu_scale: float = 1.0            # v1: share of the softmax next-man-up lift kept on top
+    share_coef: float = 0.0           # v1: minutes per (share x vacated minutes) on top
+    recon_cv: float = RECON_CV        # reconciliation variance form (v0.5: frozen 0.2)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -168,6 +196,10 @@ class History:
     targets: pd.DataFrame     # team-game starter targets per group (post-game EWMA)
     positions: pd.DataFrame   # player_id, season, g1, g2 (season NaN = snapshot)
     tg: pd.DataFrame          # team-games (game_id, team, date, season, season_type, margin, n_ot)
+    # v1 extras (optional; absent -> the v1 coach/age features are missing, not wrong)
+    coach: "CoachState | None" = None
+    births: pd.DataFrame | None = None    # player_id, birth (int days)
+    shares: "PairShares | None" = None    # pair shares for the v1 share features (optional)
 
 
 def _days(s: pd.Series) -> np.ndarray:
@@ -234,8 +266,8 @@ def _ewm(s: pd.Series, by, alpha: float) -> pd.Series:
 
 def player_history(pg: pd.DataFrame, tg: pd.DataFrame) -> pd.DataFrame:
     """Post-game state per player-game (each row uses only that player's rows up to it)."""
-    h = pg.merge(tg[["game_id", "team", "date", "tgi", "n_ot"]], on=["game_id", "team"],
-                 how="inner")
+    h = pg.merge(tg[["game_id", "team", "date", "tgi", "n_ot", "margin"]],
+                 on=["game_id", "team"], how="inner")
     h = h.sort_values(["player_id", "date", "game_id"], kind="mergesort").reset_index(drop=True)
     pid = h["player_id"].to_numpy()
     by = h["player_id"]
@@ -279,11 +311,27 @@ def player_history(pg: pd.DataFrame, tg: pd.DataFrame) -> pd.DataFrame:
     pre = h.groupby([h["player_id"], seg], sort=False).cumcount()
     pre = np.where(seg > 0, np.minimum(pre, 10), 10)
     h["gsr_post"] = np.minimum(pre + 1, 10)
+    # v1 role/return state (post-game, same rows only)
+    mr = h["min_r"].to_numpy(float)
+    h["ew_vf"] = _ewm_from(mr, first, 0.5, np.nan)
+    dev = (h["min_r"] - h["ew_s"]) ** 2
+    h["min_sd"] = np.sqrt(_ewm_from(dev.to_numpy(float), first, 0.1, np.nan))
+    stt = h["started"].to_numpy() == 1
+    h["ew_start"] = _ewm_masked(mr, first, stt, 0.2)
+    h["ew_bench"] = _ewm_masked(mr, first, ~stt, 0.2)
+    gs = h.groupby(["player_id", "season"], sort=False)["min_r"]
+    h["sea_mean"] = gs.cumsum() / (gs.cumcount() + 1)
+    ab = np.where(h["missed_before"].to_numpy() >= 3, h["missed_before"].to_numpy(float), np.nan)
+    h["abs_len"] = pd.Series(ab).groupby(pid).ffill().fillna(0.0).to_numpy()
     keep = ["player_id", "game_id", "team", "season", "season_type", "date", "tgi", "min",
             "min_r", "started", "ew_f", "ew_s", "med5", "st10", "pf36", "dk", "dkpm", "n_gp",
-            "base_ew", "season_gp", "missed_before", "gsr_post", "n_ot"]
+            "base_ew", "season_gp", "missed_before", "gsr_post", "n_ot", "ew_vf", "min_sd",
+            "ew_start", "ew_bench", "sea_mean", "abs_len", "last_absm", "last_pf"]
+    h["last_absm"] = np.abs(h["margin"].to_numpy(float))
+    h["last_pf"] = h["pf"].astype(float)
     out = h[keep].copy()
-    for c in ("min", "min_r", "ew_f", "ew_s", "med5", "st10", "pf36", "dk", "dkpm", "base_ew"):
+    for c in ("min", "min_r", "ew_f", "ew_s", "med5", "st10", "pf36", "dk", "dkpm", "base_ew",
+              "ew_vf", "min_sd", "ew_start", "ew_bench", "sea_mean", "abs_len"):
         out[c] = out[c].astype(np.float32)
     return out
 
@@ -295,7 +343,21 @@ def _ewm_from(x: np.ndarray, first: np.ndarray, alpha: float, init: float) -> np
     for i in range(len(x)):
         if first[i]:
             y = init
-        y = y + alpha * (x[i] - y)
+        y = x[i] if y != y else y + alpha * (x[i] - y)    # NaN init: start at the first value
+        out[i] = y
+    return out
+
+
+def _ewm_masked(x: np.ndarray, first: np.ndarray, mask: np.ndarray, alpha: float) -> np.ndarray:
+    """EWMA over the rows where `mask` holds, carried forward on the others (NaN before the
+    first masked row of a segment)."""
+    out = np.empty(len(x))
+    y = np.nan
+    for i in range(len(x)):
+        if first[i]:
+            y = np.nan
+        if mask[i]:
+            y = x[i] if y != y else y + alpha * (x[i] - y)
         out[i] = y
     return out
 
@@ -360,19 +422,38 @@ def _attach_groups(df: pd.DataFrame, positions: pd.DataFrame) -> pd.DataFrame:
                     how="left")
 
 
-def build_history(pg: pd.DataFrame, tg_raw: pd.DataFrame, positions: pd.DataFrame) -> History:
+def build_history(pg: pd.DataFrame, tg_raw: pd.DataFrame, positions: pd.DataFrame,
+                  stints: pd.DataFrame | None = None, births: pd.DataFrame | None = None
+                  ) -> History:
     tg = _team_games(tg_raw)
     hist = player_history(pg, tg)
     targets = _starter_targets(hist, tg, positions)
     sched = {t: {"date": d["date"].to_numpy(), "season": d["season"].to_numpy(),
                  "gid": d["game_id"].to_numpy()}
              for t, d in tg.groupby("team", sort=False)}
-    return History(hist=hist, sched=sched, targets=targets, positions=positions, tg=tg)
+    coach = CoachState.build(hist, tg, stints) if stints is not None else None
+    return History(hist=hist, sched=sched, targets=targets, positions=positions, tg=tg,
+                   coach=coach, births=births)
+
+
+def load_births(conn: sqlite3.Connection) -> pd.DataFrame:
+    """player_id, birth (int days) from team_rosters (any season)."""
+    b = pd.read_sql_query("SELECT player_id, MIN(birth_date) birth FROM team_rosters "
+                          "WHERE birth_date IS NOT NULL GROUP BY player_id", conn)
+    d = pd.to_datetime(b["birth"], errors="coerce")
+    b = b[d.notna()].copy()
+    b["birth"] = _days(d[d.notna()])
+    return b
 
 
 def load_history(conn: sqlite3.Connection, since: str = FIRST_SEASON) -> History:
     pg, tg = load_box(conn, since)
-    return build_history(pg, tg, load_positions(conn))
+    try:
+        stints = coach_stints(load_coach_snapshots(conn))
+        births = load_births(conn)
+    except Exception:  # pragma: no cover - old DBs without team_coaches / birth dates
+        stints, births = None, None
+    return build_history(pg, tg, load_positions(conn), stints=stints, births=births)
 
 
 def truncate(h: History, day) -> History:
@@ -383,7 +464,244 @@ def truncate(h: History, day) -> History:
     sched = {t: {k: v[v_ok] for k, v in s.items()}
              for t, s in h.sched.items() for v_ok in [s["date"] < d]}
     return History(hist=hist, sched=sched, targets=h.targets[h.targets["date"] < d],
-                   positions=h.positions, tg=tg)
+                   positions=h.positions, tg=tg,
+                   coach=h.coach.truncate(d) if h.coach is not None else None,
+                   births=h.births, shares=h.shares)
+
+
+# --- coach by date (N4) ----------------------------------------------------------------------
+#
+# Source. `team_coaches` (commonteamroster) has one staff snapshot per (season, team) from
+# 2015-16, and the snapshot labelled S is the staff of the summer AFTER season S (2018-19 lists
+# Beilein/CLE, Vogel/LAL, Jenkins/MEM; 2024-25 lists Ott/PHX, hired for 2025-26). It has no
+# dates, so mid-season changes cannot be read from the DB. COACH_STINTS below is the head
+# coach by date for 2015-16 -> 2025-26, curated from the public record (first day the coach ran
+# the team; interim coaches included when they coached a meaningful stretch; dates are the
+# firing / hiring day, +-1-2 days). 2025-26 in-season changes other than POR are not curated
+# (unknown here). Seasons after 2025-26 use the season's snapshot at Oct 1 (live: refreshed by
+# the roster collector, so an in-season change shows up once the snapshot is re-fetched).
+# Coach ids: team_coaches.coach_id by name; coaches never in a snapshot get a stable
+# synthetic negative id.
+
+CURATED_COACH_LAST = "2025-26"
+COACH_STINTS = {
+    "ATL": [("2015-10-01", "Mike Budenholzer"), ("2018-10-01", "Lloyd Pierce"),
+            ("2021-03-01", "Nate McMillan"), ("2023-02-22", "Quin Snyder")],
+    "BOS": [("2015-10-01", "Brad Stevens"), ("2021-10-01", "Ime Udoka"),
+            ("2022-10-01", "Joe Mazzulla")],
+    "BKN": [("2015-10-01", "Lionel Hollins"), ("2016-01-11", "Tony Brown"),
+            ("2016-10-01", "Kenny Atkinson"), ("2020-03-08", "Jacque Vaughn"),
+            ("2020-10-01", "Steve Nash"), ("2022-11-02", "Jacque Vaughn"),
+            ("2024-02-20", "Kevin Ollie"), ("2024-10-01", "Jordi Fernandez")],
+    "CHA": [("2015-10-01", "Steve Clifford"), ("2018-10-01", "James Borrego"),
+            ("2022-10-01", "Steve Clifford"), ("2024-10-01", "Charles Lee")],
+    "CHI": [("2015-10-01", "Fred Hoiberg"), ("2018-12-03", "Jim Boylen"),
+            ("2020-10-01", "Billy Donovan")],
+    "CLE": [("2015-10-01", "David Blatt"), ("2016-01-23", "Tyronn Lue"),
+            ("2018-10-29", "Larry Drew"), ("2019-10-01", "John Beilein"),
+            ("2020-02-19", "J.B. Bickerstaff"), ("2024-10-01", "Kenny Atkinson")],
+    "DAL": [("2015-10-01", "Rick Carlisle"), ("2021-10-01", "Jason Kidd")],
+    "DEN": [("2015-10-01", "Michael Malone"), ("2025-04-09", "David Adelman")],
+    "DET": [("2015-10-01", "Stan Van Gundy"), ("2018-10-01", "Dwane Casey"),
+            ("2023-10-01", "Monty Williams"), ("2024-10-01", "J.B. Bickerstaff")],
+    "GSW": [("2015-10-01", "Luke Walton"), ("2016-01-22", "Steve Kerr")],
+    "HOU": [("2015-10-01", "Kevin McHale"), ("2015-11-19", "J.B. Bickerstaff"),
+            ("2016-10-01", "Mike D'Antoni"), ("2020-10-01", "Stephen Silas"),
+            ("2023-10-01", "Ime Udoka")],
+    "IND": [("2015-10-01", "Frank Vogel"), ("2016-10-01", "Nate McMillan"),
+            ("2020-10-01", "Nate Bjorkgren"), ("2021-10-01", "Rick Carlisle")],
+    "LAC": [("2015-10-01", "Doc Rivers"), ("2020-10-01", "Tyronn Lue")],
+    "LAL": [("2015-10-01", "Byron Scott"), ("2016-10-01", "Luke Walton"),
+            ("2019-10-01", "Frank Vogel"), ("2022-10-01", "Darvin Ham"),
+            ("2024-10-01", "JJ Redick")],
+    "MEM": [("2015-10-01", "David Joerger"), ("2016-10-01", "David Fizdale"),
+            ("2017-11-27", "J.B. Bickerstaff"), ("2019-10-01", "Taylor Jenkins"),
+            ("2025-03-29", "Tuomas Iisalo")],
+    "MIA": [("2015-10-01", "Erik Spoelstra")],
+    "MIL": [("2015-10-01", "Jason Kidd"), ("2018-01-23", "Joe Prunty"),
+            ("2018-10-01", "Mike Budenholzer"), ("2023-10-01", "Adrian Griffin"),
+            ("2024-01-24", "Joe Prunty"), ("2024-01-29", "Doc Rivers")],
+    "MIN": [("2015-10-01", "Sam Mitchell"), ("2016-10-01", "Tom Thibodeau"),
+            ("2019-01-07", "Ryan Saunders"), ("2021-02-23", "Chris Finch")],
+    "NOP": [("2015-10-01", "Alvin Gentry"), ("2020-10-01", "Stan Van Gundy"),
+            ("2021-10-01", "Willie Green")],
+    "NYK": [("2015-10-01", "Derek Fisher"), ("2016-02-09", "Kurt Rambis"),
+            ("2016-10-01", "Jeff Hornacek"), ("2018-10-01", "David Fizdale"),
+            ("2019-12-07", "Mike Miller"), ("2020-10-01", "Tom Thibodeau"),
+            ("2025-10-01", "Mike Brown")],
+    "OKC": [("2015-10-01", "Billy Donovan"), ("2020-10-01", "Mark Daigneault")],
+    "ORL": [("2015-10-01", "Scott Skiles"), ("2016-10-01", "Frank Vogel"),
+            ("2018-10-01", "Steve Clifford"), ("2021-10-01", "Jamahl Mosley")],
+    "PHI": [("2015-10-01", "Brett Brown"), ("2020-10-01", "Doc Rivers"),
+            ("2023-10-01", "Nick Nurse")],
+    "PHX": [("2015-10-01", "Jeff Hornacek"), ("2016-02-02", "Earl Watson"),
+            ("2017-10-23", "Jay Triano"), ("2018-10-01", "Igor Kokoskov"),
+            ("2019-10-01", "Monty Williams"), ("2023-10-01", "Frank Vogel"),
+            ("2024-10-01", "Mike Budenholzer"), ("2025-10-01", "Jordan Ott")],
+    "POR": [("2015-10-01", "Terry Stotts"), ("2021-10-01", "Chauncey Billups"),
+            ("2025-10-24", "Tiago Splitter")],
+    "SAC": [("2015-10-01", "George Karl"), ("2016-10-01", "David Joerger"),
+            ("2019-10-01", "Luke Walton"), ("2021-11-22", "Alvin Gentry"),
+            ("2022-10-01", "Mike Brown"), ("2024-12-28", "Doug Christie")],
+    "SAS": [("2015-10-01", "Gregg Popovich"), ("2024-11-03", "Mitch Johnson")],
+    "TOR": [("2015-10-01", "Dwane Casey"), ("2018-10-01", "Nick Nurse"),
+            ("2023-10-01", "Darko Rajakovic")],
+    "UTA": [("2015-10-01", "Quin Snyder"), ("2022-10-01", "Will Hardy")],
+    "WAS": [("2015-10-01", "Randy Wittman"), ("2016-10-01", "Scott Brooks"),
+            ("2021-10-01", "Wes Unseld"), ("2024-01-26", "Brian Keefe")],
+}
+COACH_K = 40.0          # pseudo-games shrinking a coach's rotation concentration to the league
+COACH_DECAY = 0.995     # per coach game (half-life ~140 games)
+TEAM_ROT_ALPHA = 0.1    # team rotation-shape EWMA
+
+
+def load_coach_snapshots(conn: sqlite3.Connection) -> pd.DataFrame:
+    """season, team, coach_id, coach_name of the head coach per team_coaches snapshot."""
+    return pd.read_sql_query(
+        "SELECT season, team, coach_id, coach_name, sort_sequence FROM team_coaches "
+        "WHERE coach_type = 'Head Coach' ORDER BY season, team, sort_sequence", conn)
+
+
+def _coach_id(name: str, ids: dict) -> int:
+    if name in ids:
+        return int(ids[name])
+    import zlib
+    return -int(zlib.crc32(name.encode()) % 1_000_000) - 1
+
+
+def coach_stints(snap: pd.DataFrame | None = None) -> pd.DataFrame:
+    """team, date (int days), coach_id, coach_name, source: the head coach from `date` on.
+    Curated through CURATED_COACH_LAST; later seasons from the snapshot at Oct 1."""
+    snap = snap if snap is not None else pd.DataFrame(columns=["season", "team", "coach_id",
+                                                               "coach_name"])
+    ids = dict(zip(snap["coach_name"], snap["coach_id"]))
+    rows = [{"team": t, "day": d, "coach_name": n, "source": "curated"}
+            for t, st in COACH_STINTS.items() for d, n in st]
+    later = snap[snap["season"] > CURATED_COACH_LAST].drop_duplicates(["season", "team"])
+    for r in later.itertuples(index=False):
+        rows.append({"team": r.team, "day": f"{r.season[:4]}-10-01", "coach_name": r.coach_name,
+                     "source": "snapshot"})
+    df = pd.DataFrame(rows)
+    df["date"] = _days(df["day"])
+    df["coach_id"] = [_coach_id(n, ids) for n in df["coach_name"]]
+    df = df.sort_values(["team", "date"]).reset_index(drop=True)
+    # drop snapshot rows that repeat the current coach
+    same = (df["team"] == df["team"].shift()) & (df["coach_id"] == df["coach_id"].shift())
+    return df[~same][["team", "date", "coach_id", "coach_name", "source"]].reset_index(drop=True)
+
+
+def coach_snapshot_check(stints: pd.DataFrame, snap: pd.DataFrame) -> pd.DataFrame:
+    """Consistency of the curated stints with the snapshots: for each (season S, team) the
+    snapshot coach should be the curated coach at the end of S or at the start of S+1."""
+    out = []
+    for r in snap.drop_duplicates(["season", "team"]).itertuples(index=False):
+        if r.season > CURATED_COACH_LAST:
+            continue
+        y = int(r.season[:4])
+        s = stints[stints["team"] == r.team]
+        end = s[s["date"] <= _days(pd.Series([f"{y + 1}-06-30"]))[0]]
+        nxt = s[s["date"] <= _days(pd.Series([f"{y + 1}-10-02"]))[0]]
+        a = end["coach_id"].iloc[-1] if len(end) else None
+        b = nxt["coach_id"].iloc[-1] if len(nxt) else None
+        out.append({"season": r.season, "team": r.team, "snapshot": r.coach_name,
+                    "ok": r.coach_id in (a, b)})
+    return pd.DataFrame(out)
+
+
+class CoachState:
+    """Coach id per team-date and causal rotation-concentration state.
+
+    Per regular-season team-game: top-7 share of the team's minutes (regulation-scaled) and the
+    number of 30+ minute players. Coach level: decayed (COACH_DECAY per coach game) sums over
+    the coach's games on any team, shrunk to the causal league mean with COACH_K pseudo-games
+    (so a coach's habits move with him). Team level: EWMA (TEAM_ROT_ALPHA). Every lookup is
+    strictly before the target date."""
+
+    def __init__(self, stints, games, league):
+        self.stints = stints      # team, date, coach_id
+        self.games = games        # per team-game post state (sorted by date)
+        self.league = league      # date, l_top7, l_n30 (post-day expanding means)
+
+    @classmethod
+    def build(cls, hist: pd.DataFrame, tg: pd.DataFrame, stints: pd.DataFrame) -> "CoachState":
+        reg = hist[hist["season_type"] == "Regular Season"][["game_id", "team", "min_r"]]
+        srt = reg.sort_values(["game_id", "team", "min_r"], ascending=[True, True, False])
+        rk = srt.groupby(["game_id", "team"], sort=False).cumcount().to_numpy()
+        srt = srt.assign(top=np.where(rk < 7, srt["min_r"].to_numpy(float), 0.0),
+                         n30=(srt["min_r"].to_numpy(float) >= 30.0).astype(float))
+        a = srt.groupby(["game_id", "team"]).agg(tot=("min_r", "sum"), top=("top", "sum"),
+                                                 n30=("n30", "sum")).reset_index()
+        a = a[a["tot"] > 100]
+        a["top7"] = a["top"] / a["tot"]
+        g = tg[["game_id", "team", "date"]].merge(a[["game_id", "team", "top7", "n30"]],
+                                                  on=["game_id", "team"])
+        g = g.sort_values(["date", "game_id", "team"], kind="mergesort").reset_index(drop=True)
+        st = stints[["team", "date", "coach_id"]].sort_values("date")
+        g = pd.merge_asof(g, st, on="date", by="team", direction="backward")
+        g["coach_id"] = g["coach_id"].fillna(0).astype(np.int64)    # 0 = unknown coach
+        # league expanding means by day (post-day)
+        d = g.groupby("date").agg(s7=("top7", "sum"), s30=("n30", "sum"), n=("top7", "size"))
+        cn = d["n"].cumsum()
+        league = pd.DataFrame({"date": d.index.to_numpy(),
+                               "l_top7": (d["s7"].cumsum() / cn).to_numpy(),
+                               "l_n30": (d["s30"].cumsum() / cn).to_numpy()})
+        # coach decayed sums (post-game), by coach in date order
+        g["c_num7"] = 0.0
+        g["c_num30"] = 0.0
+        g["c_den"] = 0.0
+        for cid, idx in g.groupby("coach_id", sort=False).indices.items():
+            if cid == 0:
+                continue
+            g.loc[idx, "c_num7"] = _ewsum(g["top7"].to_numpy()[idx], COACH_DECAY)
+            g.loc[idx, "c_num30"] = _ewsum(g["n30"].to_numpy()[idx], COACH_DECAY)
+            g.loc[idx, "c_den"] = _ewsum(np.ones(len(idx)), COACH_DECAY)
+        g["ct_n"] = g.groupby(["coach_id", "team"]).cumcount() + 1.0
+        for c, src in (("t_top7", "top7"), ("t_n30", "n30")):
+            g[c] = g.groupby("team", sort=False)[src].transform(
+                lambda x: x.ewm(alpha=TEAM_ROT_ALPHA, adjust=True).mean())
+        return cls(stints[["team", "date", "coach_id"]].copy(), g, league)
+
+    def truncate(self, d: int) -> "CoachState":
+        return CoachState(self.stints, self.games[self.games["date"] < d],
+                          self.league[self.league["date"] < d])
+
+    def features(self, team: np.ndarray, date: np.ndarray) -> pd.DataFrame:
+        """Pre-game coach features for (team, date) rows (same order as the input)."""
+        q = pd.DataFrame({"team": np.asarray(team), "date": np.asarray(date, np.int64)})
+        q["i"] = np.arange(len(q))
+        q = q.sort_values("date", kind="mergesort")
+        st = self.stints.sort_values("date")
+        q = pd.merge_asof(q, st, on="date", by="team", direction="backward")
+        q["coach_id"] = q["coach_id"].fillna(0).astype(np.int64)
+        q["date_q"] = q["date"] - 1
+        lg = self.league.rename(columns={"date": "l_date"}).sort_values("l_date")
+        q = pd.merge_asof(q.sort_values("date_q"), lg, left_on="date_q", right_on="l_date",
+                          direction="backward")
+        g = self.games.sort_values("date", kind="mergesort")
+        cs = g[g["coach_id"] != 0][["coach_id", "date", "c_num7", "c_num30", "c_den"]].rename(
+            columns={"date": "c_date"})
+        q = pd.merge_asof(q.sort_values("date_q"), cs.sort_values("c_date"), left_on="date_q",
+                          right_on="c_date", by="coach_id", direction="backward")
+        ct = g[g["coach_id"] != 0][["coach_id", "team", "date", "ct_n"]].rename(
+            columns={"date": "ct_date"})
+        q = pd.merge_asof(q.sort_values("date_q"), ct.sort_values("ct_date"), left_on="date_q",
+                          right_on="ct_date", by=["coach_id", "team"], direction="backward")
+        tt = g[["team", "date", "t_top7", "t_n30"]].rename(columns={"date": "t_date"})
+        q = pd.merge_asof(q.sort_values("date_q"), tt.sort_values("t_date"), left_on="date_q",
+                          right_on="t_date", by="team", direction="backward")
+        q = q.sort_values("i")
+        known = (q["coach_id"] != 0).to_numpy()
+        den = q["c_den"].fillna(0.0).to_numpy(float)
+        l7 = q["l_top7"].fillna(0.75).to_numpy(float)
+        l30 = q["l_n30"].fillna(2.0).to_numpy(float)
+        c7 = (q["c_num7"].fillna(0.0).to_numpy(float) + COACH_K * l7) / (den + COACH_K)
+        c30 = (q["c_num30"].fillna(0.0).to_numpy(float) + COACH_K * l30) / (den + COACH_K)
+        return pd.DataFrame({
+            "coach_id": q["coach_id"].to_numpy(),
+            "c_top7": np.where(known, c7, np.nan), "c_n30": np.where(known, c30, np.nan),
+            "c_games": np.where(known, den, np.nan),
+            "c_team_n": np.where(known, q["ct_n"].fillna(0.0).to_numpy(float), np.nan),
+            "t_top7": q["t_top7"].to_numpy(float), "t_n30": q["t_n30"].to_numpy(float)})
 
 
 # --- pre-game panel --------------------------------------------------------------------------
@@ -436,8 +754,10 @@ def pregame_panel(h: History, targets: pd.DataFrame, extra: pd.DataFrame | None 
     cand["app10"] = cand["app10"].astype(float)
     cand = cand.merge(tgt[["key", "team", "date", "season", "k"]], on="key", how="left")
     # last state strictly before the target date
+    v1c = [c for c in V1_HIST_COLS if c in hist]
     st = hist[["player_id", "date", "team", "season", "min_r", "started", "ew_f", "ew_s",
-               "med5", "st10", "pf36", "dkpm", "n_gp", "base_ew", "season_gp", "gsr_post"]]
+               "med5", "st10", "pf36", "dkpm", "n_gp", "base_ew", "season_gp", "gsr_post"]
+              + v1c]
     st = st.rename(columns={"date": "last_date", "team": "last_team", "season": "last_season",
                             "min_r": "last", "started": "start_last"})
     cand = cand.sort_values("date", kind="mergesort").reset_index(drop=True)
@@ -483,7 +803,78 @@ def pregame_panel(h: History, targets: pd.DataFrame, extra: pd.DataFrame | None 
                       by="team", direction="backward")
     p = _attach_groups(p, h.positions)
     p = p.drop(columns=["date_q", "t_date", "season_gp", "gsr_post"])
-    return p.sort_values(["key", "player_id"]).reset_index(drop=True)
+    p = p.sort_values(["key", "player_id"]).reset_index(drop=True)
+    if v1c:
+        p = _v1_panel_columns(h, p)
+    return p
+
+
+V1_HIST_COLS = ("ew_vf", "min_sd", "ew_start", "ew_bench", "sea_mean", "abs_len", "last_absm",
+                "last_pf")
+
+
+def _v1_panel_columns(h: History, p: pd.DataFrame) -> pd.DataFrame:
+    """Scenario-free v1 features (all from rows strictly before the target date):
+    return (current absence length), new team, season-to-date mean, age, team schedule
+    density, team games into the season, coach (N4) and team rotation concentration, the
+    player's minutes rank among the team-game's candidates, the share pairs (if h.shares)."""
+    p = p.copy()
+    mn = p["missed_now"].to_numpy(float)
+    gsr = p["gsr_now"].to_numpy(float)
+    post = p["abs_len"].to_numpy(float) if "abs_len" in p else np.zeros(len(p))
+    p["abs_len_now"] = np.where(mn >= 3, mn, np.where(gsr < 10, np.nan_to_num(post), 0.0))
+    has = p["last_date"].notna().to_numpy()
+    p["new_team"] = (has & (p["last_team"] != p["team"]).to_numpy()).astype(float)
+    p["sea_mean_now"] = np.where(p["new_season"].to_numpy() > 0, np.nan,
+                                 p["sea_mean"].to_numpy(float))
+    if h.births is not None and len(h.births):
+        b = p[["player_id"]].merge(h.births, on="player_id", how="left")["birth"].to_numpy(float)
+        p["age"] = (p["date"].to_numpy(float) - b) / 365.25
+    else:
+        p["age"] = np.nan
+    # team schedule: games in the 3 days before, team games already played this season
+    g3 = np.zeros(len(p))
+    tgs = np.zeros(len(p))
+    for team, idx in p.groupby("team", sort=False).indices.items():
+        s = h.sched.get(team)
+        if s is None:
+            continue
+        dt = p["date"].to_numpy()[idx]
+        g3[idx] = (np.searchsorted(s["date"], dt, side="left")
+                   - np.searchsorted(s["date"], dt - 3, side="left"))
+        sea = p["season"].to_numpy()[idx]
+        k = p["k"].to_numpy()[idx]
+        first = {x: int(np.searchsorted(s["season"], x, side="left")) for x in set(sea)}
+        tgs[idx] = np.maximum(k - np.array([first[x] for x in sea]), 0)
+    p["g_last3d"] = g3
+    p["tgs"] = tgs
+    if h.coach is not None:
+        cf = h.coach.features(p["team"].to_numpy(), p["date"].to_numpy())
+        for c in cf.columns:
+            p[c] = cf[c].to_numpy()
+    else:
+        for c in ("coach_id", "c_top7", "c_n30", "c_games", "c_team_n", "t_top7", "t_n30"):
+            p[c] = np.nan
+    ew = 0.5 * p["ew_f"].to_numpy(float) + 0.5 * p["ew_s"].to_numpy(float)
+    p["team_rank"] = pd.Series(ew).groupby(p["key"].to_numpy()).rank(
+        ascending=False, method="first").to_numpy()
+    if h.shares is not None:
+        p["share_map"] = share_maps(h.shares, p)
+    return p
+
+
+def share_maps(shares: "PairShares", p: pd.DataFrame) -> list:
+    """Per row: {teammate player_id: share of that teammate's minutes this player absorbed when
+    the teammate sat (games strictly before the date)}, nonzero entries only."""
+    out = [None] * len(p)
+    pids = p["player_id"].to_numpy(np.int64)
+    dates = p["date"].to_numpy()
+    for _, idx in p.groupby("key", sort=False).indices.items():
+        m = shares.full_matrix(int(dates[idx[0]]), pids[idx])
+        for a, i in enumerate(idx):
+            nz = np.flatnonzero(m[a])
+            out[i] = {int(pids[idx[j]]): float(m[a, j]) for j in nz}
+    return out
 
 
 def design(p: pd.DataFrame, names: Iterable[str] = BASE_FEATURES) -> np.ndarray:
@@ -557,6 +948,50 @@ class PairShares:
         self._cv = np.cumsum(self._v)
         # first index of each pair
         self._uk, self._start = np.unique(key, return_index=True)
+        # (pair rank, date) packed into one sorted int64 for vectorised lookups
+        self._d0 = int(self._d.min()) - 1 if len(self._d) else 0
+        rank = np.searchsorted(self._uk, key)
+        self._comb = rank * (1 << 22) + np.clip(self._d - self._d0, 0, (1 << 22) - 1)
+
+    def lookup(self, i: np.ndarray, j: np.ndarray, date: int) -> np.ndarray:
+        """share[i, j] for arrays of player ids (i absorbed j's minutes), games before date."""
+        i = np.asarray(i, np.int64)
+        j = np.asarray(j, np.int64)
+        out = np.zeros(len(i))
+        if not len(self._uk) or not len(i):
+            return out
+        keys = j * 10_000_000_000 + i
+        r = np.searchsorted(self._uk, keys)
+        ok = r < len(self._uk)
+        ok[ok] &= self._uk[r[ok]] == keys[ok]
+        if not ok.any():
+            return out
+        r = r[ok]
+        st = self._start[r]
+        q = r * (1 << 22) + min(max(int(date) - self._d0, 0), (1 << 22) - 1)
+        k = np.searchsorted(self._comb, q, side="left")
+        has = k > st
+        g = np.zeros(len(r))
+        v = np.zeros(len(r))
+        kk, ss = k[has], st[has]
+        base_g = np.where(ss > 0, self._cg[np.maximum(ss - 1, 0)], 0.0)
+        base_v = np.where(ss > 0, self._cv[np.maximum(ss - 1, 0)], 0.0)
+        g[has] = self._cg[kk - 1] - base_g
+        v[has] = self._cv[kk - 1] - base_v
+        val = np.where(has, np.clip(g / (v + SHARE_K * 20.0), -0.2, 1.0), 0.0)
+        out[np.flatnonzero(ok)] = val
+        return out
+
+    def full_matrix(self, date: int, pids: np.ndarray) -> np.ndarray:
+        """share[a, b] for every ordered pair of `pids` (diagonal 0)."""
+        pids = np.asarray(pids, np.int64)
+        n = len(pids)
+        a, b = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+        a, b = a.ravel(), b.ravel()
+        m = a != b
+        out = np.zeros((n, n))
+        out[a[m], b[m]] = self.lookup(pids[a[m]], pids[b[m]], date)
+        return out
 
     def matrix(self, date: int, pids: np.ndarray, absent: np.ndarray) -> np.ndarray:
         n = len(pids)
@@ -613,16 +1048,191 @@ def avail_rank(p: pd.DataFrame, base: np.ndarray, absent: np.ndarray, key: str =
 def base_and_pplay(p: pd.DataFrame, params: MinutesParams, absent=None
                    ) -> tuple[np.ndarray, np.ndarray]:
     """Base minutes when playing and P(plays | available); the latter depends on the scenario
-    through the depth rank among available players."""
+    through the depth rank among available players.
+
+    v1 (params.version == "v1"): the base is the LightGBM E[min | plays] on the panel's v1
+    columns plus the scenario features of `absent` (learned promotion); players failing
+    `v1_ok` (no box history, < V1_MIN_GP games) and panels without v1 columns keep the v0.5
+    linear base (S15 fallback). P(plays | available) is the v0.5 logit in both versions."""
     X = design(p, params.base_features)
     base = np.clip(X @ np.asarray(params.base_coef), 0.5, 44.0)
     if absent is None:
         absent = p["absent"].to_numpy(bool) if "absent" in p else np.zeros(len(p), bool)
-    p = p.copy()
-    p["avail_rank"], p["n_avail"] = avail_rank(p, base, np.asarray(absent, bool))
-    Z = design(p, params.pplay_features)
+    absent = np.asarray(absent, bool)
+    q = p.copy()
+    q["avail_rank"], q["n_avail"] = avail_rank(q, base, absent)
+    Z = design(q, params.pplay_features)
     pp = 1.0 / (1.0 + np.exp(-(Z @ np.asarray(params.pplay_coef))))
+    if params.version == "v1" and params.gbm_model:
+        base = v1_base(p, params, absent, base)
     return base, np.clip(pp, 0.01, 0.995)
+
+
+# --- v1: LightGBM base with scenario features (T2.2) ------------------------------------------
+
+V1_MIN_GP = 3            # S15: fewer career games (or none) -> the v0.5 base for that player
+V1_ROLE = ("ew_f", "ew_s", "ew_vf", "last", "med5", "min_sd", "st10", "start_last", "ew_start",
+           "ew_bench", "sea_mean_now", "gp_season", "n_gp", "pf36", "app10", "team_rank",
+           "base_ew", "last_absm", "last_pf")
+V1_RETURN = ("missed_now", "gsr_now", "abs_len_now")
+V1_SCHEDULE = ("rest", "b2b", "g_last3d", "age", "tgs", "new_season", "new_team")
+V1_COACH = ("c_top7", "c_n30", "c_games", "c_team_n", "t_top7", "t_n30")
+V1_GROUP = ("g1", "g2", "tgt_g")
+V1_SCENARIO = ("vac_tot", "vac_same", "vac_g0", "vac_g1", "vac_g2", "vac_new", "n_st_out",
+               "vac_st_same", "rank_after", "grp_rank_after", "rank_gain", "slack",
+               "n_rot_avail", "exp_start", "top_in_grp")
+V1_SHARE = ("sv", "sh_max")
+V1_FEATURES = V1_ROLE + V1_RETURN + V1_SCHEDULE + V1_COACH + V1_GROUP + V1_SCENARIO
+GBM_PARAMS = {"objective": "regression", "learning_rate": 0.03, "num_leaves": 63,
+              "min_data_in_leaf": 200, "feature_fraction": 0.8, "bagging_fraction": 0.8,
+              "bagging_freq": 1, "lambda_l2": 5.0, "num_threads": 4, "seed": 7,
+              "deterministic": True, "force_col_wise": True, "verbose": -1}
+_BOOSTERS: dict = {}
+V1_STATS = {"rows": 0, "fallback_rows": 0, "panel_fallback_calls": 0}
+
+
+def has_v1_columns(p: pd.DataFrame) -> bool:
+    return all(c in p for c in ("ew_vf", "abs_len_now", "team_rank", "c_top7", "tgs"))
+
+
+def v1_ok(p: pd.DataFrame) -> np.ndarray:
+    """Players the GBM projects (the rest fall back to v0.5, S15)."""
+    return (p["last_date"].notna() & (p["n_gp"].to_numpy(float) >= V1_MIN_GP)).to_numpy()
+
+
+def scenario_features(p: pd.DataFrame, absent: np.ndarray, key: str = "key") -> pd.DataFrame:
+    """Per row, given the absent set: vacated minutes (EWMA blend of the absent players) in
+    total, by group (G/F/C), in his own groups, of newly absent players (played the team's last
+    game) and of absent expected starters in his groups; number of expected starters out
+    (top 5 by starts in last 10, then EWMA, over all candidates); his depth rank among the
+    available (overall and in his primary group) and the gain vs the healthy rank; minutes
+    slack (240 - sum of available EWMAs); available rotation players (EWMA >= 15); and, if the
+    panel has `share_map`, sv = sum_j share[i, j] x EWMA_j over absent j and the max share."""
+    ab = np.asarray(absent, bool)
+    n = len(p)
+    ew = 0.5 * p["ew_f"].to_numpy(float) + 0.5 * p["ew_s"].to_numpy(float)
+    kk = p[key].to_numpy() if key in p else np.zeros(n)
+    codes, uniq = pd.factorize(kk)
+    nk = max(len(uniq), 1)
+    g1 = p["g1"].to_numpy(int)
+    g2 = p["g2"].to_numpy(int)
+    w = np.where(ab, ew, 0.0)
+
+    def tot(x):
+        return np.bincount(codes, x, nk)[codes]
+
+    vg = np.stack([tot(w * (g1 == g)) for g in range(3)], 1)
+    vac_same = vg[np.arange(n), np.clip(g1, 0, 2)] + np.where(
+        g2 != g1, vg[np.arange(n), np.clip(g2, 0, 2)], 0.0)
+    order = p["st10"].to_numpy(float) * 100.0 + ew
+    r_all = pd.Series(order).groupby(codes).rank(ascending=False, method="first").to_numpy()
+    exp_start = r_all <= 5
+    st_out = ab & exp_start
+    vs = np.stack([tot(np.where(st_out & (g1 == g), ew, 0.0)) for g in range(3)], 1)
+    vac_st_same = vs[np.arange(n), np.clip(g1, 0, 2)] + np.where(
+        g2 != g1, vs[np.arange(n), np.clip(g2, 0, 2)], 0.0)
+    av_ew = pd.Series(np.where(ab, np.nan, ew))
+    rank_after = av_ew.groupby(codes).rank(ascending=False, method="first").to_numpy()
+    grp_rank = av_ew.groupby([codes, g1]).rank(ascending=False, method="first").to_numpy()
+    team_rank = p["team_rank"].to_numpy(float) if "team_rank" in p else \
+        pd.Series(ew).groupby(codes).rank(ascending=False, method="first").to_numpy()
+    newly = p["missed_now"].to_numpy(float) == 0 if "missed_now" in p else np.ones(n, bool)
+    out = {"vac_tot": tot(w), "vac_g0": vg[:, 0], "vac_g1": vg[:, 1], "vac_g2": vg[:, 2],
+           "vac_same": vac_same, "vac_new": tot(np.where(newly, w, 0.0)),
+           "n_st_out": tot(st_out.astype(float)), "vac_st_same": vac_st_same,
+           "rank_after": rank_after, "grp_rank_after": grp_rank,
+           "rank_gain": team_rank - rank_after,
+           "slack": TEAM_MIN - tot(np.where(ab, 0.0, ew)),
+           "n_rot_avail": tot(((~ab) & (ew >= 15)).astype(float)),
+           "exp_start": exp_start.astype(float), "top_in_grp": (grp_rank == 1).astype(float)}
+    if "share_map" in p:
+        sv = np.zeros(n)
+        smax = np.zeros(n)
+        pid = p["player_id"].to_numpy(np.int64)
+        for _, idx in pd.Series(np.arange(n)).groupby(codes).indices.items():
+            a = idx[ab[idx]]
+            if not len(a):
+                continue
+            ew_ab = dict(zip(pid[a].tolist(), ew[a].tolist()))
+            for i in idx[~ab[idx]]:
+                m = p["share_map"].iat[i]
+                if not m:
+                    continue
+                vals = [(s, ew_ab[j]) for j, s in m.items() if j in ew_ab]
+                if vals:
+                    sv[i] = sum(s * e for s, e in vals)
+                    smax[i] = max(s for s, _ in vals)
+        out["sv"], out["sh_max"] = sv, smax
+    else:
+        out["sv"] = np.full(n, np.nan)
+        out["sh_max"] = np.full(n, np.nan)
+    return pd.DataFrame(out, index=p.index)
+
+
+def v1_matrix(p: pd.DataFrame, absent: np.ndarray, names) -> np.ndarray:
+    """Feature matrix (rows of p) in the order `names`."""
+    sf = scenario_features(p, absent)
+    cols = []
+    for c in names:
+        if c in sf:
+            cols.append(sf[c].to_numpy(float))
+        elif c == "tgt_g":
+            g = np.clip(p["g1"].to_numpy(int), 0, 2)
+            num = np.stack([p[f"tgt_num{k}"].to_numpy(float) if f"tgt_num{k}" in p
+                            else np.full(len(p), np.nan) for k in range(3)], 1)
+            den = np.stack([p[f"tgt_den{k}"].to_numpy(float) if f"tgt_den{k}" in p
+                            else np.full(len(p), np.nan) for k in range(3)], 1)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                r = num[np.arange(len(p)), g] / den[np.arange(len(p)), g]
+            cols.append(np.where(np.isfinite(r), r, np.nan))
+        elif c == "n_gp":
+            cols.append(np.log1p(p["n_gp"].to_numpy(float)))
+        elif c in p:
+            cols.append(pd.to_numeric(p[c], errors="coerce").to_numpy(float))
+        else:
+            cols.append(np.full(len(p), np.nan))
+    return np.column_stack(cols) if cols else np.zeros((len(p), 0))
+
+
+def _booster(model: str):
+    b = _BOOSTERS.get(model)
+    if b is None:
+        import lightgbm as lgb
+        if len(_BOOSTERS) > 8:
+            _BOOSTERS.clear()
+        b = lgb.Booster(model_str=model)
+        _BOOSTERS[model] = b
+    return b
+
+
+def gbm_predict(params: MinutesParams, X: np.ndarray) -> np.ndarray:
+    if not len(X):
+        return np.zeros(0)
+    nt = 4 if len(X) > 20_000 else 1
+    return _booster(params.gbm_model).predict(X, num_threads=nt)
+
+
+def v1_base(p: pd.DataFrame, params: MinutesParams, absent: np.ndarray, base0: np.ndarray
+            ) -> np.ndarray:
+    """GBM E[min | plays] where v1_ok, else base0 (the v0.5 linear base). A training-time
+    column `_v1_oof` (out-of-fold predictions) is used verbatim when present."""
+    if not has_v1_columns(p):
+        V1_STATS["panel_fallback_calls"] += 1
+        V1_STATS["rows"] += len(p)
+        V1_STATS["fallback_rows"] += len(p)
+        return base0
+    ok = v1_ok(p) & ~absent
+    base = base0.copy()
+    if "_v1_oof" in p:
+        o = p["_v1_oof"].to_numpy(float)
+        ok &= np.isfinite(o)
+        base[ok] = o[ok]
+    elif ok.any():
+        X = v1_matrix(p, absent, params.gbm_features)
+        base[ok] = gbm_predict(params, X[ok])
+    V1_STATS["rows"] += int((~absent).sum())
+    V1_STATS["fallback_rows"] += int((~absent & ~ok).sum())
+    return np.clip(base, 0.5, 44.0)
 
 
 def reserve_design(s_avail: np.ndarray, n_avail: np.ndarray) -> np.ndarray:
@@ -737,6 +1347,8 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
         if probs.any():
             new = 0.5 * t[gj] + 0.5 * ew
             gain = np.maximum(new - base, 0.0) * probs
+            if starters is None:
+                gain = gain * params.nmu_scale     # v1: the GBM already promotes
             gain = np.where(probs > 0, gain, 0.0)
             # never more than the vacated minutes
             if gain.sum() > vac:
@@ -750,6 +1362,10 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
     for j in np.flatnonzero(absent & ~exp_start & (base >= ROTATION_MIN)):
         _spread_leftover(adj, lift, p, avail, g1, g2, g1[j], base[j] * params.k_add,
                          share[:, j] if share is not None else None, params)
+    # v1: learned pair-share term (who absorbed the absent players' minutes before)
+    if params.share_coef and share is not None and absent.any():
+        sv = (np.clip(share[:, absent], 0.0, 1.0) * base[absent][None, :]).sum(1)
+        lift += np.where(avail, params.share_coef * sv, 0.0)
     # confirmed unexpected starters not used as anyone's replacement: lift to starter level
     if starters is not None:
         for i in np.flatnonzero(unexpected & ~used):
@@ -765,7 +1381,7 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
     if params.recon == "proportional":
         exp_min = allocate_minutes(np.where(avail, adj, 0.0), p, total=total, cap=cap)
     else:
-        exp_min = reconcile(np.where(avail, adj, 0.0), p, total, cap)
+        exp_min = reconcile(np.where(avail, adj, 0.0), p, total, cap, cv=params.recon_cv)
     mean = np.where(p > 0, exp_min / np.maximum(p, 1e-9), 0.0)
     mean = np.minimum(mean, cap)
     if not detail:
@@ -1107,11 +1723,13 @@ def _fit_nmu(r: pd.DataFrame, shares: "PairShares | None", ridge: float = 1.0) -
 
 def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = print,
         f_grid=(0.4, 0.6, 0.8), panel: pd.DataFrame | None = None,
-        shares: "PairShares | None" = None) -> MinutesParams:
+        shares: "PairShares | None" = None, version: str = "v0.5",
+        v1_kw: dict | None = None) -> MinutesParams:
     """Fit every parameter on the `window` seasons before `season` (strictly < season).
 
     panel / shares: optional precomputed oracle panel of those seasons and pair shares
-    (events from seasons < season only)."""
+    (events from seasons < season only). version "v1": the v0.5 fit, then `fit_v1` on top
+    (the v0.5 base / P(play) / next-man-up stay as the S15 fallback and the stage-2 inputs)."""
     seasons = sorted(s for s in h.tg["season"].unique() if s < season)[-window:]
     if not seasons:
         raise ValueError(f"no seasons before {season}")
@@ -1132,13 +1750,7 @@ def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = p
     pcoef = _logit(Z, nonab["played"].to_numpy(float))
     # minutes to players outside the candidate set, as a function of the available weight
     pp_tr = 1.0 / (1.0 + np.exp(-(Z @ pcoef)))
-    w = np.zeros(len(panel))
-    w[np.flatnonzero(~panel["absent"].to_numpy())] = pp_tr * base_tr[~panel["absent"].to_numpy()]
-    k = pd.DataFrame({"key": panel["key"], "w": w, "a": panel["act_min_r"].fillna(0.0),
-                      "av": ~panel["absent"]}).groupby("key").agg(
-        s=("w", "sum"), act=("a", "sum"), n=("av", "sum"))
-    rcoef = _ols(reserve_design(k["s"].to_numpy(), k["n"].to_numpy()),
-                 np.clip(TEAM_MIN - k["act"].to_numpy(), 0, None))
+    rcoef = _fit_reserve(panel, base_tr, pp_tr)
     # league starter minutes per group and the top bench player's minutes
     hs = h.hist[h.hist["season"].isin(seasons) & (h.hist["season_type"] == "Regular Season")]
     hs = _attach_groups(hs[["player_id", "season", "game_id", "team", "min_r", "started"]],
@@ -1149,7 +1761,7 @@ def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = p
     prm.train_seasons = seasons
     prm.base_coef = coef.tolist()
     prm.pplay_coef = pcoef.tolist()
-    prm.reserve_coef = rcoef.tolist()
+    prm.reserve_coef = rcoef
     prm.starter_league = sl
     prm.bench_target = float(bench.mean())
     prm.mean_n_ot = float(tr["n_ot"].mean())
@@ -1178,6 +1790,137 @@ def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = p
             best = (mae, best[1], r, k)
     prm.k_add = best[3] if len(best) > 3 else 0.6
     r = best[2]
+    cnt_min, ok = _fit_margin_noise(prm, r)
+    prm.diagnostics = {"train_rows": int(len(pl)), "train_team_games": int(len(tr)),
+                       "train_mae_ge15": round(best[0], 4), "noise_fit_ok": ok,
+                       "g_cells_min_n": cnt_min}
+    if version == "v1":
+        prm = fit_v1(h, prm, panel, shares, log=log, **(v1_kw or {}))
+    return prm
+
+
+def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
+           shares: "PairShares | None", log: Callable[[str], None] = print,
+           use_share: bool = False, max_rounds: int = 3000, gbm_params: dict | None = None,
+           nmu_grid=(0.0, 0.5, 1.0), k_grid=(0.0, 0.15, 0.3), share_grid=(0.0, 0.15, 0.3),
+           cv_grid=(0.2, 0.4, 0.6), features=None) -> MinutesParams:
+    """v1 on top of a v0.5 fit, all on the same training panel (seasons < S, oracle scenario).
+
+    1. LightGBM (L2) for E[regulation minutes | plays] on V1_FEATURES (+ V1_SHARE if
+       use_share; the panel then needs `share_map`, i.e. History.shares set when it was built)
+       over played, non-absent, v1_ok rows. Leave-one-season-out folds give out-of-fold (OOF)
+       predictions and the number of rounds (early stopping on the held-out season, mean x 1.1);
+       the final model is refit on all training seasons.
+    2. On the OOF base: refit the reserve, then choose (coordinate-wise) the reconciliation
+       cv, nmu_scale, k_add and share_coef (stage 2 on top of the learned promotion) by the
+       training MAE on a FIXED population: played rows whose OOF GBM base is >= 10. (The
+       v0.5 criterion, rows projected >= 15, depends on the candidate itself: pushing bench
+       players below 15 shrinks it, and it picked a leftover that over-projects starters.)
+    3. Refit the margin curve g and the noise model on the OOF projections."""
+    import lightgbm as lgb
+    import time as _time
+    t0 = _time.time()
+    prm = MinutesParams.from_json(prm05.to_json())
+    prm.version = "v1"
+    if not has_v1_columns(panel):
+        raise ValueError("fit_v1: the training panel has no v1 columns (rebuild the History)")
+    names = list(features) if features is not None else \
+        list(V1_FEATURES) + (list(V1_SHARE) if use_share else [])
+    if use_share and "share_map" not in panel:
+        raise ValueError("fit_v1(use_share=True) needs panel['share_map'] (History.shares)")
+    gp = dict(GBM_PARAMS, **(gbm_params or {}))
+    ab = panel["absent"].to_numpy(bool)
+    X = v1_matrix(panel, ab, names)
+    y = panel["act_min_r"].to_numpy(float)
+    ok = v1_ok(panel)
+    rows = panel["played"].to_numpy(bool) & ~ab & ok
+    seas = panel["season"].to_numpy()
+    oof = np.full(len(panel), np.nan)
+    iters, folds = [], {}
+    for s in sorted(set(seas)):
+        tr, va = rows & (seas != s), rows & (seas == s)
+        if va.sum() < 100 or tr.sum() < 100:
+            continue
+        dtr = lgb.Dataset(X[tr], y[tr], feature_name=names, free_raw_data=False)
+        dva = lgb.Dataset(X[va], y[va], reference=dtr)
+        m = lgb.train(gp, dtr, num_boost_round=max_rounds, valid_sets=[dva],
+                      callbacks=[lgb.early_stopping(100, verbose=False)])
+        it = m.best_iteration or max_rounds
+        iters.append(it)
+        pr = ~ab & ok & (seas == s)
+        oof[pr] = m.predict(X[pr], num_iteration=it, num_threads=gp["num_threads"])
+        e = np.abs(oof[va] - y[va])
+        folds[s] = {"rounds": int(it), "mae_played": round(float(e.mean()), 4)}
+        log(f"  fit_v1 fold {s}: rounds {it}, OOF MAE (played) {e.mean():.3f}")
+    n_rounds = int(round(np.mean(iters) * 1.1)) if iters else 300
+    final = lgb.train(gp, lgb.Dataset(X[rows], y[rows], feature_name=names),
+                      num_boost_round=n_rounds)
+    prm.gbm_model = final.model_to_string()
+    prm.gbm_features = names
+    imp = final.feature_importance("gain")
+    imp = imp / max(imp.sum(), 1e-9)
+    top = sorted(zip(names, imp.tolist()), key=lambda t: -t[1])[:20]
+    t_gbm = _time.time() - t0
+    # stage 2 on the OOF base
+    tp = panel.copy()
+    tp["_v1_oof"] = oof
+    base, pp = base_and_pplay(tp, prm, ab)
+    prm.reserve_coef = _fit_reserve(tp, base, pp[~ab])
+
+    fixed = panel["played"].to_numpy(bool) & ~ab & (base >= 10.0)
+
+    def mae_of(q):
+        r = run_projection(tp, q, shares=shares)
+        y_ = r["act_min_r"].to_numpy(float)[fixed]
+        return float(np.abs(r["mean0"].to_numpy(float)[fixed] - y_).mean()), r
+
+    grid = {}
+    best = None
+    for name, vals in (("recon_cv", cv_grid), ("nmu_scale", nmu_grid), ("k_add", k_grid),
+                       ("share_coef", share_grid)):
+        cur = None
+        for v in vals:
+            setattr(prm, name, v)
+            mae, r = mae_of(prm)
+            grid[f"{name}={v}"] = round(mae, 4)
+            log(f"  fit_v1 {name}={v}: train (OOF) MAE {mae:.4f}")
+            if cur is None or mae < cur[0] - 1e-6:
+                cur = (mae, v, r)
+        setattr(prm, name, cur[1])
+        best = cur
+    cnt_min, nok = _fit_margin_noise(prm, best[2])
+    prm.diagnostics = dict(prm.diagnostics, v1={
+        "n_rounds": n_rounds, "folds": folds, "train_rows": int(rows.sum()),
+        "fallback_share_train": round(float((~ok & ~ab).sum() / max((~ab).sum(), 1)), 4),
+        "oof_train_mae_ge15": round(best[0], 4), "grid": grid,
+        "importance_gain_top20": [[n, round(v, 4)] for n, v in top],
+        "noise_fit_ok": nok, "g_cells_min_n": cnt_min, "seconds_gbm": round(t_gbm, 1),
+        "seconds_total": round(_time.time() - t0, 1), "use_share": bool(use_share)})
+    r_b = best[2]
+    m15 = r_b["played"].to_numpy(bool) & (r_b["mean0"].to_numpy(float) >= 15)
+    prm.diagnostics["v1"]["oof_train_mae_ge15"] = round(float(np.abs(
+        r_b["mean0"].to_numpy(float)[m15] - r_b["act_min_r"].to_numpy(float)[m15]).mean()), 4)
+    prm.diagnostics["v1"]["oof_train_mae_fixed_pop"] = round(best[0], 4)
+    log(f"  fit_v1: {n_rounds} rounds, cv {prm.recon_cv}, nmu_scale {prm.nmu_scale}, "
+        f"k_add {prm.k_add}, "
+        f"share_coef {prm.share_coef}, OOF MAE {best[0]:.4f} ({_time.time() - t0:.0f}s)")
+    return prm
+
+
+def _fit_reserve(panel: pd.DataFrame, base: np.ndarray, pp_avail: np.ndarray) -> list:
+    """OLS of the minutes outside the candidate set on the available weight (sum p x base)."""
+    av = ~panel["absent"].to_numpy(bool)
+    w = np.zeros(len(panel))
+    w[np.flatnonzero(av)] = pp_avail * base[av]
+    k = pd.DataFrame({"key": panel["key"], "w": w, "a": panel["act_min_r"].fillna(0.0),
+                      "av": av}).groupby("key").agg(s=("w", "sum"), act=("a", "sum"),
+                                                     n=("av", "sum"))
+    return _ols(reserve_design(k["s"].to_numpy(), k["n"].to_numpy()),
+                np.clip(TEAM_MIN - k["act"].to_numpy(), 0, None)).tolist()
+
+
+def _fit_margin_noise(prm: MinutesParams, r: pd.DataFrame) -> tuple[int, bool]:
+    """g table (margin curve) and the noise model from a projected training panel (mean0)."""
     # margin curve g: mean residual by tier x result x |margin| bin (played, regulation games)
     rr = r[r["played"] & (r["n_ot"] == 0) & (r["mean0"] > 0)]
     res = rr["act_min_r"].to_numpy(float) - rr["mean0"].to_numpy(float)
@@ -1207,10 +1950,7 @@ def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = p
     mu, sg, q0, q1, ok = _fit_noise(lr[sub], tier_of(rn["mean0"].to_numpy(float))[sub],
                                     rn["pf36"].to_numpy(float)[sub])
     prm.mu, prm.sigma, prm.q0, prm.q1 = mu, sg, q0, q1
-    prm.diagnostics = {"train_rows": int(len(pl)), "train_team_games": int(len(tr)),
-                       "train_mae_ge15": round(best[0], 4), "noise_fit_ok": ok,
-                       "g_cells_min_n": int(cnt.min())}
-    return prm
+    return int(cnt.min()), ok
 
 
 # --- live / single team-game API -------------------------------------------------------------

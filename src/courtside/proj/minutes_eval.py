@@ -22,8 +22,16 @@ Tests reported:
     available) -> projected delta minutes (scenario vs same scenario with the star available),
     implied delta DK at his EWMA DK/min, and the realised with/without difference.
 
+T2.2 (v1 vs v0.5): `run_compare` fits both on the same training panel and scores them on the
+same test rows (paired gain clustered by game); `live_like` re-projects the 2025-12-22 ->
+2026-04-12 slice from the official reports at the first tip - 45 min (enumerated report
+scenarios, E[min | plays] = scenario mixture) and, for the gap, with the oracle; `run_v1` +
+`format_v1_report` write var/reports/minutes_v1_eval.{json,txt}
+(`python -m courtside.proj.minutes_eval v1 [seasons]`).
+
 Public API
   run_season(conn, history, season, log=print) -> dict
+  prepare_season / evaluate_params / run_compare / live_like / run_v1 / format_v1_report
   run(conn, seasons=("2023-24", "2024-25"), log=print) -> dict;  format_report(dict) -> str
 """
 
@@ -284,52 +292,308 @@ def coverage(r: pd.DataFrame, prm, spread, n_games: int = 400, sims: int = 400,
 
 def run_season(conn, h: M.History, season: str, log: Callable[[str], None] = print,
                prm: M.MinutesParams | None = None, window: int = 5) -> dict:
+    """v0.5 walk-forward evaluation of one season (the T1.2 report)."""
     t0 = time.time()
+    ctx = prepare_season(conn, h, season, window=window)
+    if prm is None:
+        prm = M.fit(h, season, window=window, log=log, panel=ctx["ptr"],
+                    shares=M.PairShares(ctx["ev_tr"]))
+    t_fit = time.time() - t0
+    out = evaluate_params(conn, season, ctx, prm, variants=True)
+    out.pop("_frame")
+    out["seconds"] = round(time.time() - t0, 1)
+    out["fit_seconds"] = round(t_fit, 1)
+    log(f"{season}: done in {out['seconds']} s")
+    return out
+
+
+def prepare_season(conn, h: M.History, season: str, window: int = 5,
+                   use_share: bool = False) -> dict:
+    """Training panel (oracle, `window` seasons < S), test panel (oracle, S), pair shares
+    (training + test events, every lookup strictly before the game date), closing spreads.
+    use_share: attach `share_map` (v1 share features) to both panels."""
     tr_seasons = sorted(x for x in h.tg["season"].unique() if x < season)[-window:]
+    keep = h.shares
+    h.shares = None
     ptr = M.oracle_panel(h, M.eval_targets(h, tr_seasons))
     ev_tr = M.pair_events(ptr)
-    if prm is None:
-        prm = M.fit(h, season, window=window, log=log, panel=ptr, shares=M.PairShares(ev_tr))
-    t_fit = time.time() - t0
-    del ptr
-    tg = M.eval_targets(h, [season])
-    panel = M.oracle_panel(h, tg)
-    # pair shares: events of the training seasons + the test season, looked up strictly
-    # before each game's date
+    panel = M.oracle_panel(h, M.eval_targets(h, [season]))
+    h.shares = keep
     shares = M.PairShares(pd.concat([ev_tr, M.pair_events(panel)], ignore_index=True))
+    if use_share:
+        ptr["share_map"] = M.share_maps(shares, ptr)
+        panel["share_map"] = M.share_maps(shares, panel)
     sp = spreads(conn)
     sp["key"] = sp["game_id"] + "|" + sp["team"]
-    spread = sp.set_index("key")["spread"]
+    return {"season": season, "train_seasons": tr_seasons, "ptr": ptr, "ev_tr": ev_tr,
+            "panel": panel, "shares": shares, "spread": sp.set_index("key")["spread"],
+            "base_rung2": baseline(panel)}
+
+
+def evaluate_params(conn, season: str, ctx: dict, prm: M.MinutesParams,
+                    variants: bool = True) -> dict:
+    """Every T1.2 metric of `prm` (v0.5 or v1) on the prepared test panel."""
+    panel, shares, spread = ctx["panel"], ctx["shares"], ctx["spread"]
+    M.V1_STATS.update(rows=0, fallback_rows=0, panel_fallback_calls=0)
     r = M.run_projection(panel, prm, shares=shares)
+    fb = dict(M.V1_STATS)
     r["proj"] = integrate(r, prm, spread)
-    r["base_rung2"] = baseline(panel)
+    r["base_rung2"] = ctx["base_rung2"]
     r10 = M.run_projection(panel, prm, starters=True, shares=shares)
     r["proj_lock10"] = integrate(r10, prm, spread)
     r["proj_nomargin"] = r["mean0"]
-    out = {"season": season, "params": json.loads(prm.to_json()),
+    pj = json.loads(prm.to_json())
+    pj["gbm_model"] = f"<{len(prm.gbm_model)} chars>" if prm.gbm_model else ""
+    out = {"season": season, "version": prm.version, "params": pj,
            "team_games": int(panel["key"].nunique()),
            "lock45": metrics(r, "proj"), "lock10": metrics(r, "proj_lock10"),
            "lock45_without_margin_integration": metrics(r, "proj_nomargin")}
-    # variants (same fitted params): literal deterministic next man up; proportional 240
-    for name, kw in (("lock45_nmu_top", {"nmu_mode": "top"}),
-                     ("lock45_proportional_waterfill", {"recon": "proportional"})):
+    if prm.version == "v1":
+        ok = M.v1_ok(panel)
+        av = ~panel["absent"].to_numpy(bool)
+        pop = (r["played"] & (r["proj"] >= 15)).to_numpy()
+        out["fallback"] = {"rows_available": int(av.sum()),
+                           "share_available_rows": float((~ok & av).sum() / max(av.sum(), 1)),
+                           "share_eval_population": float((~ok & pop).sum() / max(pop.sum(), 1)),
+                           "v1_stats_lock45": fb}
+        # stage-2 off: the GBM's learned promotion alone (+ the 240 reconciliation)
         q = M.MinutesParams.from_json(prm.to_json())
-        for k_, v_ in kw.items():
-            setattr(q, k_, v_)
+        q.nmu_scale, q.share_coef = 0.0, 0.0
         rv = M.run_projection(panel, q, shares=shares)
         rv["proj"] = integrate(rv, q, spread)
         rv["base_rung2"] = r["base_rung2"].to_numpy()
-        out[name] = metrics(rv, "proj")
-        if name == "lock45_nmu_top":
-            out["two_starters_out_nmu_top"] = two_starters_test(panel, rv, q, spread, shares)
+        out["lock45_v1_no_stage2"] = metrics(rv, "proj")
+    elif variants:
+        # variants (same fitted params): literal deterministic next man up; proportional 240
+        for name, kw in (("lock45_nmu_top", {"nmu_mode": "top"}),
+                         ("lock45_proportional_waterfill", {"recon": "proportional"})):
+            q = M.MinutesParams.from_json(prm.to_json())
+            for k_, v_ in kw.items():
+                setattr(q, k_, v_)
+            rv = M.run_projection(panel, q, shares=shares)
+            rv["proj"] = integrate(rv, q, spread)
+            rv["base_rung2"] = r["base_rung2"].to_numpy()
+            out[name] = metrics(rv, "proj")
+            if name == "lock45_nmu_top":
+                out["two_starters_out_nmu_top"] = two_starters_test(panel, rv, q, spread, shares)
     pop = r[r["played"] & (r["proj"] >= 15)]
     out["lock10_on_lock45_rows_mae"] = float(np.abs(pop["proj_lock10"] - pop["act_min"]).mean())
     out["two_starters_out"] = two_starters_test(panel, r, prm, spread, shares)
     out["star_absence"] = star_absence_test(conn, season, panel, r, prm, spread, shares)
     out["sample_coverage"] = coverage(r, prm, spread)
+    out["_frame"] = r[["key", "game_id", "date", "player_id", "played", "act_min", "proj",
+                       "proj_lock10", "base_rung2"]]
+    return out
+
+
+def compare_frames(fr: dict) -> dict:
+    """v1 vs v0.5 on identical rows: the v0.5 population (played, v0.5 projected >= 15), the
+    union of both populations, with the paired difference clustered by game."""
+    a, b = fr["v0.5"], fr["v1"]
+    assert (a["key"].to_numpy() == b["key"].to_numpy()).all()
+    out = {}
+    pl = a["played"].to_numpy(bool)
+    for lab, m in (("v05_population", pl & (a["proj"].to_numpy() >= 15)),
+                   ("union_population", pl & ((a["proj"].to_numpy() >= 15)
+                                              | (b["proj"].to_numpy() >= 15))),
+                   ("v1_population", pl & (b["proj"].to_numpy() >= 15))):
+        y = a["act_min"].to_numpy(float)[m]
+        ea = np.abs(a["proj"].to_numpy(float)[m] - y)
+        eb = np.abs(b["proj"].to_numpy(float)[m] - y)
+        d = ea - eb
+        out[lab] = {"n": int(m.sum()), "mae_v05": float(ea.mean()), "mae_v1": float(eb.mean()),
+                    "gain": float(d.mean()),
+                    "gain_se": _cl_se(d, a["game_id"].to_numpy()[m]),
+                    "bias_v05": float((a["proj"].to_numpy(float)[m] - y).mean()),
+                    "bias_v1": float((b["proj"].to_numpy(float)[m] - y).mean())}
+    return out
+
+
+def run_compare(conn, h: M.History, season: str, log: Callable[[str], None] = print,
+                window: int = 5, v1_kw: dict | None = None) -> dict:
+    """Walk-forward v0.5 and v1 (fit < S) on the same test rows (T2.2)."""
+    t0 = time.time()
+    v1_kw = dict(v1_kw or {})
+    ctx = prepare_season(conn, h, season, window=window,
+                         use_share=bool(v1_kw.get("use_share")))
+    sh_tr = M.PairShares(ctx["ev_tr"])
+    prm05 = M.fit(h, season, window=window, log=log, panel=ctx["ptr"], shares=sh_tr)
+    t05 = time.time() - t0
+    prm1 = M.fit_v1(h, prm05, ctx["ptr"], sh_tr, log=log, **v1_kw)
+    t1 = time.time() - t0 - t05
+    out = {"season": season, "fit_seconds": {"v0.5": round(t05, 1), "v1_extra": round(t1, 1)},
+           "versions": {}}
+    frames = {}
+    for name, prm in (("v0.5", prm05), ("v1", prm1)):
+        te = time.time()
+        res = evaluate_params(conn, season, ctx, prm, variants=False)
+        frames[name] = res.pop("_frame")
+        res["eval_seconds"] = round(time.time() - te, 1)
+        out["versions"][name] = res
+        log(f"{season} {name}: lock45 MAE {res['lock45']['mae']:.3f} "
+            f"bias {res['lock45']['bias']:+.3f} ({res['eval_seconds']} s)")
+    out["paired"] = compare_frames(frames)
     out["seconds"] = round(time.time() - t0, 1)
-    out["fit_seconds"] = round(t_fit, 1)
-    log(f"{season}: done in {out['seconds']} s")
+    out["_prm"] = {"v0.5": prm05, "v1": prm1}
+    return out
+
+
+LIVE_LO, LIVE_HI = "2025-12-22", "2026-04-12"
+MAX_ENUM = 4            # uncertain players enumerated per team-game (2^4 scenarios)
+
+
+def report_scenarios(av: pd.DataFrame, key_of: dict, lo: float = 0.02, hi: float = 0.98
+                     ) -> dict:
+    """Per team-game key: list of (weight, frozenset absent ids) from the report P(play) of
+    listed players (pipeline.LISTED semantics: unlisted players are left to the minutes engine).
+    p <= lo -> out; p >= hi -> available; the MAX_ENUM most uncertain are enumerated, any
+    further uncertain player is out when p < 0.5."""
+    from itertools import product
+    from . import pipeline as P
+    out = {}
+    av = av[av["status"].isin(list(P.LISTED))]
+    for (gid, team), d in av.groupby(["game_id", "team"]):
+        key = key_of.get((gid, team))
+        if key is None:
+            continue
+        pid = d["player_id"].astype(int).to_numpy()
+        p = d["p_play"].to_numpy(float)
+        sure_out = set(pid[p <= lo].tolist())
+        unc = np.flatnonzero((p > lo) & (p < hi))
+        unc = unc[np.argsort(-np.abs(p[unc] - 0.5) * -1)][:MAX_ENUM] if len(unc) else unc
+        rest = set(np.flatnonzero((p > lo) & (p < hi)).tolist()) - set(unc.tolist())
+        sure_out |= {int(pid[i]) for i in rest if p[i] < 0.5}
+        sc = []
+        for bits in product((0, 1), repeat=len(unc)):
+            w = 1.0
+            ab = set(sure_out)
+            for b, i in zip(bits, unc):
+                w *= p[i] if b else 1 - p[i]
+                if not b:
+                    ab.add(int(pid[i]))
+            sc.append((w, frozenset(ab)))
+        out[key] = sc
+    return out
+
+
+def live_like(conn, h: M.History, prms: dict, lo: str = LIVE_LO, hi: str = LIVE_HI,
+              log: Callable[[str], None] = print, shares: "M.PairShares | None" = None) -> dict:
+    """Live-like slice (§4.2 M6, §7.1 L4): lock-45 minutes from the official reports at the
+    first tip - 45 min (availability.p_play_slate, as pipeline.report_avail) instead of the
+    oracle. Candidates = recent roster + report players not 'out' (box history required).
+    E[min | plays] mixes the enumerated report scenarios (weight x P(plays | available)).
+    The same rows are also projected with the oracle for the gap. prms: {name: params}."""
+    from datetime import date as _date, timedelta
+    from . import availability as AV
+    t0 = time.time()
+    season = "2025-26"
+    tg = M.eval_targets(h, [season])
+    d_lo = M._days(pd.Series([lo]))[0]
+    d_hi = M._days(pd.Series([hi]))[0]
+    tg = tg[(tg["date"] >= d_lo) & (tg["date"] <= d_hi)].reset_index(drop=True)
+    days = sorted(tg["date"].unique())
+    avh = AV.load_history(conn, _date.fromisoformat(lo))
+    sp = spreads(conn)
+    sp["key"] = sp["game_id"] + "|" + sp["team"]
+    spread = sp.set_index("key")["spread"]
+    rows, panels, scen = [], [], {}
+    for dd in days:
+        day = (pd.Timestamp(int(dd), unit="D")).date()
+        g = AV.day_games(conn, day)
+        at = (g["tip"].min() if len(g) else AV._default_tip(day)) - timedelta(minutes=45)
+        rf = conn.row_factory
+        conn.row_factory = sqlite3.Row         # injuries.* reads rows as mappings
+        try:
+            av = AV.p_play_slate(conn, day, at, hist=avh)
+        finally:
+            conn.row_factory = rf
+        t = tg[tg["date"] == dd]
+        key_of = {(a, b): k for a, b, k in zip(t["game_id"], t["team"], t["key"])}
+        ex = av[(av["status"] != "out") & av["game_id"].isin(set(t["game_id"]))]
+        ex = pd.DataFrame({"key": [key_of.get((a, b)) for a, b in zip(ex["game_id"], ex["team"])],
+                           "player_id": ex["player_id"].astype(np.int64)}).dropna()
+        p = M.pregame_panel(h, t, extra=ex if len(ex) else None)
+        p = p[(p["roster"] == 1) | p["last_date"].notna()]
+        panels.append(p)
+        scen.update(report_scenarios(av, key_of))
+        rows.append({"day": str(day), "at": str(at), "n_report_rows": int(len(av))})
+    base = pd.concat(panels, ignore_index=True)
+    if shares is not None and "share_map" not in base and h.shares is not None:
+        base["share_map"] = M.share_maps(h.shares, base)
+    # stacked scenario panel
+    parts = []
+    for key, d in base.groupby("key", sort=False):
+        sc = scen.get(key, [(1.0, frozenset())])
+        for s_i, (w, ab) in enumerate(sc):
+            q = d.copy()
+            q["absent"] = q["player_id"].isin(ab)
+            q["skey"] = f"{key}#{s_i}"
+            q["w"] = w
+            parts.append(q)
+    st = pd.concat(parts, ignore_index=True)
+    st = st.rename(columns={"key": "tkey"}).rename(columns={"skey": "key"})
+    act = h.hist[["game_id", "team", "player_id", "min"]].copy()
+    act["tkey"] = act["game_id"] + "|" + act["team"]
+    act = act.set_index(["tkey", "player_id"])["min"]
+    out = {"slice": [lo, hi], "team_games": int(base["key"].nunique()),
+           "days": len(days), "scenarios": int(st["key"].nunique()), "versions": {}}
+    sp_s = pd.Series(spread.reindex(st["tkey"].unique()).to_numpy(),
+                     index=st["tkey"].unique())
+    for name, prm in prms.items():
+        r = M.run_projection(st, prm, shares=shares)
+        spk = pd.Series(sp_s.reindex(r["tkey"]).to_numpy(), index=r["key"]).groupby(
+            level=0).first()
+        r["proj"] = integrate(r, prm, spk)
+        r["wp"] = r["w"] * r["p_play"]
+        r["wpm"] = r["wp"] * r["proj"]
+        agg = r.groupby(["tkey", "player_id"]).agg(wp=("wp", "sum"), wpm=("wpm", "sum"),
+                                                   w=("w", "sum"))
+        agg["proj"] = np.where(agg["wp"] > 0, agg["wpm"] / agg["wp"].clip(lower=1e-12), 0.0)
+        agg["act_min"] = act.reindex(agg.index).to_numpy()
+        agg["played"] = agg["act_min"].notna() & (agg["act_min"] > 0)
+        agg = agg.reset_index()
+        agg["game_id"] = agg["tkey"].str.split("|").str[0]
+        pop = agg[agg["played"] & (agg["proj"] >= 15)]
+        e = (pop["proj"] - pop["act_min"]).to_numpy(float)
+        t_ = np.clip(np.searchsorted([20.0, 26.0, 32.0], pop["proj"].to_numpy(float),
+                                     side="right"), 0, 3)
+        out["versions"][name] = {
+            "n": int(len(pop)), "mae": float(np.abs(e).mean()), "bias": float(e.mean()),
+            "mae_se": _cl_se(np.abs(e), pop["game_id"].to_numpy()),
+            "by_tier": {TIER_LABELS[k]: {"n": int((t_ == k).sum()),
+                                         "mae": float(np.abs(e[t_ == k]).mean()),
+                                         "bias": float(e[t_ == k].mean())}
+                        for k in range(4) if (t_ == k).any()},
+            "played_not_projected": int((~agg["proj"].gt(0) & agg["played"]).sum())}
+        out["versions"][name]["_frame"] = agg
+        log(f"live-like {name}: n={len(pop)} MAE {np.abs(e).mean():.3f} bias {e.mean():+.3f}")
+    # oracle on the same slice (for the gap)
+    t = tg.copy()
+    po = M.oracle_panel(h, t)
+    if "share_map" in base and "share_map" not in po and h.shares is not None:
+        po["share_map"] = M.share_maps(h.shares, po)
+    for name, prm in prms.items():
+        r = M.run_projection(po, prm, shares=shares)
+        r["proj"] = integrate(r, prm, spread)
+        pop = r[r["played"] & (r["proj"] >= 15)]
+        e = (pop["proj"] - pop["act_min"]).to_numpy(float)
+        out["versions"][name]["oracle_same_slice"] = {"n": int(len(pop)),
+                                                      "mae": float(np.abs(e).mean()),
+                                                      "bias": float(e.mean())}
+    # identical rows across versions (played & any version >= 15)
+    names = list(prms)
+    fr = {k: out["versions"][k].pop("_frame").set_index(["tkey", "player_id"]) for k in names}
+    if len(names) == 2:
+        a, b = fr[names[0]], fr[names[1]].reindex(fr[names[0]].index)
+        m = a["played"] & ((a["proj"] >= 15) | (b["proj"] >= 15))
+        ea = np.abs(a.loc[m, "proj"] - a.loc[m, "act_min"]).to_numpy()
+        eb = np.abs(b.loc[m, "proj"] - b.loc[m, "act_min"]).to_numpy()
+        out["paired_union"] = {"n": int(m.sum()), f"mae_{names[0]}": float(ea.mean()),
+                               f"mae_{names[1]}": float(eb.mean()),
+                               "gain": float((ea - eb).mean()),
+                               "gain_se": _cl_se(ea - eb, a.loc[m, "game_id"].to_numpy())}
+    out["report_days_sample"] = rows[:3]
+    out["seconds"] = round(time.time() - t0, 1)
     return out
 
 
@@ -342,6 +606,191 @@ def run(conn, seasons=("2023-24", "2024-25"), log: Callable[[str], None] = print
            "seasons": {s: run_season(conn, h, s, log=log) for s in seasons}}
     res["total_seconds"] = round(time.time() - t0, 1)
     return res
+
+
+def coach_coverage(conn, h: M.History, seasons) -> dict:
+    """Share of regular-season team-games with a known coach (N4) and the curated table's
+    agreement with the team_coaches snapshots."""
+    out = {}
+    if h.coach is None:
+        return {"available": False}
+    g = h.coach.games
+    tgx = h.tg[h.tg["season_type"] == "Regular Season"][["game_id", "team", "season"]]
+    g = g.merge(tgx, on=["game_id", "team"])
+    for s in seasons:
+        x = g[g["season"] == s]
+        out[s] = {"team_games": int(len(x)), "known": float((x["coach_id"] != 0).mean())
+                  if len(x) else None, "coaches": int(x["coach_id"].nunique())}
+    snap = M.load_coach_snapshots(conn)
+    chk = M.coach_snapshot_check(M.coach_stints(snap), snap)
+    out["snapshot_check"] = {"n": int(len(chk)), "agree": float(chk["ok"].mean()),
+                             "disagree": chk[~chk["ok"]].to_dict("records")}
+    st = M.coach_stints(snap)
+    out["stints"] = {"curated": int((st["source"] == "curated").sum()),
+                     "snapshot": int((st["source"] == "snapshot").sum()),
+                     "in_season_changes": int(sum(
+                         1 for t, v in M.COACH_STINTS.items() for d, _ in v
+                         if not d.endswith("-10-01")))}
+    return out
+
+
+def latency(h: M.History, prms: dict, season: str, n: int = 60, seed: int = 3) -> dict:
+    """Seconds per copula.ScenarioMinutes.project call (fresh absent sets) per version."""
+    from . import copula as C
+    tg = M.eval_targets(h, [season])
+    rng = np.random.default_rng(seed)
+    t = tg.iloc[rng.choice(len(tg), size=min(n, len(tg)), replace=False)].reset_index(drop=True)
+    panel = M.pregame_panel(h, t)
+    out = {}
+    for name, prm in prms.items():
+        t0 = time.time()
+        calls = 0
+        for _, d in panel.groupby("key", sort=False):
+            sm = C.ScenarioMinutes(d, prm)
+            for k in range(5):
+                ab = np.zeros(len(sm), bool)
+                ab[rng.choice(len(sm), size=min(k, len(sm)), replace=False)] = True
+                sm.project(ab)
+                calls += 1
+        out[name] = round((time.time() - t0) / max(calls, 1) * 1000, 2)
+    return {"ms_per_project_call": out, "calls_per_version": calls}
+
+
+def run_v1(conn, seasons=("2023-24", "2024-25"), live: bool = True,
+           log: Callable[[str], None] = print, history: M.History | None = None,
+           v1_kw: dict | None = None, params_dir=None) -> dict:
+    """T2.2: v0.5 vs v1 walk-forward on `seasons` + the live-like slice (fit < 2025-26)."""
+    t0 = time.time()
+    h = history if history is not None else M.load_history(conn)
+    res = {"load_seconds": round(time.time() - t0, 1), "seasons": {}}
+    prms = {}
+    for s in seasons:
+        r = run_compare(conn, h, s, log=log, v1_kw=v1_kw)
+        prms[s] = r.pop("_prm")
+        res["seasons"][s] = r
+    if live:
+        tl = time.time()
+        ctx = prepare_season(conn, h, "2025-26")
+        sh = M.PairShares(ctx["ev_tr"])
+        p05 = M.fit(h, "2025-26", log=log, panel=ctx["ptr"], shares=sh)
+        p1 = M.fit_v1(h, p05, ctx["ptr"], sh, log=log, **(v1_kw or {}))
+        prms["2025-26"] = {"v0.5": p05, "v1": p1}
+        ll = live_like(conn, h, {"v0.5": p05, "v1": p1}, log=log, shares=ctx["shares"])
+        ll["fit_v1_diagnostics"] = p1.diagnostics.get("v1")
+        ll["seconds_incl_fit"] = round(time.time() - tl, 1)
+        res["live_like"] = ll
+    all_s = sorted({x for s in prms for x in prms[s]["v1"].train_seasons} | set(seasons))
+    res["coach_coverage"] = coach_coverage(conn, h, all_s)
+    last = list(prms)[-1]
+    res["latency"] = latency(h, prms[last], seasons[-1])
+    if params_dir is not None:
+        from pathlib import Path
+        Path(params_dir).mkdir(parents=True, exist_ok=True)
+        for s, d in prms.items():
+            for v, prm in d.items():
+                (Path(params_dir) / f"minutes_params_{s}_{v}.json").write_text(prm.to_json())
+    res["total_seconds"] = round(time.time() - t0, 1)
+    return res
+
+
+def _m(x, k="mae"):
+    return f"{x[k]:.3f}" if x and x.get(k) is not None else "-"
+
+
+def format_v1_report(res: dict) -> str:
+    L = ["# minutes v1 (T2.2) vs v0.5: walk-forward, fit on the 5 seasons < S, lock-45 unless "
+         "noted; MAE on played rows projected >= 15 (each version's own population) and paired "
+         "on identical rows", ""]
+    L.append("| season | protocol | v0.5 MAE | v1 MAE | paired gain (v0.5 rows) | v0.5 bias | "
+             "v1 bias |")
+    L.append("|---|---|---|---|---|---|---|")
+    for s, r in res["seasons"].items():
+        a, b = r["versions"]["v0.5"]["lock45"], r["versions"]["v1"]["lock45"]
+        pg = r["paired"]["v05_population"]
+        L.append(f"| {s} | avail oracle | {a['mae']:.3f} | {b['mae']:.3f} | "
+                 f"{pg['gain']:+.3f} (SE {pg['gain_se']:.3f}, n {pg['n']}) | {a['bias']:+.3f} | "
+                 f"{b['bias']:+.3f} |")
+    ll = res.get("live_like")
+    if ll:
+        a, b = ll["versions"]["v0.5"], ll["versions"]["v1"]
+        pu = ll.get("paired_union", {})
+        L.append(f"| 2025-26 slice {ll['slice'][0]}..{ll['slice'][1]} | official reports "
+                 f"(tip-45) | {a['mae']:.3f} | {b['mae']:.3f} | "
+                 f"{pu.get('gain', float('nan')):+.3f} (SE {pu.get('gain_se', float('nan')):.3f},"
+                 f" union n {pu.get('n')}) | {a['bias']:+.3f} | {b['bias']:+.3f} |")
+        L.append(f"| same slice | avail oracle | {_m(a['oracle_same_slice'])} | "
+                 f"{_m(b['oracle_same_slice'])} | | "
+                 f"{a['oracle_same_slice']['bias']:+.3f} | {b['oracle_same_slice']['bias']:+.3f} |")
+    L.append("")
+    for s, r in res["seasons"].items():
+        L.append(f"## {s}")
+        for v in ("v0.5", "v1"):
+            x = r["versions"][v]
+            m = x["lock45"]
+            L.append(f"- {v} lock45: n={m['n']} MAE {m['mae']:.3f} RMSE {m['rmse']:.3f} bias "
+                     f"{m['bias']:+.3f} | rung-2 EWMA same rows {m['baseline_mae_same_rows']:.3f} "
+                     f"-> {m['improvement_pct']:.1f}% better (SE {m['improvement_se_pct']:.1f}) "
+                     f"| all played {m['mae_all_played']:.3f} | lock10 MAE "
+                     f"{x['lock10']['mae']:.3f}")
+            L.append("    tiers: " + "; ".join(f"{k} n={t['n']} MAE {t['mae']:.3f} bias "
+                                               f"{t['bias']:+.3f}" for k, t in m["by_tier"].items()))
+            ts = x["two_starters_out"]
+            vp = ts.get("max_proj_rise | all >=2 out", {})
+            vp2 = ts.get("max_proj_rise | exactly 2 out", {})
+            L.append(f"    S14 value play, >=2 starters out: n={vp.get('team_games')} projected "
+                     f"+{vp.get('proj_rise', float('nan')):.2f} realised "
+                     f"+{vp.get('realised_rise', float('nan')):.2f}; exactly 2: projected "
+                     f"+{vp2.get('proj_rise', float('nan')):.2f} realised "
+                     f"+{vp2.get('realised_rise', float('nan')):.2f}")
+            sa = x["star_absence"]
+            L.append(f"    star absence: remaining top-6 projected d_min "
+                     f"{sa.get('proj_d_min', float('nan')):+.2f} (realised, research method "
+                     f"{sa.get('realised_d_min_research_method') or float('nan'):+.2f}); actual "
+                     f"- projection {sa.get('actual_minus_proj', float('nan')):+.2f}")
+            c = x["sample_coverage"]
+            L.append(f"    sampled minutes coverage: 80% {c['cov80']:.3f}, 50% {c['cov50']:.3f}"
+                     f" (n {c['n']})")
+            if v == "v1":
+                f = x["fallback"]
+                L.append(f"    S15 fallback to v0.5: {100 * f['share_available_rows']:.2f}% of "
+                         f"available candidate rows, {100 * f['share_eval_population']:.2f}% of "
+                         f"the evaluated population")
+                ns = x["lock45_v1_no_stage2"]
+                L.append(f"    v1 without the stage-2 terms (nmu_scale=0, share_coef=0): MAE "
+                         f"{ns['mae']:.3f} bias {ns['bias']:+.3f}")
+                d = x["params"]["diagnostics"].get("v1", {})
+                L.append(f"    fit: {d.get('n_rounds')} rounds, recon_cv "
+                         f"{x['params']['recon_cv']}, nmu_scale {x['params']['nmu_scale']}, "
+                         f"k_add {x['params']['k_add']}, share_coef {x['params']['share_coef']};"
+                         f" OOF train MAE (fixed pop) {d.get('oof_train_mae_fixed_pop')}; "
+                         f"top features {[n for n, _ in d.get('importance_gain_top20', [])[:8]]}")
+        for k, v in r["paired"].items():
+            L.append(f"- paired {k}: n={v['n']} v0.5 {v['mae_v05']:.3f} v1 {v['mae_v1']:.3f} "
+                     f"gain {v['gain']:+.3f} (SE {v['gain_se']:.3f}); bias v0.5 "
+                     f"{v['bias_v05']:+.3f} v1 {v['bias_v1']:+.3f}")
+        L.append(f"- seconds: fit {r['fit_seconds']}, total {r['seconds']}")
+    if ll:
+        L.append(f"## live-like slice ({ll['team_games']} team-games, {ll['days']} days, "
+                 f"{ll['scenarios']} report scenarios; {ll['seconds_incl_fit']} s incl. fit)")
+        for v in ("v0.5", "v1"):
+            x = ll["versions"][v]
+            L.append(f"- {v}: n={x['n']} MAE {x['mae']:.3f} (SE {x['mae_se']:.3f}) bias "
+                     f"{x['bias']:+.3f}; oracle same slice {_m(x['oracle_same_slice'])}; tiers "
+                     + "; ".join(f"{k} {t['mae']:.2f}/{t['bias']:+.2f}"
+                                 for k, t in x["by_tier"].items()))
+    cc = res.get("coach_coverage", {})
+    if cc.get("snapshot_check"):
+        L.append("## coach by date (N4)")
+        L.append(f"- stints: {cc['stints']}; snapshot agreement "
+                 f"{100 * cc['snapshot_check']['agree']:.1f}% of {cc['snapshot_check']['n']}"
+                 f" (season, team) snapshots; disagreements: "
+                 f"{[(d['season'], d['team'], d['snapshot']) for d in cc['snapshot_check']['disagree']]}")
+        L.append("- known coach share of regular-season team-games: " + ", ".join(
+            f"{s} {v['known']:.3f}" for s, v in cc.items()
+            if isinstance(v, dict) and "known" in v and v["known"] is not None))
+    L.append(f"## runtime: {res.get('latency')}; load {res['load_seconds']} s, total "
+             f"{res['total_seconds']} s")
+    return "\n".join(L)
 
 
 def format_report(res: dict) -> str:
@@ -373,6 +822,18 @@ def format_report(res: dict) -> str:
 if __name__ == "__main__":  # pragma: no cover - manual run
     import sys
     c = sqlite3.connect("file:var/courtside.db?mode=ro", uri=True)
+    if sys.argv[1:2] == ["v1"]:          # python -m courtside.proj.minutes_eval v1 [seasons]
+        from pathlib import Path
+        from .. import config
+        seasons = tuple(sys.argv[2:]) or ("2023-24", "2024-25")
+        out = run_v1(c, seasons, params_dir=config.data_dir() / "proj")
+        rep = config.data_dir() / "reports"
+        rep.mkdir(parents=True, exist_ok=True)
+        (rep / "minutes_v1_eval.json").write_text(json.dumps(out, default=float, indent=1))
+        txt = format_v1_report(out)
+        (rep / "minutes_v1_eval.txt").write_text(txt + "\n")
+        print(txt)
+        sys.exit(0)
     seasons = tuple(sys.argv[1:]) or ("2023-24", "2024-25")
     out = run(c, seasons)
     print(format_report(out))

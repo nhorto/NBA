@@ -614,7 +614,13 @@ If the gate fails, the `/dfs` page ships with a "beta" label.
 | T2.16 ∥ S | contest builder UI + guidance text | `templates/dfs_contest.html`, `web/dfs_view.py` | → | labels present ("simulated, not real", "proxy"); screenshots |
 | T2.17 S Mac | backtest extension: field-proxy percentiles, `fppg` optimizer, cash proxy, lineup calibration | `proj/backtest.py` | → | §7.3 table filled |
 
-### Phase 3: DFS MLOps and calibration (Nov 24 – Dec 5)
+### Phase 3: DFS MLOps and calibration (pulled forward to Oct 20 – 24 by the owner, 2026-10-19)
+
+**Owner request (2026-10-19):** track every DFS build and result from opening night, keep all data locally, and use real contest results to learn ownership. Order:
+1. **T3.0 nightly DFS grading** (new, before the first games are final on 2026-10-21): `proj/dfs/grade.py`, a postgame step. It writes `player_projection_grades` and `dfs_lineup_grades` (migration 12): actual vs projected, hindsight-optimal ratio, random-lineup percentile, and baselines (DK FPPG optimizer, salary-implied). It also estimates the cash line from uploaded standings when present, otherwise from the payout table plus a labelled proxy.
+2. **T3.1** registry specs, `dfs_metric_snapshots` (7d / 30d / season), alerts, `/health` DFS tab.
+3. **T3.2** upload page for DK standings CSVs ("Export lineups to CSV" after a contest: every entry's rank, points and lineup, plus %Drafted and FPTS per player) and the owner's own entries (`dfs_uploads`, `dfs_entries`, `dfs_contest_results`, `dfs_contest_ownership`). Real cash lines, top scores and ownership feed the ownership model (T2.11). Simulated and real results are always shown separately.
+4. **Retention:** simulation files are kept indefinitely (no 8-day prune); raw DK, report and line archives were already permanent.
 
 | ID | Task | Owned files | Acceptance |
 |---|---|---|---|

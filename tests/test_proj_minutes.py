@@ -289,3 +289,175 @@ def test_project_team_api(league):
     assert np.isclose((out["p_play"] * out["mean"]).sum(), 240.0 - out["reserve"].iloc[0])
     others = out[out["player_id"] != star].set_index("player_id")["mean"]
     assert (others - healthy.set_index("player_id")["mean"].reindex(others.index)).sum() > 20
+
+
+# --- v1 (T2.2): LightGBM base, coach by date, S15 fallback -----------------------------------
+
+def _stints():
+    rows = [("BOS", "2019-10-01", 1), ("NYK", "2019-10-01", 2), ("NYK", "2021-11-20", 3),
+            ("LAL", "2019-10-01", 4), ("LAL", "2022-10-01", 2), ("GSW", "2019-10-01", 5)]
+    df = pd.DataFrame(rows, columns=["team", "day", "coach_id"])
+    df["date"] = M._days(df["day"])
+    return df[["team", "date", "coach_id"]]
+
+
+V1_KW = {"max_rounds": 120, "gbm_params": {"min_data_in_leaf": 20}, "nmu_grid": (0.0, 1.0),
+         "k_grid": (0.0,), "share_grid": (0.0, 0.15), "cv_grid": (0.2,)}
+
+
+@pytest.fixture(scope="module")
+def league_v1():
+    pg, tg, pos = _league()
+    h = M.build_history(pg, tg, pos, stints=_stints())
+    prm = M.fit(h, "2022-23", window=3, log=lambda s: None, f_grid=(0.6,), version="v1",
+                v1_kw=V1_KW)
+    return pg, tg, pos, h, prm
+
+
+def _day(s):
+    return int(M._days(pd.Series([s]))[0])
+
+
+def test_v1_fit_api_and_json(league_v1):
+    _, _, _, h, prm = league_v1
+    assert M.default_params().version == "v0.5"
+    assert prm.version == "v1" and prm.gbm_model and prm.gbm_features
+    assert prm.train_seasons == ["2019-20", "2020-21", "2021-22"]
+    again = M.MinutesParams.from_json(prm.to_json())
+    assert again == prm
+    # the pipeline's Bundle rebuilds params with MinutesParams(**dict)
+    import json
+    assert M.MinutesParams(**json.loads(prm.to_json())) == prm
+    t = _target(h)
+    day = pd.Timestamp(int(t["date"].iloc[0]), unit="D")
+    team = t["team"].iloc[0]
+    healthy = M.project_team(h, prm, team, day, season="2022-23")
+    star = int(healthy.iloc[0]["player_id"])
+    out = M.project_team(h, prm, team, day, absent=[star], season="2022-23", spread=4.0)
+    assert {"player_id", "p_play", "mean", "exp_min", "pstart", "g1", "reserve"} <= set(out.columns)
+    assert out.set_index("player_id").loc[star, "mean"] == 0
+    # reconciliation: sum of p x E[min | plays] is the team total minus the reserve
+    for o in (healthy, out):
+        assert np.isclose((o["p_play"] * o["mean"]).sum(), 240.0 - o["reserve"].iloc[0])
+        assert o["mean"].max() <= M.CAP + 1e-9
+    # learned promotion: the others gain most of the absent star's minutes
+    others = out[out["player_id"] != star].set_index("player_id")["mean"]
+    assert (others - healthy.set_index("player_id")["mean"].reindex(others.index)).sum() > 20
+
+
+def test_v1_through_copula_scenarios(league_v1):
+    from courtside.proj import copula as C
+    _, _, _, h, prm = league_v1
+    t = _target(h)
+    panel = M.pregame_panel(h, t)
+    sm = C.ScenarioMinutes(panel, prm)
+    n = len(sm)
+    a = sm.project(np.zeros(n, bool))
+    ab = np.zeros(n, bool)
+    ab[int(np.argmax(a["mean"]))] = True
+    b = sm.project(ab)
+    for o in (a, b):
+        assert np.isclose((o["p_play"] * o["mean"]).sum(), 240.0 - o["reserve"].iloc[0])
+    assert b["mean"].to_numpy()[ab][0] == 0.0
+    # the scenario changes the GBM base of the teammates (scenario features)
+    assert not np.allclose(a["base"].to_numpy()[~ab], b["base"].to_numpy()[~ab])
+
+
+def test_v1_no_lookahead(league_v1):
+    pg, tg, pos, h, prm = league_v1
+    t = _target(h)
+    day = pd.Timestamp(int(t["date"].iloc[0]), unit="D")
+    dd = pd.to_datetime(pg["game_date"])
+    late = (dd >= day).to_numpy()
+    pg2 = pg.copy()
+    rng = np.random.default_rng(11)
+    pg2.loc[late, "min"] = rng.uniform(1, 45, late.sum())
+    pg2.loc[late, "pf"] = rng.integers(0, 7, late.sum())
+    pg2.loc[late, "started"] = rng.integers(0, 2, late.sum())
+    tg2 = tg.copy()
+    tg2.loc[(pd.to_datetime(tg2["game_date"]) >= day).to_numpy(), "pts"] = 1
+    h2 = M.build_history(pg2, tg2, pos, stints=_stints())
+    a = M.pregame_panel(h, t)
+    for other in (M.pregame_panel(h2, t), M.pregame_panel(M.truncate(h, day), t)):
+        pd.testing.assert_frame_equal(a.drop(columns=["k"]), other.drop(columns=["k"]),
+                                      check_dtype=False)
+    assert {"c_top7", "ew_vf", "abs_len_now", "team_rank", "tgs"} <= set(a.columns)
+    team = t["team"].iloc[0]
+    pa = M.project_team(h, prm, team, day, season="2022-23")
+    pb = M.project_team(h2, prm, team, day, season="2022-23")
+    pd.testing.assert_frame_equal(pa, pb)
+    # refitting with the test season scrambled gives the same model
+    late_s = (pg["season"] == "2022-23").to_numpy()
+    pg3 = pg.copy()
+    pg3.loc[late_s, "min"] = 20.0
+    h3 = M.build_history(pg3, tg, pos, stints=_stints())
+    prm3 = M.fit(h3, "2022-23", window=3, log=lambda s: None, f_grid=(0.6,), version="v1",
+                 v1_kw=V1_KW)
+    assert prm3.gbm_model == prm.gbm_model and prm3.to_json() == prm.to_json()
+
+
+def test_coach_by_date_continuity(league_v1):
+    _, _, _, h, _ = league_v1
+    cs = h.coach
+    nyk = cs.features(np.array(["NYK", "NYK"]), np.array([_day("2021-11-19"),
+                                                        _day("2021-11-20")]))
+    assert nyk["coach_id"].tolist() == [2, 3]
+    assert nyk["c_games"].iloc[1] == 0.0          # new coach: no games yet ...
+    assert np.isclose(nyk["c_top7"].iloc[1], cs.league[cs.league["date"] < _day("2021-11-20")]
+                      ["l_top7"].iloc[-1])        # ... so his concentration is the league's
+    # coach 2 moves NYK -> LAL: his history comes with him, his LAL count starts at 0
+    first_lal = int(h.tg[(h.tg["team"] == "LAL") & (h.tg["season"] == "2022-23")]["date"].min())
+    lal = cs.features(np.array(["LAL", "LAL"]), np.array([first_lal, first_lal + 60]))
+    assert (lal["coach_id"] == 2).all()
+    assert lal["c_games"].iloc[0] > 10 and lal["c_team_n"].iloc[0] == 0
+    assert lal["c_team_n"].iloc[1] > 0 and lal["c_games"].iloc[1] > lal["c_games"].iloc[0]
+    # strictly before the date: identical on the truncated state
+    d = first_lal + 30
+    a = cs.features(np.array(["LAL", "BOS"]), np.array([d, d]))
+    b = M.truncate(h, pd.Timestamp(d, unit="D")).coach.features(np.array(["LAL", "BOS"]),
+                                                              np.array([d, d]))
+    pd.testing.assert_frame_equal(a, b)
+    # no stints -> coach features missing, not wrong
+    h0 = M.build_history(*_league()[:3])
+    p0 = M.pregame_panel(h0, _target(h0))
+    assert p0["c_top7"].isna().all() and p0["t_top7"].isna().all()
+
+
+def test_curated_coach_stints():
+    snap = pd.DataFrame({"season": ["2024-25", "2026-27", "2026-27"],
+                         "team": ["SAC", "SAC", "CHI"], "coach_id": [57, 57, 201168],
+                         "coach_name": ["Doug Christie", "Doug Christie", "Tiago Splitter"]})
+    st = M.coach_stints(snap)
+    for team, g in st.groupby("team"):
+        assert g["date"].is_monotonic_increasing
+    assert set(M.COACH_STINTS) == set(st["team"])
+    # curated names resolve to snapshot ids; unknown coaches get a stable negative id
+    sac = st[st["team"] == "SAC"]
+    assert sac["coach_id"].iloc[-1] == 57 and len(sac[sac["coach_id"] == 57]) == 1
+    assert (st[st["coach_name"] == "Larry Drew"]["coach_id"] < 0).all()
+    assert M._coach_id("Larry Drew", {}) == M._coach_id("Larry Drew", {})
+    # Splitter (POR interim in the curated 2025-26) keeps his snapshot id when he moves to CHI
+    spl = st[st["coach_name"] == "Tiago Splitter"]
+    assert set(spl["team"]) == {"POR", "CHI"} and (spl["coach_id"] == 201168).all()
+
+
+def test_v1_fallback_s15(league_v1):
+    _, _, _, h, prm = league_v1
+    t = _target(h)
+    q05 = M.MinutesParams.from_json(prm.to_json())
+    q05.version = "v0.5"
+    # a player without box history (extra) and one with < V1_MIN_GP games keep the v0.5 base
+    ex = pd.DataFrame({"key": t["key"].iloc[0], "player_id": [999_999]})
+    p = M.pregame_panel(h, t, extra=ex)
+    p["absent"] = False
+    p.loc[p.index[0], "n_gp"] = M.V1_MIN_GP - 1
+    b1, pp1 = M.base_and_pplay(p, prm)
+    b0, pp0 = M.base_and_pplay(p, q05)
+    fb = ~M.v1_ok(p)
+    assert fb.sum() == 2 and np.allclose(b1[fb], b0[fb]) and not np.allclose(b1[~fb], b0[~fb])
+    assert np.allclose(pp1, pp0)             # P(plays | available) is the v0.5 model in both
+    # a panel without the v1 columns falls back entirely (and is counted)
+    M.V1_STATS.update(rows=0, fallback_rows=0, panel_fallback_calls=0)
+    bare = p.drop(columns=["ew_vf", "abs_len_now", "team_rank", "c_top7", "tgs"])
+    b2, _ = M.base_and_pplay(bare, prm)
+    assert np.allclose(b2, b0) and M.V1_STATS["panel_fallback_calls"] == 1

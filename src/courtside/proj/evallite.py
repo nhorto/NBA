@@ -66,38 +66,8 @@ ROTOGURU_FIRST = 2014             # first RotoGuru season (2014-15)
 
 
 # ============================================================================== statistics
-
-def paired_cluster(d: Sequence[float] | np.ndarray, clusters: Sequence | np.ndarray) -> dict:
-    """Mean of the paired differences `d` with the cluster-robust SE of the mean:
-    sqrt(G/(G-1) * sum_g (sum_{i in g}(d_i - dbar))^2) / n  (one-way, e.g. by date)."""
-    d = np.asarray(d, float)
-    n = len(d)
-    if n == 0:
-        return {"mean": float("nan"), "se": float("nan"), "n": 0, "n_clusters": 0}
-    cl = np.asarray(clusters)
-    mean = float(d.mean())
-    s = pd.Series(d - mean).groupby(cl).sum().to_numpy()
-    g = len(s)
-    se = float(np.sqrt(g / (g - 1) * (s ** 2).sum()) / n) if g > 1 else float("nan")
-    return {"mean": mean, "se": se, "n": int(n), "n_clusters": int(g)}
-
-
-def gain_pct(base_err: np.ndarray, model_err: np.ndarray, clusters) -> dict:
-    """% improvement of mean |model error| over mean |baseline error| on the same rows, with the
-    clustered SE of the paired difference expressed in the same %."""
-    base_err = np.asarray(base_err, float)
-    model_err = np.asarray(model_err, float)
-    pc = paired_cluster(base_err - model_err, clusters)
-    b = float(base_err.mean()) if len(base_err) else float("nan")
-    return {"gain_pct": 100.0 * pc["mean"] / b, "se_pct": 100.0 * pc["se"] / b,
-            "mae_model": float(model_err.mean()), "mae_base": b, "n": pc["n"],
-            "n_clusters": pc["n_clusters"]}
-
-
-def rate_se(ind: np.ndarray, clusters) -> dict:
-    """Mean of a 0/1 indicator (coverage) with the cluster-robust SE."""
-    pc = paired_cluster(np.asarray(ind, float), clusters)
-    return {"rate": pc["mean"], "se": pc["se"], "n": pc["n"]}
+# moved to proj/metrics.py (T2.1); re-exported here so the T1.0 API and tests are unchanged
+from .metrics import gain_pct, paired_cluster, rate_se  # noqa: E402,F401
 
 
 # ============================================================================== salary-implied
