@@ -72,6 +72,17 @@ No review item is rejected outright. Three are accepted with a different option 
 | The Vegas total explains 4.9% of team DK variance | Environment ranks below minutes and usage |
 | The scheduler uses fixed ET times | Lock-relative runs need a watcher (T1.6) |
 
+### 0.4 Build decisions (2026-10-19)
+
+| Decision | Evidence |
+|---|---|
+| **Next man up is probabilistic** (softmax over candidates by group, starts, EWMA and pair share), not the literal "top remaining player" (T1.2) | The literal rule is the real replacement starter only ~49% of the time. When it's wrong it projects +6.3 min against +0.6 realised. Lock−45 MAE is 0.06 better with softmax. |
+| **The 240-minute reconciliation spreads the gap by each player's variance**, not proportional `allocate_minutes` | Proportional pushed the errors onto starters: MAE +0.13 |
+| The S14 "two starters Out" test is measured on the **value play** (largest projected rise, P(play) ≥ 0.8), not the top healthy bench player | Value play: +9.2/+9.6 projected vs +8.9/+8.8 realised (passes). Top bench player: +5.0 vs +3.7/+4.0 (the ≥ 8 bar doesn't describe him). |
+| Star absence: the minutes path gives +1.4 Δmin for the remaining top 6. The per-minute bump (T1.1: other star +5.6%, rotation +3.3%) supplies the rest of the DK effect | T1.2/T1.1 walk-forward 2023-24/2024-25 |
+| **Margin noise is ~13.5–14.0, not 12.4.** The closing line's margin residual sd was 12.2–12.8 in 2016-19 but 13.5–13.9 in 2020-26. Total sd is 17.6–18.3. Residual corr(margin, total) ≈ 0 (\|r\| ≤ 0.08), and corr(\|margin\|, total residual) ≈ −0.03 (T0.8, `research/game_env_residuals.py`). | Sim and expected-minutes margin sd is fit per season on seasons < S, not hard-coded |
+| P(play) uses hierarchical Beta cells (status × report age × reason × role) fit on the 151 rescued days (T1.3). Report age barely matters within a status; re-reading the latest report at lock−45/−10 is what matters. | CV log-loss on D/Q/P .463 vs .503 for the old map |
+
 ## 1. Scope and design in one paragraph
 
 **Product scope:**
@@ -305,7 +316,7 @@ Path A takes team variance top-down from the market-calibrated game model, so M1
 - team-rebound and missed-FT-rebound rates (S7).
 
 The arithmetic behind it:
-- The market errors (sd 17.7 total, 12.4 margin) imply Var(team) ≈ 117 and Cov ≈ 40.
+- The market errors (sd 17.7 total, 13.7 margin in 2020-26; 12.4 was the 2016-19 level) imply Var(team) ≈ 125 and Cov ≈ 31.
 - iid possession noise alone is ≈ 130 per team, before pace (≈ 25) and rate uncertainty.
 - So an iid sim gives sd(margin) ≈ 16.4. Real games need a restoring force and a shared latent.
 
