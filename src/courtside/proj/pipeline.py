@@ -86,6 +86,15 @@ def _as_date(d) -> date:
     return date.fromisoformat(str(d)[:10])
 
 
+def _slate_day(pool) -> date:
+    """The NBA (Eastern) day of a slate without a ``dfs_slates`` row: its earliest tip in ET.
+    A 9:30 PM ET tip is the next day in UTC, so the UTC date of any one player is wrong."""
+    # DK start times look like "2026-10-20T19:00:00.0000000Z" (UTC, 7-digit fraction).
+    starts = [datetime.fromisoformat(p.start_time[:19]).replace(tzinfo=timezone.utc)
+              for p in pool.players if p.start_time]
+    return min(starts).astimezone(config.NBA_TZ).date()
+
+
 def _aware(at) -> datetime:
     if isinstance(at, str):
         at = datetime.fromisoformat(at.replace("Z", "+00:00"))
@@ -541,7 +550,7 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
         kind = k[0] if k else "manual"
     game_ids = json.loads(row[1]) if row and row[1] else sorted(
         {p.game_id for p in pool.players if p.game_id})
-    day = _as_date(row[0]) if row else _as_date(pool.players[0].start_time[:10])
+    day = _as_date(row[0]) if row else _slate_day(pool)
     dk2nba = IDS.nba_ids(conn, "dk", [p.dk_player_id for p in pool.players])
     extras: dict = {}
     starters: set = set()

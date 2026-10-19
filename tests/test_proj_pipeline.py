@@ -305,3 +305,14 @@ def test_fit_copula_smoke(conn):
     env = C.fit_env(conn, SEASON)
     assert env["env_seasons"] and all(s < SEASON for s in env["env_seasons"])
     assert C.CopulaParams.from_json(cp.to_json()) == cp
+
+
+def test_slate_day_is_the_eastern_day_of_the_earliest_tip():
+    from types import SimpleNamespace as NS
+    from datetime import date
+    from courtside.proj import pipeline
+    pool = NS(players=[NS(start_time="2026-10-21T01:30:00.0000000Z"),
+                       NS(start_time="2026-10-20T19:00:00.0000000Z")])
+    assert pipeline._slate_day(pool) == date(2026, 10, 20)
+    late_only = NS(players=[NS(start_time="2026-10-21T01:30:00.0000000Z")])
+    assert pipeline._slate_day(late_only) == date(2026, 10, 20)
