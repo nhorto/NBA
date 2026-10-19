@@ -14,7 +14,12 @@ perf_band     key band:<model>    last300 log_loss > benchmark + 2 * sqrt(ll_se^
                                    docs/MODEL.md last-3-season walk-forward constants. The 0.015
                                    is the season-to-season spread of log-loss, so the tolerance
                                    widens for a short window and is never tighter than a season.
-calibration   key calib:<model>   last300 ECE > 0.05, n >= 300 (message also quotes the market's ECE)
+calibration   key calib:<model>   Spiegelhalter z-test, |z| > 2.5 with n >= 200 on last300 OR on
+                                   season (critical if either |z| > 3.5); the message reports
+                                   both z values plus the logistic calibration slope. z > 0 =
+                                   overconfident. ECE is displayed but is NOT an alert: at
+                                   n=300 the market itself scores ~0.065, so any ECE threshold
+                                   is noise; the z-test has a known null distribution.
 bias          key bias:<model>:home|margin|total
                                    last300 |bias| > 2 SE, n >= 100 (home: predicted win rate vs
                                    actual; margin / total: predicted - actual, in points)
@@ -38,9 +43,9 @@ from . import monitor
 log = logging.getLogger("courtside.mlops.alerts")
 
 MIN_N = 100
-CALIB_MIN_N = 300
+CALIB_MIN_N = 200
+CALIB_Z_WARN, CALIB_Z_CRIT = 2.5, 3.5
 SE_K = 2.0
-ECE_MAX = 0.05
 PSI_WARN, PSI_CRIT = 0.25, 0.5
 DATA_WARN_RUNS, DATA_CRIT_RUNS = 2, 3
 SEASON_LL_SD = 0.015
@@ -121,8 +126,7 @@ def _metric_alerts(conn: sqlite3.Connection, as_of: date) -> list[dict]:
     snaps = monitor.snapshots(conn, as_of)
     if snaps and (as_of - date.fromisoformat(snaps[0]["as_of"])).days > METRICS_MAX_AGE_DAYS:
         return []
-    mkt = next((r for r in snaps if r["model"] == monitor.MARKET and r["window"] == "last300"),
-               None)
+    season = {r["model"]: r for r in snaps if r["window"] == "season"}
     for r in snaps:
         if r["window"] != "last300" or r["model"] == monitor.MARKET:
             continue
@@ -151,15 +155,32 @@ def _metric_alerts(conn: sqlite3.Connection, as_of: date) -> list[dict]:
                               f"allowed {tol:.4f} (benchmark: {src})",
                               {"model": model, "log_loss": r["log_loss"], "benchmark": bench,
                                "tolerance": tol, "n": n}))
-        # calibration
-        if r["ece"] is not None and n >= CALIB_MIN_N and r["ece"] > ECE_MAX:
-            out.append(_a(f"calib:{model}", "warn", "calibration",
-                          f"{model} probabilities are poorly calibrated: expected calibration "
-                          f"error {r['ece']:.3f} over {games} (limit {ECE_MAX:.2f}"
-                          + (f"; the market scored {mkt['ece']:.3f} on the same window"
-                             if mkt and mkt["ece"] is not None else "") + ")",
-                          {"model": model, "ece": r["ece"], "n": n,
-                           "market_ece": mkt["ece"] if mkt else None}))
+        # calibration: Spiegelhalter z on last300 and on the season
+        z300 = det.get("spiegelhalter_z") if n >= CALIB_MIN_N else None
+        sr = season.get(model)
+        zs = (sr["details"].get("spiegelhalter_z") if sr and (sr["n"] or 0) >= CALIB_MIN_N
+              else None)
+        sig = [(w, z, row) for w, z, row in (("last 300 games", z300, r), ("the season", zs, sr))
+               if z is not None and abs(z) > CALIB_Z_WARN]
+        if sig:
+            w, z, row = sig[0]
+            slope = row["details"].get("cal_slope")
+            over = (slope < 1) if slope is not None else (z > 0)
+            what = ("overconfident: its favorites win less often than predicted" if over else
+                    "underconfident: its favorites win more often than predicted")
+            parts = []
+            if z300 is not None:
+                parts.append(f"z={z300:+.1f} over the last 300 games (n={n})")
+            if zs is not None:
+                parts.append(f"z={zs:+.1f} over the season (n={sr['n']})")
+            sl = f"calibration slope {slope:.2f} over {w}; " if slope is not None else ""
+            sev = "critical" if any(abs(x[1]) > CALIB_Z_CRIT for x in sig) else "warn"
+            out.append(_a(f"calib:{model}", sev, "calibration",
+                          f"{model} is {what} ({sl}{'; '.join(parts)}; alert when |z| > "
+                          f"{CALIB_Z_WARN})",
+                          {"model": model, "z_last300": z300, "z_season": zs, "slope": slope,
+                           "intercept": row["details"].get("cal_intercept"), "n": n,
+                           "ece": r["ece"]}))
         # biases
         if n >= MIN_N:
             hb = (r["home_pred"] - r["home_actual"]) if r["home_pred"] is not None else None

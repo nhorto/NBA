@@ -141,9 +141,10 @@ def _status(args) -> int:
               "(or --replay-from D --to D)")
     else:
         print("\nPerformance (log-loss lower is better; vs mkt = paired log-loss minus market "
-              "on the same games, negative beats it)")
+              "on the same games, negative beats it;\nslope <1 = overconfident, >1 = "
+              "underconfident; calz = Spiegelhalter z, |z|>2.5 is significant, >0 overconfident)")
         hdr = (f"{'model':<24}{'window':<8}{'n':>4}  {'logloss':>7} {'brier':>6} {'acc':>6} "
-               f"{'ece':>5}  {'vs mkt (+-se)':>16}  {'home p/act':>11} {'mgn bias':>8} "
+               f"{'ece':>5} {'slope':>5} {'calz':>5}  {'vs mkt (+-se)':>16}  {'home p/act':>11} {'mgn bias':>8} "
                f"{'tot bias':>8}")
         print(hdr)
         for m in models:
@@ -155,9 +156,11 @@ def _status(args) -> int:
                     f"{r['ll_diff_vs_mkt']:+.4f}+-{r['ll_diff_se'] or 0:.4f}"
                 hm = "-" if r["home_pred"] is None else \
                     f"{r['home_pred']:.1%}/{r['home_actual']:.1%}"
+                d = r["details"]
                 print(f"{m:<24}{w:<8}{r['n']:>4}  {_f(r['log_loss'], '{:.4f}'):>7} "
                       f"{_f(r['brier'], '{:.4f}'):>6} {_f(r['accuracy'], '{:.1%}'):>6} "
-                      f"{_f(r['ece'], '{:.3f}'):>5}  {vs:>16}  {hm:>11} "
+                      f"{_f(r['ece'], '{:.3f}'):>5} {_f(d.get('cal_slope'), '{:.2f}'):>5} "
+                      f"{_f(d.get('spiegelhalter_z'), '{:+.1f}'):>5}  {vs:>16}  {hm:>11} "
                       f"{_f(r['margin_bias'], '{:+.2f}'):>8} {_f(r['total_bias'], '{:+.2f}'):>8}")
     print("\nOpen alerts")
     al = alerts.list_alerts(conn)

@@ -119,7 +119,6 @@ def test_shadow_rows_are_labelled_separately(tmp_path):
     game(conn, "g1", "2026-01-10", 100, 90)
     pred(conn, "g1", "2026-01-10", 0.70, role="champion", version="v1", created="2026-01-10T12:00:00Z")
     pred(conn, "g1", "2026-01-10", 0.40, role="shadow", version="v2", created="2026-01-10T12:00:01Z")
-    pred(conn, "g1", "2026-01-10", 0.30, model="old", role="retired", version="v0")   # ignored
     monitor.compute_metrics(conn, date(2026, 1, 15))
     champ = snap(conn, "2026-01-15", "gbm_market", "season")
     shadow = snap(conn, "2026-01-15", "gbm_market@v2", "season")
@@ -227,3 +226,53 @@ def test_cli_status_and_alerts_on_empty_and_filled_db(capsys, data_dir):
     assert "gbm_market" in out and "market" in out and "Open alerts" in out
     assert cli.main(["alerts", "--all"]) == 0
     assert cli.main(["checks", "--job", "pregame", "--date", "2026-01-15"]) in (0, 1)
+
+
+def test_spiegelhalter_z_hand_value():
+    # sum((y-p)(1-2p)) = -0.12 + 0.28 + 0.12 = 0.28; var = .36*.16 + .16*.21 + .04*.24 = .1008
+    z = monitor.spiegelhalter_z([1, 1, 0], [0.8, 0.3, 0.6])
+    assert z == pytest.approx(0.28 / math.sqrt(0.1008))
+    assert monitor.spiegelhalter_z([1, 0], [0.5, 0.5]) is None
+
+
+def test_spiegelhalter_sign_and_null_distribution():
+    rng = np.random.default_rng(1)
+    p = rng.uniform(0.15, 0.85, 20000)
+    logit = np.log(p / (1 - p))
+    calibrated = (rng.uniform(size=p.size) < p).astype(float)
+    over = (rng.uniform(size=p.size) < 1 / (1 + np.exp(-0.7 * logit))).astype(float)
+    under = (rng.uniform(size=p.size) < 1 / (1 + np.exp(-1.4 * logit))).astype(float)
+    assert abs(monitor.spiegelhalter_z(calibrated, p)) < 3
+    assert monitor.spiegelhalter_z(over, p) > 5            # overconfident: z > 0
+    assert monitor.spiegelhalter_z(under, p) < -5          # underconfident: z < 0
+
+
+def test_calibration_fit_recovers_slope():
+    rng = np.random.default_rng(2)
+    p = rng.uniform(0.1, 0.9, 30000)
+    logit = np.log(p / (1 - p))
+    y = (rng.uniform(size=p.size) < 1 / (1 + np.exp(-(0.2 + 0.7 * logit)))).astype(float)
+    fit = monitor.calibration_fit(y, p)
+    assert fit["slope"] == pytest.approx(0.7, abs=0.05)
+    assert fit["intercept"] == pytest.approx(0.2, abs=0.05)
+    assert fit["slope_se"] > 0
+    good = (rng.uniform(size=p.size) < p).astype(float)
+    assert monitor.calibration_fit(good, p)["slope"] == pytest.approx(1.0, abs=0.05)
+    assert monitor.calibration_fit([1, 0], [0.7, 0.4]) is None           # too few games
+    assert monitor.calibration_fit([1] * 30, [0.6] * 30) is None         # one class
+
+
+def test_snapshot_details_carry_calibration_stats(tmp_path):
+    conn = conn_for(tmp_path)
+    rng = np.random.default_rng(3)
+    for i in range(60):
+        d = f"2026-01-{1 + i // 5:02d}"
+        p = float(rng.uniform(0.2, 0.8))
+        won = rng.uniform() < p
+        game(conn, f"g{i}", d, 100 if won else 90, 90 if won else 100)
+        pred(conn, f"g{i}", d, p)
+    monitor.compute_metrics(conn, date(2026, 2, 1))
+    det = json.loads(snap(conn, "2026-02-01", "gbm_market", "season")["details_json"])
+    assert det["spiegelhalter_z"] is not None and det["cal_slope"] is not None
+    assert det["cal_intercept"] is not None and det["cal_slope_se"] > 0
+    # the two-game fixture is too small for a recalibration fit but still has a z

@@ -212,6 +212,44 @@ def _loglik(y: np.ndarray, p: np.ndarray) -> np.ndarray:
     return -(y * np.log(p) + (1 - y) * np.log(1 - p))
 
 
+def spiegelhalter_z(y, p) -> float | None:
+    """Spiegelhalter's z for probability calibration:
+    z = sum((y-p)(1-2p)) / sqrt(sum((1-2p)^2 p(1-p))). ~N(0,1) when p is calibrated. Positive z
+    means overconfident (favorites win less than predicted / underdogs more), negative means
+    underconfident. None when the variance is zero (e.g. every p is 0.5)."""
+    y, p = np.asarray(y, float), np.asarray(p, float)
+    var = float(np.sum((1 - 2 * p) ** 2 * p * (1 - p)))
+    if len(y) == 0 or var <= 0:
+        return None
+    return float(np.sum((y - p) * (1 - 2 * p)) / np.sqrt(var))
+
+
+def calibration_fit(y, p, min_n: int = 20) -> dict | None:
+    """Logistic recalibration y ~ intercept + slope * logit(p), by Newton-Raphson.
+    slope < 1: overconfident (probabilities too extreme); slope > 1: underconfident; a perfectly
+    calibrated model has intercept 0 and slope 1. None for tiny / one-class / separable data."""
+    y, p = np.asarray(y, float), np.asarray(p, float)
+    if len(y) < min_n or y.min() == y.max():
+        return None
+    pc = np.clip(p, 1e-6, 1 - 1e-6)
+    X = np.column_stack([np.ones(len(pc)), np.log(pc / (1 - pc))])
+    if np.ptp(X[:, 1]) < 1e-9:
+        return None
+    beta = np.array([0.0, 1.0])
+    ridge = 1e-8 * np.eye(2)
+    for _ in range(50):
+        mu = 1 / (1 + np.exp(-X @ beta))
+        H = X.T @ (X * (mu * (1 - mu))[:, None]) + ridge
+        step = np.linalg.solve(H, X.T @ (y - mu))
+        beta = beta + step
+        if np.max(np.abs(step)) < 1e-9:
+            break
+    if not np.all(np.isfinite(beta)) or np.max(np.abs(beta)) > 20:
+        return None
+    se = float(np.sqrt(np.linalg.inv(H)[1, 1]))
+    return {"intercept": float(beta[0]), "slope": float(beta[1]), "slope_se": se}
+
+
 def window_metrics(s: Series, lo: int, hi: int) -> dict | None:
     """Metrics for rows [lo, hi) of a series, or None when empty."""
     n = hi - lo
@@ -249,11 +287,17 @@ def window_metrics(s: Series, lo: int, hi: int) -> dict | None:
                          "pred": _round(c["mean_p"], 4), "actual": _round(c["frac_pos"], 4)}
                         for c in cal],
         "ll_se": _round(_se(ll)),
+        "spiegelhalter_z": _round(spiegelhalter_z(y, p), 4),
         "home_bias_se": _round(_se(p - y)),
         "margin_bias_se": _round(_se(mdiff)), "n_margin": int((~np.isnan(mdiff)).sum()),
         "total_bias_se": _round(_se(tdiff)), "n_total": int((~np.isnan(tdiff)).sum()),
         "first_day": str(s.days[lo]), "last_day": str(s.days[hi - 1]),
     }
+    fit = calibration_fit(y, p)
+    out["details"].update(
+        cal_intercept=_round(fit["intercept"], 4) if fit else None,
+        cal_slope=_round(fit["slope"], 4) if fit else None,
+        cal_slope_se=_round(fit["slope_se"], 4) if fit else None)
     versions = sorted({v for v in s.versions[lo:hi] if v})
     if versions:
         out["details"]["versions"] = versions

@@ -92,12 +92,48 @@ def test_performance_vs_market(tmp_path):
     assert alerts.evaluate(conn, AS_OF) == []
 
 
-def test_calibration_needs_300(tmp_path):
+def bad_cal(z, slope=0.82):
+    return {"spiegelhalter_z": z, "cal_slope": slope}
+
+
+def test_high_ece_alone_never_alerts(tmp_path):
     conn = conn_for(tmp_path)
-    put_snapshot(conn, ece=0.08, n=250)
+    put_snapshot(conn, ece=0.2)
     assert alerts.evaluate(conn, AS_OF) == []
-    put_snapshot(conn, ece=0.08, n=300)
-    assert keys(alerts.evaluate(conn, AS_OF)) == {"calib:gbm_market"}
+
+
+def test_calibration_z_test_thresholds_and_wording(tmp_path):
+    conn = conn_for(tmp_path)
+    put_snapshot(conn, n=199, details=bad_cal(4.0))                 # below the n floor
+    assert alerts.evaluate(conn, AS_OF) == []
+    put_snapshot(conn, n=300, details=bad_cal(2.4))                 # not significant
+    assert alerts.evaluate(conn, AS_OF) == []
+    put_snapshot(conn, n=300, details=bad_cal(2.6))
+    a = alerts.evaluate(conn, AS_OF)[0]
+    assert (a["key"], a["severity"]) == ("calib:gbm_market", "warn")
+    assert "gbm_market is overconfident: its favorites win less often than predicted" in a["message"]
+    assert "calibration slope 0.82" in a["message"] and "z=+2.6" in a["message"]
+    put_snapshot(conn, n=300, details=bad_cal(3.6))
+    assert alerts.evaluate(conn, AS_OF)[0]["severity"] == "critical"
+    # negative z with slope > 1 reads as underconfident
+    put_snapshot(conn, n=300, details=bad_cal(-2.9, slope=1.2))
+    a = alerts.evaluate(conn, AS_OF)[0]
+    assert "underconfident: its favorites win more often than predicted" in a["message"]
+    assert "z=-2.9" in a["message"]
+
+
+def test_calibration_season_window_also_alerts_and_both_are_reported(tmp_path):
+    conn = conn_for(tmp_path)
+    put_snapshot(conn, n=300, details=bad_cal(0.9))
+    put_snapshot(conn, window="season", n=838, details=bad_cal(2.8, slope=0.79))
+    a = alerts.evaluate(conn, AS_OF)[0]
+    assert a["key"] == "calib:gbm_market" and a["severity"] == "warn"
+    assert "z=+0.9 over the last 300 games" in a["message"]
+    assert "z=+2.8 over the season (n=838)" in a["message"]
+    assert "calibration slope 0.79 over the season" in a["message"]
+    # season n below the floor is ignored
+    put_snapshot(conn, window="season", n=150, details=bad_cal(2.8))
+    assert [x["status"] for x in alerts.evaluate(conn, AS_OF)] == ["resolved"]
 
 
 def test_expected_band_uses_docs_constant_then_registry(tmp_path):
@@ -118,25 +154,25 @@ def test_expected_band_uses_docs_constant_then_registry(tmp_path):
 
 def test_dedupe_update_and_resolve(tmp_path):
     conn = conn_for(tmp_path)
-    put_snapshot(conn, ece=0.08)
+    put_snapshot(conn, details=bad_cal(2.8))
     first = alerts.evaluate(conn, AS_OF)
     assert first[0]["event"] == "opened"
-    put_snapshot(conn, ece=0.09)
+    put_snapshot(conn, details=bad_cal(3.1))
     second = alerts.evaluate(conn, AS_OF)
-    assert second[0]["event"] == "updated" and "0.090" in second[0]["message"]
+    assert second[0]["event"] == "updated" and "z=+3.1" in second[0]["message"]
     rows = conn.execute("SELECT * FROM alerts").fetchall()
     assert len(rows) == 1 and rows[0]["status"] == "open"
     assert rows[0]["created_at"] <= rows[0]["updated_at"]
     third = alerts.evaluate(conn, AS_OF)
     assert third[0]["event"] in ("open", "updated")
     assert conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0] == 1
-    put_snapshot(conn, ece=0.02)
+    put_snapshot(conn, details=bad_cal(0.4))
     out = alerts.evaluate(conn, AS_OF)
     assert out[0]["event"] == "resolved"
     row = conn.execute("SELECT * FROM alerts").fetchone()
     assert row["status"] == "resolved" and row["resolved_at"]
     # firing again opens a NEW row (the old one stays as history)
-    put_snapshot(conn, ece=0.08)
+    put_snapshot(conn, details=bad_cal(2.8))
     alerts.evaluate(conn, AS_OF)
     assert [r["status"] for r in conn.execute("SELECT status FROM alerts ORDER BY id")] == \
         ["resolved", "open"]
@@ -276,7 +312,7 @@ def test_run_after_job_is_guarded_and_summarises(tmp_path):
 
 def test_stale_metric_snapshots_raise_no_alerts(tmp_path):
     conn = conn_for(tmp_path)
-    put_snapshot(conn, ece=0.08)
+    put_snapshot(conn, details=bad_cal(2.8))
     assert keys(alerts.evaluate(conn, AS_OF)) == {"calib:gbm_market"}
     out = alerts.evaluate(conn, date(2026, 3, 1))           # snapshot is 28 days old
     assert [(a["key"], a["event"]) for a in out] == [("calib:gbm_market", "resolved")]
