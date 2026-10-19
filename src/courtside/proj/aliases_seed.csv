@@ -1,0 +1,9 @@
+# Hand-verified DK / RotoGuru name -> NBA player_id aliases, loaded by courtside.proj.ids.
+# team: tricode, or - for any team. Rows already in player_aliases are never overwritten.
+source,name,team,player_id,note
+dk,EJ Harkless,DET,1641989,EJ = Elijah Harkless (21 min 2025-26); only active Harkless
+rotoguru,Enes Kanter,-,202683,legally renamed Enes Freedom; player_games carries the new name
+rotoguru,Jose Barea,-,200826,J.J. Barea
+rotoguru,Nene Hilario,-,2403,Nene
+rotoguru,Maurice Williams,-,2590,Mo Williams
+rotoguru,Luigi Datome,-,203540,Gigi Datome
