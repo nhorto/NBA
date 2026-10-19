@@ -15,9 +15,16 @@ of `F` is exactly what `features.build_features` does with `mkt_*` and `lineup_*
 (tests pin the equivalence), without rebuilding 100k rows of features.
 
 The cache lives in `data_dir()/models/<day>/bundle.pkl` and is keyed by the newest game date
-(and count) in `team_games` before the day: new results invalidate it, a new line or injury
-report does not. Leakage: nothing here sees a result on/after the day; for past days the engine
-state used for lineups is rebuilt from games before the day only.
+(and count) in `team_games` before the day and by the registered versions being fitted (version
+id + params): new results or a promotion invalidate it, a new line or injury report does not.
+
+Which models are fitted is a set of `ModelSpec`s (`resolve_specs`): the registry champion of
+each production model (`mlops.registry`; params injected into the fit, `gbm.FROZEN` when the
+registry is empty or unreadable) plus any `shadow` versions, keyed by their version id. Shadows
+are fitted and priced like the champions but stored with role='shadow' and never shown.
+
+Leakage: nothing here sees a result on/after the day; for past days the engine state used for
+lineups is rebuilt from games before the day only.
 """
 
 from __future__ import annotations
@@ -41,7 +48,7 @@ from .model import gbm, players as pl
 
 log = logging.getLogger("courtside.production")
 
-CACHE_VERSION = 3   # 3: last-season priors in the rolling pace/ortg/drtg/total features
+CACHE_VERSION = 4   # 4: registry versions (champion/shadow specs) in the key
 KEEP_DAYS = 8                    # model dirs older than this are pruned
 
 # Factors worth showing a reader. `market` is the line itself, `season_phase` and
@@ -104,6 +111,69 @@ class Bundle:
     fit_seconds: float
     timings: dict = field(default_factory=dict)
     cache: str = "miss"                   # "hit" | "miss" | "refit" (set by load_or_fit)
+    versions: dict = field(default_factory=dict)   # scorer key -> {base, version_id, role}
+
+
+# ------------------------------------------------------------------ model specs (registry)
+
+@dataclass
+class ModelSpec:
+    """One model to fit. `key` names its scorer and its stored `predictions.model`: the base
+    name (gbm_market / gbm_opinion) for a champion, the version id for a shadow (so the two
+    never collide on the predictions primary key). `fixed` is the gbm.FROZEN-format params;
+    None means gbm.FROZEN[base]."""
+    key: str
+    base: str
+    version_id: str | None = None
+    role: str = "champion"
+    fixed: dict | None = None
+
+    def params(self) -> dict | None:
+        return self.fixed if self.fixed is not None else gbm.FROZEN.get(self.base)
+
+
+def default_specs(names: tuple[str, ...]) -> dict[str, ModelSpec]:
+    """Unregistered champions with gbm.FROZEN params (no registry, tests, old callers)."""
+    return {n: ModelSpec(n, n) for n in names}
+
+
+def resolve_specs(conn, names: tuple[str, ...], *, shadows: bool = True) -> dict[str, ModelSpec]:
+    """The registry champion of each of `names` (+ shadows of those models). Never raises: an
+    unmigrated/empty registry or unreadable params fall back to gbm.FROZEN untagged, and a
+    shadow whose params can't be read is skipped."""
+    specs = default_specs(names)
+    try:
+        from .mlops import registry as mreg
+        pv = mreg.production_versions(conn)
+    except Exception as e:  # noqa: BLE001 - the registry must never break predictions
+        log.warning("model registry unavailable (%s: %s); using gbm.FROZEN", type(e).__name__, e)
+        return specs
+    for n in names:
+        c = pv["champions"].get(n)
+        if c is None:
+            continue
+        try:
+            specs[n] = ModelSpec(n, n, c["version_id"], "champion",
+                                 mreg.fixed_from_params(c["params"]))
+        except Exception as e:  # noqa: BLE001
+            log.warning("champion %s params unreadable (%s); using gbm.FROZEN untagged",
+                        c["version_id"], e)
+    if shadows:
+        for v in pv["shadows"]:
+            if v["model_name"] not in names:
+                continue
+            try:
+                specs[v["version_id"]] = ModelSpec(v["version_id"], v["model_name"],
+                                                   v["version_id"], "shadow",
+                                                   mreg.fixed_from_params(v["params"]))
+            except Exception as e:  # noqa: BLE001
+                log.warning("shadow %s skipped: params unreadable (%s)", v["version_id"], e)
+    return specs
+
+
+def versions_of(specs: dict[str, ModelSpec]) -> dict[str, dict]:
+    return {k: {"base": s.base, "version_id": s.version_id, "role": s.role}
+            for k, s in specs.items()}
 
 
 # ------------------------------------------------------------------ cache
@@ -112,15 +182,20 @@ def models_dir(day) -> Path:
     return config.data_dir() / "models" / str(day)
 
 
-def cache_key(conn, day, game_ids: list[str], names: tuple[str, ...]) -> dict:
+def cache_key(conn, day, game_ids: list[str], names: tuple[str, ...],
+              specs: dict[str, ModelSpec] | None = None) -> dict:
     """What a fitted day depends on: the training set (newest game date and row count before
-    `day`), the day's slate, the frozen hyperparameters and the code version."""
+    `day`), the day's slate, the models (registered version ids, roles and the params each is
+    fit with) and the code version."""
+    specs = specs or default_specs(tuple(names))
     r = conn.execute("SELECT MAX(game_date), COUNT(*) FROM team_games WHERE game_date < ?",
                      (str(day),)).fetchone()
-    frozen = hashlib.sha1(repr({n: gbm.FROZEN.get(n) for n in names}).encode()).hexdigest()[:12]
+    frozen = hashlib.sha1(repr({k: (s.base, s.version_id, s.role, s.params())
+                                for k, s in sorted(specs.items())}).encode()).hexdigest()[:12]
     return {"v": CACHE_VERSION, "day": str(day), "through": r[0], "n_team_games": r[1],
             "slate": hashlib.sha1("|".join(sorted(game_ids)).encode()).hexdigest()[:12],
-            "frozen": frozen, "models": list(names)}
+            "frozen": frozen, "models": list(specs),
+            "versions": {k: s.version_id for k, s in sorted(specs.items())}}
 
 
 def load_bundle(day, key: dict) -> Bundle | None:
@@ -161,10 +236,19 @@ def prune(day, keep_days: int = KEEP_DAYS) -> None:
 
 # ------------------------------------------------------------------ fitting
 
-def registry(conn):
-    """The production model factories (win-prob + opinion) sharing one engine/feature cache."""
+def registry(conn, specs: dict[str, ModelSpec] | None = None):
+    """The production model factories (win-prob + opinion) sharing one engine/feature cache.
+    With `specs`, one factory per spec key fit with that spec's params (injected `fixed`
+    instead of the hard-wired gbm.FROZEN), on the same feature cache."""
     from .model import player_model
-    return player_model.make_registry(lambda: pl.load_player_games(conn), conn=conn)
+    reg, cache = player_model.make_registry(lambda: pl.load_player_games(conn), conn=conn)
+    if specs:
+        fc = reg[gbm.PRODUCTION_WINPROB]().fc
+        memo = gbm.FitMemo()
+        for k, s in specs.items():
+            reg[k] = (lambda b=s.base, f=s.params():
+                      gbm.GBMModel(fc, b, memo=memo, fixed=f, **gbm.SPECS[b]))
+    return reg, cache
 
 
 def has_player_rows(conn, day) -> bool:
@@ -182,11 +266,14 @@ def player_state(conn, train: pd.DataFrame, players: pd.DataFrame | None = None)
 
 
 def fit_bundle(conn, day, train: pd.DataFrame, test: pd.DataFrame,
-               names: tuple[str, ...], key: dict, reg=None) -> Bundle:
-    """Cold path: engine pass, fit every model on `train`, features for `test`'s games."""
+               names: tuple[str, ...], key: dict, reg=None,
+               specs: dict[str, ModelSpec] | None = None) -> Bundle:
+    """Cold path: engine pass, fit every model on `train`, features for `test`'s games. A
+    shadow whose fit fails is dropped (logged); a champion's failure raises."""
     t0 = time.time()
-    reg = reg or registry(conn)[0]
-    models = {n: reg[n]() for n in names}
+    specs = specs or default_specs(tuple(names))
+    reg = reg or registry(conn, specs)[0]
+    models = {k: reg[k]() for k in specs}
     m0 = next(iter(models.values()))
     fc = m0.fc
     live = not has_player_rows(conn, day)
@@ -201,8 +288,14 @@ def fit_bundle(conn, day, train: pd.DataFrame, test: pd.DataFrame,
         state = None                   # built lazily from `train` (no peeking at the day's box)
     tm["engine_features"] = round(time.time() - t, 1)
     t = time.time()
-    for m in models.values():
-        m.fit(train)
+    for k, m in list(models.items()):
+        try:
+            m.fit(train)
+        except Exception as e:  # noqa: BLE001
+            if specs[k].role != "shadow":
+                raise
+            log.warning("shadow %s fit failed (%s: %s); skipped", k, type(e).__name__, e)
+            del models[k]
     tm["fit"] = round(time.time() - t, 1)
     F = m0._test_features(test).reset_index(drop=True)
     scorers = {n: Scorer.from_model(m) for n, m in models.items()}
@@ -210,19 +303,21 @@ def fit_bundle(conn, day, train: pd.DataFrame, test: pd.DataFrame,
                   game_ids=list(test["game_id"]), state=state, train_games=int(len(train)),
                   train_through=train["game_date"].max().strftime("%Y-%m-%d"),
                   fitted_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                  fit_seconds=time.time() - t0, timings=tm)
+                  fit_seconds=time.time() - t0, timings=tm,
+                  versions=versions_of({k: specs[k] for k in models}))
 
 
 def load_or_fit(conn, day, train: pd.DataFrame, test: pd.DataFrame,
-                names: tuple[str, ...], *, use_cache: bool = True, refit: bool = False
-                ) -> Bundle:
-    key = cache_key(conn, day, list(test["game_id"]), names)
+                names: tuple[str, ...], *, use_cache: bool = True, refit: bool = False,
+                specs: dict[str, ModelSpec] | None = None) -> Bundle:
+    specs = specs or default_specs(tuple(names))
+    key = cache_key(conn, day, list(test["game_id"]), tuple(specs), specs)
     if use_cache and not refit:
         b = load_bundle(day, key)
         if b is not None:
             b.cache = "hit"
             return b
-    b = fit_bundle(conn, day, train, test, names, key)
+    b = fit_bundle(conn, day, train, test, tuple(specs), key, specs=specs)
     b.cache = "refit" if refit else "miss"
     if use_cache:
         save_bundle(b)

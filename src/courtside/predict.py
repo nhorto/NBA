@@ -21,6 +21,14 @@ Fits are cached per NBA day (`production.py`): the first run of the day fits (~1
 runs only re-price with fresh lines and injuries. Any other `model=` name (the Elo baselines)
 still goes through the one-model path below.
 
+Lineage (docs/MLOPS.md): each production row carries `model_version` (the registry version that
+produced it, `mlops.registry`; NULL when the registry is empty) and `role`:
+
+* `champion`: `model` = gbm_market / gbm_opinion, shown to readers.
+* `shadow`: `model` = the shadow's version id (e.g. "gbm_opinion@v2-1a2b3c4d"), logged for the
+  online gate only. Readers (`latest_pretip`, the Brief, the scorecard) only see
+  `role IS NULL OR role = 'champion'` (NULL = rows from before the registry).
+
 No leakage, by construction
 ---------------------------
 * Training data is `games` rows with `game_date < day`, nothing else.
@@ -321,20 +329,43 @@ def _predict_one_day(conn: sqlite3.Connection, full: pd.DataFrame, day: date, mo
     return out
 
 
+def has_lineage(conn: sqlite3.Connection) -> bool:
+    """Does `predictions` have the lineage columns (migration 5)?"""
+    return any(r[1] == "role" for r in conn.execute("PRAGMA table_info(predictions)"))
+
+
+def shown_roles_sql(conn: sqlite3.Connection, alias: str = "") -> str:
+    """SQL condition (prefixed with AND) restricting prediction rows to what readers may see:
+    champion rows and legacy rows without a role. Empty on a pre-lineage schema."""
+    if not has_lineage(conn):
+        return ""
+    a = f"{alias}." if alias else ""
+    return f" AND ({a}role IS NULL OR {a}role = 'champion')"
+
+
 def store_predictions(conn: sqlite3.Connection, rows: list[dict]) -> int:
     """Append rows to `predictions` (INSERT OR REPLACE only collides on an identical
-    (game_id, model, created_at) key, i.e. a rerun of the same virtual time)."""
+    (game_id, model, created_at) key, i.e. a rerun of the same virtual time). Lineage columns
+    (`model_version`, `role`) are written when the schema has them."""
     if not rows:
         return 0
+    cols = ["game_id", "model", "created_at", "home_win_prob", "home_margin", "total",
+            "market_home_spread", "market_total", "market_home_prob", "inputs_json", "nba_day",
+            "home", "away"]
+    lineage = has_lineage(conn)
+    if lineage:
+        cols += ["model_version", "role"]
+    vals = []
+    for r in rows:
+        v = [r["game_id"], r["model"], r["created_at"], r["home_win_prob"], r["home_margin"],
+             r["total"], r["market_home_spread"], r["market_total"], r["market_home_prob"],
+             json.dumps(r["inputs"], allow_nan=False), r["nba_day"], r["home"], r["away"]]
+        if lineage:
+            v += [r.get("model_version"), r.get("role")]
+        vals.append(v)
     with conn:
-        conn.executemany(
-            "INSERT OR REPLACE INTO predictions (game_id, model, created_at, home_win_prob, "
-            "home_margin, total, market_home_spread, market_total, market_home_prob, "
-            "inputs_json, nba_day, home, away) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            [(r["game_id"], r["model"], r["created_at"], r["home_win_prob"], r["home_margin"],
-              r["total"], r["market_home_spread"], r["market_total"], r["market_home_prob"],
-              json.dumps(r["inputs"], allow_nan=False), r["nba_day"], r["home"], r["away"])
-             for r in rows])
+        conn.executemany(f"INSERT OR REPLACE INTO predictions ({', '.join(cols)}) "
+                         f"VALUES ({','.join('?' * len(cols))})", vals)
     return len(rows)
 
 
@@ -343,8 +374,8 @@ def _is_production(model: str | None) -> bool:
 
 
 def _flat(rows: list[dict]) -> list[dict]:
-    """Headline rows with their attached `opinion` row -> every row to store."""
-    return [x for r in rows for x in (r, r.get("opinion")) if x]
+    """Headline rows with their attached `opinion` and `shadows` rows -> every row to store."""
+    return [x for r in rows for x in (r, r.get("opinion"), *r.get("shadows", ())) if x]
 
 
 def predict_day(conn: sqlite3.Connection, day, *, model: str | None = None, store: bool = True,
@@ -352,8 +383,10 @@ def predict_day(conn: sqlite3.Connection, day, *, model: str | None = None, stor
                 use_cache: bool = True) -> list[dict]:
     """Predict every game of `day` with models fit on games strictly before `day`.
 
-    Default (`model=None`): the production pair. Returns one dict per game (the headline
-    `gbm_market` row) with the `gbm_opinion` row under `"opinion"`; both are stored. Row keys:
+    Default (`model=None`): the production pair, fit with the registry champions' params.
+    Returns one dict per game (the headline `gbm_market` row) with the `gbm_opinion` row under
+    `"opinion"` and any shadow versions' rows under `"shadows"`; all are stored (shadows with
+    role='shadow', `model` = version id). Row keys (+ `model_version`, `role`):
     game_id, nba_day, home, away, model, created_at, tipoff_utc, home_win_prob, home_margin,
     total, market_home_spread/total/prob, `inputs` (schedule factors, Elo, market, availability,
     model factors, injury effects, fit info) and `injuries` ({"home": [...], "away": [...]},
@@ -423,8 +456,9 @@ def _production_day(conn, full: pd.DataFrame, day: date, created_at: str, *,
         log.warning("predict %s: only %d training games; skipped", day, len(train))
         return []
     test = _mask_results(test).reset_index(drop=True)
+    specs = production.resolve_specs(conn, PRODUCTION_MODELS)
     bundle = production.load_or_fit(conn, day, train, test, PRODUCTION_MODELS,
-                                    use_cache=use_cache, refit=refit)
+                                    use_cache=use_cache, refit=refit, specs=specs)
     e = elo_mod.run_elo(pd.concat([train, test]), elo_mod.TUNED).iloc[len(train):]
     return price_day(conn, day, train, test, bundle, created_at, e.reset_index(drop=True))
 
@@ -435,8 +469,9 @@ def _production_days(conn, full: pd.DataFrame, played: list[date], log_fn,
     prefix slice of it), then per day: fit (every `refit_days` days) and price."""
     import time
     t0 = time.time()
-    reg, _ = production.registry(conn)
-    names = PRODUCTION_MODELS
+    specs = production.resolve_specs(conn, PRODUCTION_MODELS, shadows=False)
+    reg, _ = production.registry(conn, specs)
+    names = tuple(specs)
     fc = reg[names[0]]().fc
     fc.prime(full)
     elo_full = elo_mod.run_elo(full, elo_mod.TUNED)
@@ -460,13 +495,14 @@ def _production_days(conn, full: pd.DataFrame, played: list[date], log_fn,
             fit_day, fit_s, n_fits = d, time.time() - t1, n_fits + 1
         F = fc.get(upto, "avail_tight").iloc[len(train):].reset_index(drop=True)
         test = _mask_results(test).reset_index(drop=True)
-        key = production.cache_key(conn, d, list(test["game_id"]), names)
+        key = production.cache_key(conn, d, list(test["game_id"]), names, specs)
         bundle = production.Bundle(
             key=key, day=d.isoformat(), scorers=scorers, F=F, game_ids=list(test["game_id"]),
             state=None, train_games=int(len(train)),
             train_through=train["game_date"].max().strftime("%Y-%m-%d"),
             fitted_at=_iso_now(), fit_seconds=fit_s, cache="backfill",
-            timings={"fit_day": fit_day.isoformat(), "refit_days": refit_days})
+            timings={"fit_day": fit_day.isoformat(), "refit_days": refit_days},
+            versions=production.versions_of(specs))
         rows = price_day(conn, d, train, test, bundle, default_created_at(d),
                          elo_full.iloc[len(train):len(train) + len(test)].reset_index(drop=True))
         n_games += store_predictions(conn, _flat(rows))
@@ -490,6 +526,46 @@ def _played_keys(conn, day: date) -> set[tuple[str, str]]:
     return {(r[0], r[1]) for r in conn.execute(
         "SELECT DISTINCT game_id, team FROM player_games WHERE game_date=? AND min>0",
         (day.isoformat(),))}
+
+
+_STATUS_KEYS = {"Out": "out", "Doubtful": "doubtful", "Questionable": "questionable"}
+
+
+def feature_vector(G: pd.DataFrame, i: int, row: pd.Series, mk: dict | None,
+                   team_inj: dict, pred: tuple[float, float, float]) -> dict:
+    """The full priced input vector of one game (stored as `inputs.features`, for drift
+    monitoring; not truncated like `explain`). Strengths are engine points after the injury
+    override; `absences` = away loss - home loss (> 0 helps the home side, the sign of the
+    home margin), `absences_total` = both sides' loss."""
+    def g(col):
+        return _py(G[col].iat[i]) if col in G.columns else None
+    ah, aa = g("abs_loss_home"), g("abs_loss_away")
+    ph, pa = g("ps_home"), g("ps_away")
+    b2b_h, b2b_a = _py(row.get("home_b2b")), _py(row.get("away_b2b"))
+    f = {"strength_diff": g("ps_diff"), "lineup_strength_home": ph, "lineup_strength_away": pa,
+         "lineup_strength_diff": _py(ph - pa) if ph is not None and pa is not None else None,
+         "abs_loss_home": ah, "abs_loss_away": aa,
+         "absences": _py(aa - ah) if ah is not None and aa is not None else None,
+         "absences_total": _py(aa + ah) if ah is not None and aa is not None else None,
+         "elo_diff": g("elo_diff"), "rest_diff": _py(row.get("rest_diff")),
+         "b2b_home": b2b_h, "b2b_away": b2b_a,
+         "b2b_total": (int(b2b_h) + int(b2b_a)) if b2b_h is not None and b2b_a is not None
+         else None,
+         "market_spread": _py(mk["home_spread"]) if mk and mk.get("home_spread") is not None
+         else None,
+         "market_total": _py(mk["total"]) if mk and mk.get("total") is not None else None,
+         "market_home_prob": _py(mk["home_prob"]) if mk and mk.get("home_prob") is not None
+         else None,
+         "pred_home_prob": _py(pred[0]), "pred_margin": _py(pred[1]), "pred_total": _py(pred[2])}
+    for side in ("home", "away"):
+        counts = dict.fromkeys(_STATUS_KEYS.values(), 0)
+        for x in team_inj.get(side) or []:
+            k = _STATUS_KEYS.get(x.get("status"))
+            if k:
+                counts[k] += 1
+        for k, v in counts.items():
+            f[f"{k}_{side}"] = v
+    return f
 
 
 def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
@@ -531,6 +607,7 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
 
     fit_info = {"fitted_at": bundle.fitted_at, "cache": bundle.cache,
                 "fit_seconds": round(bundle.fit_seconds, 1), "timings": bundle.timings}
+    versions = getattr(bundle, "versions", None) or {}
     out = []
     for i, r in test.iterrows():
         gid = r["game_id"]
@@ -580,11 +657,15 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
             factors = production.key_factors(
                 expl, r["home"], r["away"], absentees,
                 {r["home"]: float(absent[name][0][i]), r["away"]: float(absent[name][1][i])})
-            inputs = {"model": name, **base_inputs, "factors": factors,
-                      "explain": [{k: _py(v) for k, v in e.items()} for e in expl[:8]]}
+            ver = versions.get(name, {})
             p, mg, tot = pred[name]
+            inputs = {"model": name, "model_version": ver.get("version_id"),
+                      **base_inputs, "factors": factors,
+                      "explain": [{k: _py(v) for k, v in e.items()} for e in expl[:8]],
+                      "features": feature_vector(G, i, r, mk, team_inj, (p[i], mg[i], tot[i]))}
             rows[name] = {
                 "game_id": gid, "nba_day": day.isoformat(), "model": name,
+                "model_version": ver.get("version_id"), "role": ver.get("role", "champion"),
                 "created_at": created_at, "home": r["home"], "away": r["away"],
                 "season": r["season"], "season_type": r["season_type"],
                 "tipoff_utc": tip, "status": status,
@@ -596,6 +677,9 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
             }
         head = rows[PRODUCTION_WINPROB]
         head["opinion"] = rows[PRODUCTION_OPINION]
+        shadows = [rows[k] for k in rows if rows[k]["role"] == "shadow"]
+        if shadows:
+            head["shadows"] = shadows
         out.append(head)
     return out
 
@@ -603,11 +687,19 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
 # ------------------------------------------------------------------ reading back
 
 def latest_pretip(conn: sqlite3.Connection, game_ids: list[str] | None = None, *,
-                  day: str | None = None, model: str | None = None) -> dict[str, dict]:
+                  day: str | None = None, model: str | None = None,
+                  include_shadow: bool = False) -> dict[str, dict]:
     """game_id -> stored prediction row (dict, `inputs` parsed), via the
-    `latest_pretip_predictions` view. Filter by game ids or by nba_day."""
+    `latest_pretip_predictions` view. Filter by game ids or by nba_day. Only reader-visible
+    rows (champion / legacy NULL role) unless `include_shadow`."""
     model = model or PRODUCTION_MODEL
-    sql, args = "SELECT * FROM latest_pretip_predictions WHERE model=?", [model]
+    view = "latest_pretip_predictions"
+    if include_shadow and conn.execute("SELECT 1 FROM sqlite_master WHERE type='view' AND "
+                                       "name='latest_pretip_predictions_all'").fetchone():
+        view = "latest_pretip_predictions_all"
+    sql, args = f"SELECT * FROM {view} WHERE model=?", [model]
+    if not include_shadow:
+        sql += shown_roles_sql(conn)
     if day is not None:
         sql += " AND nba_day=?"
         args.append(day)
@@ -617,7 +709,7 @@ def latest_pretip(conn: sqlite3.Connection, game_ids: list[str] | None = None, *
         sql += f" AND game_id IN ({','.join('?' * len(game_ids))})"
         args += list(game_ids)
     out = {}
-    for r in conn.execute(sql, args):
+    for r in conn.execute(sql + " ORDER BY created_at", args):
         d = dict(r)
         d["inputs"] = json.loads(d.pop("inputs_json")) if r["inputs_json"] else {}
         out[d["game_id"]] = d

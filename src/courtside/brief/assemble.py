@@ -657,7 +657,8 @@ def resolved_predictions(conn: sqlite3.Connection, start: str, end_excl: str, mo
     """Latest pre-tip predictions with nba_day in [start, end_excl) joined to final results."""
     preds = conn.execute(
         "SELECT * FROM latest_pretip_predictions WHERE model=? AND nba_day>=? AND nba_day<? "
-        "ORDER BY nba_day, game_id", (model, start, end_excl)).fetchall()
+        + predict.shown_roles_sql(conn) +       # champion/legacy rows only, never shadows
+        " ORDER BY nba_day, game_id", (model, start, end_excl)).fetchall()
     if not preds:
         return []
     ids = [r["game_id"] for r in preds]
@@ -875,8 +876,8 @@ def build_brief(conn: sqlite3.Connection, day, *, write: bool = True,
     at = predict.injury_cutoff(day, predict._iso_now())
     # tonight's teams (for the injury snapshot filter) come from the slate itself
     slate_teams = set()
-    for r in conn.execute("SELECT home, away FROM latest_pretip_predictions WHERE nba_day=?",
-                          (day.isoformat(),)):
+    for r in conn.execute("SELECT home, away FROM latest_pretip_predictions WHERE nba_day=?"
+                          + predict.shown_roles_sql(conn), (day.isoformat(),)):
         slate_teams |= {r["home"], r["away"]}
     for g in day_results(conn, day).values():
         slate_teams |= {g["home"], g["away"]}

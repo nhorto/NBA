@@ -266,6 +266,70 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_alerts_open ON alerts(status, key);
     """,
+    # 6: lineage-safe predictions key. The v4 PRIMARY KEY (game_id, model, created_at) let a
+    # row of another version with the same model name and created_at silently replace the
+    # champion's (INSERT OR REPLACE). Rebuilt with a surrogate id and a UNIQUE key that includes
+    # the version; existing rows copied unchanged. latest_pretip_predictions (readers: Brief,
+    # scorecard) now sees only champion/legacy (NULL role) rows and breaks created_at ties by
+    # id; latest_pretip_predictions_all is the same per (game, model, role, version) for
+    # evaluation (shadows, monitoring).
+    """
+    DROP VIEW IF EXISTS latest_pretip_predictions;
+    ALTER TABLE predictions RENAME TO predictions_v5;
+    CREATE TABLE predictions (
+        id INTEGER PRIMARY KEY,
+        game_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        home_win_prob REAL,
+        home_margin REAL,
+        total REAL,
+        market_home_spread REAL,
+        market_total REAL,
+        market_home_prob REAL,
+        inputs_json TEXT,
+        nba_day TEXT,
+        home TEXT,
+        away TEXT,
+        model_version TEXT,
+        role TEXT CHECK (role IS NULL OR role IN ('champion', 'shadow'))
+    );
+    INSERT INTO predictions (game_id, model, created_at, home_win_prob, home_margin, total,
+        market_home_spread, market_total, market_home_prob, inputs_json, nba_day, home, away,
+        model_version, role)
+    SELECT game_id, model, created_at, home_win_prob, home_margin, total, market_home_spread,
+        market_total, market_home_prob, inputs_json, nba_day, home, away, model_version, role
+    FROM predictions_v5 ORDER BY created_at, rowid;
+    DROP TABLE predictions_v5;
+    CREATE UNIQUE INDEX ux_predictions_key
+        ON predictions(game_id, model, created_at, COALESCE(model_version, ''));
+    CREATE INDEX idx_predictions_day ON predictions(nba_day);
+    CREATE INDEX idx_predictions_game_model ON predictions(game_id, model, created_at);
+
+    CREATE VIEW latest_pretip_predictions AS
+    SELECT id, game_id, model, created_at, home_win_prob, home_margin, total,
+           market_home_spread, market_total, market_home_prob, inputs_json, nba_day, home, away,
+           model_version, role
+    FROM (
+        SELECT p.*, ROW_NUMBER() OVER (PARTITION BY p.game_id, p.model
+                                       ORDER BY p.created_at DESC, p.id DESC) AS rn
+        FROM predictions p LEFT JOIN games g ON g.game_id = p.game_id
+        WHERE (g.tipoff_utc IS NULL OR p.created_at <= g.tipoff_utc)
+          AND (p.role IS NULL OR p.role = 'champion')
+    ) WHERE rn = 1;
+
+    CREATE VIEW latest_pretip_predictions_all AS
+    SELECT id, game_id, model, created_at, home_win_prob, home_margin, total,
+           market_home_spread, market_total, market_home_prob, inputs_json, nba_day, home, away,
+           model_version, role
+    FROM (
+        SELECT p.*, ROW_NUMBER() OVER (PARTITION BY p.game_id, p.model, COALESCE(p.role, ''),
+                                                    COALESCE(p.model_version, '')
+                                       ORDER BY p.created_at DESC, p.id DESC) AS rn
+        FROM predictions p LEFT JOIN games g ON g.game_id = p.game_id
+        WHERE (g.tipoff_utc IS NULL OR p.created_at <= g.tipoff_utc)
+    ) WHERE rn = 1;
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
