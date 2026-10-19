@@ -1,565 +1,662 @@
-# Courtside players: projections, the "why", fantasy and DFS
+# Courtside players v2: DFS-first projections and optimizer
 
-Status: **design, 2026-10-19.** Nothing here is built yet. This doc guides a multi-agent build. It sits on top of `docs/MODEL.md` (game model), `docs/ANALYTICS.md` (PBP, stints, garbage time), `docs/TRENDS.md`, `docs/MLOPS.md` and `docs/research/player-predictions.md` (owner decisions).
+Status: **design v2, 2026-10-19.** Nothing is built yet, and this version goes to a reviewer before any build starts.
 
-**v1 scope (owner).**
-- Projections for pts, reb, ast and minutes, plus DK/FD fantasy points. 3PM, stl, blk, tov and double-doubles are projected internally.
-- A DFS optimizer (cash and GPP).
-- Props shown as "our number vs the market", as information only.
-- A plain-English why, both pre-game and post-game.
+v2 replaces v1, which was projections-first with DFS as one consumer. In v2 the **DraftKings optimizer is the primary deliverable**, and the projections exist to serve it. Props, player cards and the "why" are kept but trimmed.
 
-**Design in one paragraph.** P(play) comes from the injury report. A minutes model sets each player's share of Q1–Q3 minutes. Q4 and OT minutes are then driven by the *simulated* score. Per-possession rates come from empirical-Bayes (EB) shrinkage, then a log-linear adjustment for opponent, teammate absences, venue and the primary defender. Each game is simulated 10,000 times *top-down by team*. Pace and team shooting are shared within a sim, and team play counts are allocated to players multinomially. As a result:
-- team totals always add up;
-- teammates compete for shots;
-- rebounds track misses and assists track teammates' makes;
-- blowouts cut starters' minutes.
+Inputs: `docs/research/dfs.md` (decisions, rules, sources, correlation study, review), `docs/research/player-predictions.md`, `research/dfs_correlations_output.txt`, `docs/MODEL.md`, `docs/MLOPS.md`, `docs/ANALYTICS.md`.
 
-Pre-game and post-game whys are both exact Shapley decompositions, so the terms always sum to the number being explained.
+## 0. Changelog v1 → v2
 
-## 0. Facts found while designing (they change the plan)
+### 0.1 Owner decisions (2026-10-19)
 
-| finding | consequence |
+| Decision | Where it lands |
 |---|---|
-| The PBP archive (8,647 games, 2019-20+) is on **geekom1 only**. The Mac's `var/raw/nba_cdn` has no `playbyplay`. | Sync it to the Mac (T0.2). |
-| Only **10 cdn boxscores** are archived. `stints.build_rotation` needs the box for period-1 starters, silent-player recovery and the validation gate. | Back-fill the cdn boxscores for 2019-20+ (≈8,900 calls, ≈1.5 h). This also gives us `starter` flags and `officials`. |
-| Official injury PDFs are only served back to **about late December 2025** (`sources/injury_report.py`), and the window keeps rolling. | **Urgent:** archive the 2025-26 game-day reports now. They are the only real pre-game availability history we can ever have (T0.1). |
-| `player_games` has no DNP rows and no starter flag. | Absences are inferred from team games, as in `trends/player.py`. Starts come from the cdn box (2019+). |
-| `GBMModel` stores `oof_resid_sd_` for the margin only. | Add the total's OOF sd and the margin–total residual correlation (T0.8). |
+| The DFS optimizer is the top priority: pro-grade accuracy, honest backtests, simple use, a "why" for every lineup | Whole structure; §2, §5, §7.3 |
+| DraftKings only in v1; FanDuel later via CSV | All FD content removed; timing is §9 Q7 |
+| Two build modes: **Top N** (optional minimum number of different players) and **Contest builder** (an N-entry portfolio) | §2.2, §2.3, §5.4, §5.5 |
+| Light guidance: simulated cash and top-finish odds plus a "sensible stakes" note. No dollar or Kelly sizing | §2.3 |
+| Post-game why v0 ships in Phase 1; the full why engine moves to December | §2.8, T1.8, Phase 4 |
+| Data policy: RotoGuru history, light DK capture, no crawl or login, never automate entry | §3, §9 |
+| 150-max portfolios and automated late swap are lower priority | N defaults to 20 (max 150, slower). Late swap is a manual "re-optimize" action plus a CSV, never automated. |
 
-## 1. Product surface (phone-first, same components as the Brief)
+### 0.2 Review items
 
-**Tonight: player cards.** Tapping a game row (WEB.md) shows a **Players** segment with the top 4 per team by projected minutes, plus any listed player.
-- **Row:** name, status badge ("Q · 55% to play"), then `27.4 pts · 4.1 reb · 7.2 ast · 35 min`, with the 80% range as a thin bar (`19–36`).
-- **Why chips:** up to two, in the existing `factor_chip` style, e.g. `+3.1 Brunson out (usage)` and `−1.4 rim protection`.
-- **Market line:** small and grey, e.g. `Line 26.5 · our chance above: 58%`. The words "over", "edge" and "value" are banned (STYLE.md).
-- **Doubtful/Questionable players:** numbers are shown "if he plays", with the play probability beside them.
-- Tapping the player opens his page.
+| Item | Verdict | Where / why |
+|---|---|---|
+| **M1** iid sim overstates variance | **Accepted, generalized** | §4.5, T2.5/T2.6: step-0 measurement, game latent η_g, multinomial possessions, Q4 slope in the SMM. Feedback acts on *every* 6-min segment, because Q1–Q3 alone carry ≈ 200 > 154 of margin variance, so Q4-only can't close the gap. Gate G1 falls back to allocation-only. The **copula is the GPP default** until the sim beats it (G2). |
+| **M2** sim tuned on test data | **Accepted** | §7.1 L2: everything is fit on seasons < S. Step 0 uses 2019-24, so sim claims are quoted only on 2024-25/2025-26. The "freeze on 2019-21" option is not used for the box path, because those are RotoGuru test seasons. |
+| **M3** FanDuel has no data | Accepted (decided) | §1 |
+| **M4** DK rule verification | **Accepted** | §5.1, T0.6 (all four acceptance points, plus a RotoGuru cross-check) |
+| **M5** Phase 1 cites a Phase 2 harness | **Accepted** | T1.0 eval-lite; RotoGuru backtest T2.1 |
+| **M6** minutes targets inverted; P(play) to Phase 1 | **Accepted** | §4.2 targets, T1.3 (uses the 151 rescued report days) |
+| **M7** reconciliation unmeetable with OT/m₃ | **Accepted, option (b)** | §4.4: pilot → Newton step → full run. With m₃ feedback, even the regulation mean isn't analytic. |
+| **M8** late news | **Accepted** | §2.5, §5.6, T1.6, T2.14: lock−45 and lock−10 runs, `late_news`, a late-swap re-solver |
+| S1 prior double-counts last season | Accepted | §4.3: the prior uses seasons ≤ S−2 |
+| S2 scenarios by mass | Accepted | §4.1: ≥ 95% mass, cap 16 |
+| S3 randomized PIT | Accepted | §7.2 |
+| S4 two-way clustering | Accepted | §7.2: game × player-season |
+| S5 xFG acceptance | **Deferred** with xFG to Phase 4 (T4.1) | Not on the DFS path (resequence) |
+| S6 per-coalition reconciliation in Shapley | **Deferred** with Shapley (T4.3) | Same |
+| S7 team and missed-FT rebounds | Accepted | §4.5 Path B |
+| S8 market % beside ours | Accepted | §2.8 cards |
+| S9 templated one-liners; LLM writes ≤ 30 | Accepted | §2.8, T1.8 |
+| S10 T0.1 is done | Accepted | T0.1 becomes verify + rolling capture |
+| S11 payout ladder, 25–50k sims, 300 single-worker solves | Accepted | §5.5 |
+| S12 40/60 field-proxy mixture, labelled | Accepted | §5.5; the weights are unverifiable until standings are uploaded (T3.2) |
+| S13 DFS backtest metrics | Accepted | §7.3 |
+| S14 value-play promotion (+8 min test) | Accepted | §4.2, T1.2 acceptance |
+| S15 stint failure → box minutes | Accepted, made central | §4.2: the box path is primary (it alone covers RotoGuru seasons) |
+| N1 books' team totals as environment | Accepted | §4.4 (`line_snapshots` team totals, from 2026-10-19) |
+| N2 preseason role evidence | Accepted (light) | T1.9 (preseason boxes aren't in the DB yet) |
+| N3 | Unknown | Not in the review text available to this revision (§9 Q8) |
+| N4 coach by date | Accepted | T2.2: a `coach_changes` override on top of per-season `team_coaches` |
+| N5 PRA props | Accepted | §2.8, §7.5 |
+| N6 Showdown captain binary | Accepted | §5.7 |
+| Answer: parity bar → calibrated / beats naive / adds information | Accepted | §7.5 |
+| Answer: DFS bar (FP MAE vs salary-implied and `fppg`; percentile vs field proxy) | Accepted | §7.3 |
+| Answer: boom% is slate-relative | Accepted | §2.1 |
+| Resequence (minutes ≫ usage > correlation > environment > defender/refs) | Accepted | §8; xFG, Shapley, full decomposition, defender, refs, matchups, season views → Phase 4 |
 
-**Last Night: "why" beat.** Each card gets one beat line for the game's biggest surprise, e.g. `Why Hart's 31 (our number 17): +9 min, 7-of-10 from three`. "Read more" adds a 2-sentence story. The game page adds an *Expected vs actual* table for everyone who played, each row with a server-SVG waterfall of the terms. Player Pulse gains a short list of "biggest surprises".
+No review item is rejected outright. Three are accepted with a different option than suggested (M1 segment-wide feedback, M2 walk-forward over freeze, M7 pilot). Two should-fixes (S5, S6) are deferred because their components are deferred.
 
-**DFS page `/dfs/<day>?site=dk|fd`.**
-- Slate picker (main slate first).
-- Sortable player list: salary, position, mean, floor (p25), ceiling (p90), value (mean per $1k), boom% (P(FP ≥ 6× salary/1000)), status. On phones it is a card list: name, salary, mean, then a p25–p90 strip.
-- Cash lineup (1) and a GPP set (default 20, up to 150), with an exposure table and CSV export in each site's upload format.
-- Footer: "Projections are simulations, not advice."
+### 0.3 Facts found while revising
 
-**Player page `/player/<id>`.**
-- Tonight: a quantile strip per stat, the full why waterfall, and the market line.
-- Last 10 games: expected vs actual, each with a one-line why.
-- Season views: minutes trend, cumulative shot-making vs xFG ("running hot / cold"), and usage with and without his key teammates.
-
-**Brief JSON 1.2 (additive).**
-- `tonight.games[i].players.{home,away}[]`
-- `last_night.games[i].player_why[]`, each with a `text` slot
-- `player_pulse.surprises[]`
-- `meta.dfs_available`
-
-## 2. Modeling architecture
-
-Notation: player *i* on team *t*; *n* = team possessions with *i* on court; rates are per on-court team possession.
-
-### 2.1 Availability: P(play)
-- **Starting table:** `injuries.PLAY_PROB` (Out 0, Doubtful 0.10, Questionable 0.5, Probable 0.9, unlisted 1.0).
-- **Recalibration:** each status *s* gets a Beta posterior, starting from the current value with 20 pseudo-observations, and updated by matching snapshot statuses to who actually played. The snapshot used is the last one before tip. This runs weekly once n ≥ 30 per status.
-- **Unlisted regulars:** P = 0.99, which covers late rest and DNP-CD.
-- **Fringe players** (expected Q1–Q3 minutes < 4): they appear only through Q4 blowout minutes (§2.2). This is how game script, not the injury report, decides whether they play.
-- **In the sim:** each listed player is a Bernoulli draw per sim. Usage and minutes are recomputed for each availability *scenario*. A team with q uncertain players has 2^q scenarios, capped at 16 by merging p < 0.05 / p > 0.95 into certainty.
-
-### 2.2 Minutes model
-**Target.** Minutes in Q1–Q3 when the player plays, from stints, 2019-20+ (≈190k player-games). Q1–Q3 is used because Q4 is where garbage time lives (ANALYTICS §3). Training on full-game minutes would teach the model the blowouts it is meant to simulate.
-
-**Model.** LightGBM (L2), refit each season walk-forward, with features from before day *d* only:
-
-| group | features |
+| Finding | Consequence |
 |---|---|
-| role | fast/slow minutes EWMA (α 0.2/0.02, as rung 2), last game, median of last 5, started last game, starts in last 10, team minutes rank |
-| return | games since returning from ≥ 3 missed games (ramp-up), and games missed |
-| absences (per scenario) | vacated minutes: Σ EWMA minutes of absent teammates, in total and in his position group (G/F/C); his shrunk historical share of that teammate's minutes when the teammate sat |
-| coach | coach's shrunk rotation concentration (top-7 share of minutes, count of 30+ min players; coach id from `commonteamroster`, follows the coach across teams; 40 pseudo-games toward the league) |
-| schedule | b2b, days rest, 3-in-4, age × b2b, and last season's rate of sitting second legs of back-to-backs |
-| game | playoff flag, pregame \|spread\| (only for coaches who shorten early; the main blowout effect is in the sim), season phase |
+| Migrations 7 and 8 exist (8 has `dfs_salaries`, `line_snapshots`, `prop_snapshots`) | New tables go in **migration 9**; `dfs_salaries` is altered |
+| `sources/dfs.py` drops `playerGameAttributes` (id 100 = starter) and `isSwappable` | T0.7 adds them (needed at lock−10) |
+| Official reports are rescued: 151 game days, 2025-12-22 → 2026-06-13 | P(play) calibration now (T1.3), plus a live-like slice (T2.4) |
+| RotoGuru: one primary position and one salary per player per day, 2014-15 → 2020-21. PBP/stints start 2019-20 | **The DFS backtest runs the box-only engine**. The stint features are tested on projections for 2021-22+. |
+| The correlation study's residuals are vs in-season means (hindsight) | Targets are recomputed causally vs the pregame projection (T2.7) |
+| The Vegas total explains 4.9% of team DK variance | Environment ranks below minutes and usage |
+| The scheduler uses fixed ET times | Lock-relative runs need a watcher (T1.6) |
 
-The prediction is mapped to a team total of 180 minutes with `players.allocate_minutes` (water-filling, cap 36 per player over the 3 quarters).
+## 1. Scope and design in one paragraph
 
-**Q4 and OT (in the sim).**
-- Q4 shares depend on the simulated margin after Q3: bins \|m₃\| < 10, 10–15, 15–20, 20–25, ≥ 25. They are estimated from stints for each role tier: top-5 by minutes, 6–8, 9+.
-- Example of the expected shape (to be measured): starters' Q4 share falls from about 1.0× their Q1–Q3 rate to about 0.35× at 25+, and that time goes to the 9+ tier.
-- If the sim is tied after Q4, OT minutes (25 per team) go out by closing-lineup share (last 5:00 of close games).
-- **Calibration targets:** P(OT) 5.5–6.5% (the historical rate is 1,985/33,447 = 5.9%), and starters' minutes error by \|final margin\| bin within ±0.7 min.
+**Product scope:**
+- the DK **Classic** optimizer (cash, Top N, contest portfolio), with **Showdown** in v1.x;
+- DK-point and component projections (pts, reb, ast, 3PM, stl, blk, tov, DD/TD) and minutes;
+- props (pts/reb/ast/PRA/3PM) as information only.
 
-**Noise.** Each player's Q1–Q3 share is multiplied by exp(ξ), with ξ ~ N(0, σ²_tier), and then renormalised.
-- An "early exit" component replaces this with U(0.35, 0.85) with probability q_i = q₀ + q₁·PF/36. That covers foul trouble, in-game injury and ejection.
-- σ_tier, q₀ and q₁ are fit so that the simulated minutes residual quantiles (p5…p95) match the backtest's.
+**Design:**
+- **P(play)** is calibrated on official reports.
+- A **minutes engine** redistributes vacated minutes, promotes value plays, and is conditional on the game margin, so blowouts come from the margin draw.
+- **Per-minute EB rates** get a usage bump under absences.
+- A **joint distribution** per slate: a Gaussian copula with a shared margin draw (default), upgraded to a possession sim only if it wins.
+- **CP-SAT** solves cash (P(score ≥ cash line)), Top N (k-best) and contest portfolios (payout ladder vs a labelled field proxy).
+- Runs happen at lock−45 and lock−10, plus late-swap re-solves. Every lineup carries templated reasons.
 
-### 2.3 Per-possession rates (empirical Bayes)
-**Quantities.**
-- **Volume** per on-court possession: 2PA, 3PA, FT trips, TOV.
-- **Shares** while on court: assist share (AST ÷ teammates' FGM), OREB and DREB share (÷ available rebounds), STL share (÷ opponent TOV), BLK share (÷ opponent 2PA).
-- **Makes:** 2P%, 3P%, FT%, and and-ones per FGM.
+## 2. Product surface (phone-first, DFS page first)
 
-**Estimate.**
-`r̂ = (Σ_g w_g x_g + κ·μ_prior) / (Σ_g w_g n_g + κ)`
-- w_g has a 120-day half-life within a season, and earlier seasons are multiplied by 0.6 each summer (the rung-2 box carry).
-- κ is fit per stat by beta-binomial method of moments on 2015-20, with the walk-forward folds as a check. Starting guesses: 3P% about 600 attempts, FT% 200, 2P% 300; volume rates and shares about 400 possessions.
-- μ_prior comes from a ridge regression on position group, height, weight, age, draft pick (rookies) and last season's rate.
+### 2.1 `/dfs/<day>`: slate and player pool
+- **Slate picker:** main Classic by default; Showdown in v1.x. A run badge reads "Built 18:20 (lock−40) · 2 late-news players", plus stale-data warnings.
+- **Player pool**, sortable:
+  - salary and DK positions;
+  - P(play) and status, or a starter tick;
+  - minutes and mean DK;
+  - range (p25–p75 bar; p90 is the "ceiling");
+  - value (mean per $1k);
+  - **boom%** = P(FP ≥ salary/1000 × v*), where v* is the points per $1k of the slate's simulated top-1% lineups. This makes it **slate-relative**;
+  - **popularity (proxy)** as Low/Med/High;
+  - a `late_news` dot.
+- **Phones** get a card list. **Controls:** lock/ban, min/max exposure, exclude Q/GTD.
 
-**Age curve.** The delta method on consecutive seasons, weighted by the harmonic mean of possessions, smoothed with a spline per stat. It is applied as `exp(a(age_now) − a(age_at_data))`. Birthdates come from `commonteamroster` (2015-16+); with no birthdate, the adjustment is 0.
+### 2.2 Top N lineups
+- **Ranked list**, default N = 10, up to 50. Each lineup shows the 8 slotted players, salary used, mean, p10–p90 range, and P(cash) once T2.13 ships.
+- **Diff vs #1:** players in and out, Δmean, Δsalary.
+- **Setting:** "min different players" d ∈ {1…4}, default 1 (§5.4).
 
-**Adjustments.** Each player-game rate is multiplied by a log-linear adjustment:
-`log r = log r̂ + β_opp·D_opp,k,pos + β_home·home + β_rest·b2b + Σ_{j absent} φ_ij,k + β_def·Θ_i + [β_ref·R_crew]`
-- β is fit as a Poisson/binomial GLM with offset log(n·r̂), per stat, refit each season (2019-20+). It is kept log-linear on purpose, so the attribution in §3.1 is exact and cheap.
-- **Opponent defense by stat and position.**
-  - `D = log(Σ actual / Σ expected)` over opposing players in group *pos* against that defense. Expected uses each player's own pre-game r̂, which removes the "who they faced" bias of raw defense-vs-position.
-  - Recency-weighted and shrunk by N/(N+K_D), with N = expected count.
-  - Separate K per stat: volume and shares K ≈ 300 expected events; **3P% allowed gets K ≈ 5,000**, which is almost no effect, because opponent 3P% is mostly luck. 3PA *rate* allowed is real scheme and gets the normal K.
-  - Position groups come from `playerindex`. `matchupsrollup` gives the defender's G/F/C time mix, which is used for the primary defender below.
-- **Pace** does not enter the rates. It is the possession count (§2.4).
-- **Teammate absences.**
-  - Multinomial allocation already renormalises usage proportionally. φ_ij captures the *deviation* from proportional, from our stints over the last 2 seasons (one-season half-life):
-    `φ^emp_ij = log(usg_i|j off / usg_i|j on) − log(proportional factor)`, with
-    `φ_ij = φ^emp · n_off/(n_off + K_φ)`.
-  - n_off is the possessions with *i* on and *j* off. K_φ ∈ {250, 500, 1000, 2000, 4000} is chosen walk-forward on "natural experiment" games where *j* sat.
-  - The same machinery is used for assist share. Rebound share uses proportional renormalisation only.
-- **Primary defender.**
-  - Expected matchup shares s_id come from prior meetings (`boxscorematchupsv3`, partial possessions, causal), else the opponent's G/F/C assignment mix from `matchupsrollup`, lagged one season.
-  - Defender effect: `θ_d = Σ(pts − ê_o)/Σ pp`, summed over the matchups defender *d* has guarded, with ê_o the offensive player's own expected points per partial possession and pp the partial possessions.
-  - Shrunk as `θ̃_d = θ_d · N_d/(N_d + K_θ)`, with **K_θ = N̄·(1 − ρ)/ρ**. ρ is the odd/even-game split-half reliability of θ_d (expected 0.1–0.3, so K_θ is several thousand partial possessions, i.e. more than a starter's season).
-  - `Θ_i = Σ_d s_id·θ̃_d / ppp_i`, capped at ±4% of points. This is applied to volume and makes jointly, because defenders move shot frequency more than make rate.
-  - It is shown in the why only when \|Δpts\| ≥ 0.5.
-- **Referee crew** (FT trips, fouls): included only if crew effects have split-half reliability > 0.2 and walk-forward FT-trip log-likelihood improves by more than 2 SE. Otherwise it is dropped and documented as tested.
+### 2.3 Contest builder
+1. **Pick a contest** from the archived lobby (fee, field, max entries, prizes, payout table), or **describe one**: fee, field size, max entries, and a payout curve from presets or pasted rows.
+2. **Choose N entries**, up to the per-user maximum (cap 150).
+3. **Output:**
+   - the portfolio (§5.5) with an exposure table;
+   - **simulated cash rate**, **top-1% rate** and **expected payout** for the set;
+   - **expected ROI** labelled "*simulated against a modelled field, not real results*", shown as a soft–sharp field range;
+   - **dupe risk** (Low/Med/High) per lineup.
+4. **Light guidance** (static text):
+   - cash contests suit projection-driven builds;
+   - single-entry and 3-max GPPs avoid 150-entry pros;
+   - large fields carry the most variance;
+   - a **"sensible stakes" note**: a strong player still loses over about half of 100-contest stretches, so stake only entertainment money.
 
-### 2.4 Joint simulation (per game, S = 10,000)
-The game model is the **environment**: `gbm_market` mean margin μ_M and total μ_T (it sees the game line, not props, so "our prop number" stays independent of prop markets). `gbm_opinion` is the fallback when there is no line, and runs as a logged shadow.
+   **No dollar or Kelly sizing.**
 
-A useful fact for calibration: the variance of a team's score around a good line, about (17.7² + 12.4²)/4 ≈ 117 (sd ≈ 10.8, from the market's total and margin errors), is close to pure possession-outcome noise (≈ 1.25 pts² per possession × 100). So the simulator must be **bottom-up**: almost all the variance comes from shot outcomes, and only small shared latent terms are added on top.
+### 2.4 "Why this lineup" (templated, no LLM)
+Up to 3 reasons per lineup, picked from facts by rule. Each number comes straight from the run:
+- **Minutes opened:** "+7 min for Hart with Brunson out". Fires when Δ projected minutes ≥ 4 from an absence.
+- **Value:** "$4,100 for 24 pts (5.9 per $1k, slate top-5)".
+- **Ceiling:** "28% to reach the slate's boom mark".
+- **Environment:** "3 players from the slate's highest team total (CHI 121.5)".
+- **Lineup level:** "uses $49,800; lowest blowout risk of the top 10".
 
-**Per sim s:**
-1. **Pace.** `P_s ~ N(P̄, σ_P²)` possessions, shared by both teams. P̄ is a log5 pace forecast, scaled so that the expected total matches μ_T (§2.5).
-2. **Team shooting latents.** `η_t,s ~ N(0, τ_e²)` for each team, on the logit of make probabilities. There is also a per-player latent `ζ_i,s ~ N(0, τ_p²)` for night-to-night shooting variance beyond binomial.
-3. **Availability scenario** draw (§2.1), which fixes the weights.
-4. **Phase A (Q1–Q3)**, with 75% of P_s possessions:
-   - Minutes: shares from §2.2 with noise.
-   - Team play counts: N_t,k ~ Poisson(0.75·P_s · Σ_i (M_i/36)·r_ik). The Q1–Q3 minute shares (M_i/36) average to the 5 on-court slots.
-   - Allocation to players: **Dirichlet-multinomial** with weights ∝ M_i·r_ik. Concentration is fit from player-game overdispersion; this is what plays the role of a negative binomial for volume.
-   - Makes: Binomial(attempts, logistic(logit p̂ + δ_t + η + ζ)).
-   - Free throws: FTA = 2·trips + and-ones.
-   - Rebounds: team OREB ~ Binomial(misses, oreb%_{t vs opp}), and DREB is the rest of the opponent's misses. Both are allocated by share.
-   - Assists: team AST ~ Binomial(FGM, ast%), allocated by share.
-   - STL ~ Binomial(opp TOV, share); BLK ~ Binomial(opp 2PA, rate). Both allocated.
-5. **Q4** (25% of P_s), with Q4 minute shares set by \|m₃\|. Then OT phases at 5/48 of P_s each, repeated while tied.
-6. **Derived:** pts, 3PM, DD/TD, DK/FD points, and garbage-time splits (expected garbage share of Q4 as a function of \|m₃\|, measured from PBP).
+Reasons are ranked by |contribution to the lineup's objective − slate median|.
 
-**Distribution choices.**
+### 2.5 Late news and late swap
+- **Lock-relative runs:** the build runs automatically at **lock−45** and **lock−10** for each slate (§5.6).
+- **`late_news` flag.** A player is flagged when, since the previous run or within 90 minutes of lock:
+  - his status changed;
+  - he was named a starter or a non-starter against expectation;
+  - his projected minutes moved ≥ 3.
+- **Banner:** "2 lineups contain late-news players".
+- **"Re-optimize unlocked slots"** re-solves with started games' players fixed and downloads a DK edit CSV. The user uploads it by hand.
 
-| quantity | choice | why |
-|---|---|---|
-| pace | normal | possessions per game are close to Gaussian |
-| play volume | Poisson team totals, Dirichlet-multinomial allocation | team consistency, overdispersed per player (NB-like) |
-| makes | binomial with logit-normal latents | shared team nights, 3PM falls out of the same draw |
-| reb, ast, stl, blk | binomial on simulated opportunities | correlation with misses, makes and turnovers |
-| minutes | lognormal share noise, early-exit mixture, water-filling | foul trouble gives a heavy left tail |
+### 2.6 Showdown (v1.x)
+- The same page with a CPT column (1.5× salary and points).
+- Top N plus a contest builder for single-game contests (§5.7).
 
-Points are therefore emergent: about normal for starters, right-skewed for bench players.
+### 2.7 Exports
+- **DK CSV** in the upload template (slot columns, `Name (draftableId)`), for new entries and for edits.
+- **Never** automated entry, login or edits.
 
-**Variance calibration.** σ_P, τ_e and τ_p are fit by simulated method of moments on 3,000 backtest games. The targets are:
-- sd(margin) and sd(total) equal to the game model's OOF residual sd, within ±3%;
-- the corr(home, away points) implied by those two;
-- P(OT) in 5.5–6.5%;
-- player FG% dispersion.
+### 2.8 Kept, trimmed
+- **Tonight player cards** (Phase 2). Top 4 per team:
+  - `27.4 pts · 4.1 reb · 7.2 ast · 35 min` with an 80% bar;
+  - one factor chip;
+  - status and P(play);
+  - the market line as **"Line 26.5 · our chance above 58% · market 52%"**.
 
-**Correlation is structural, not a fitted matrix:**
-- shared pace (everyone, positively);
-- η (teammates' points, positively);
-- shot competition (teammates' FGA, negatively);
-- AST↔teammates' FGM and REB↔misses;
-- margin→Q4 minutes (starters negatively with blowouts);
-- availability (a teammate's absence raises usage).
+  Both percentages are shown (S8). "Over", "edge" and "value" stay banned (STYLE.md).
+- **Post-game why v0** (Phase 1), for |actual − projection| ≥ 6 DK or ≥ 5 pts:
+  - a log-additive split into minutes, volume (FGA + FTA per minute) and making (pts per shot vs his EB norm), so it sums exactly;
+  - a **templated one-liner**: "Hart 31 (our 17): +9 min, 7-of-10 from three";
+  - the LLM writes at most **30** short stories a night (S9), under v1 §3.4's fact-check and sign rules.
 
-**Validation (T2.7).** Empirical within-team residual correlations on 2024-25 must be matched within ±0.05:
-- pts of the top two scorers;
-- ast of the guard and pts of the teammates;
-- reb vs opponent FG%.
+## 3. Data
 
-**Monte Carlo error at S = 10k.** About 0.08 pts on a mean (sd 8), and at most 0.005 on P(above a line). The same sim index is used across games, so slate-level FP matrices are valid for DFS (games are independent). Seeds are deterministic: `hash(game_id, nba_day, model_version)`. These are common random numbers, so a projection moves between pregame runs only when inputs move.
+### 3.1 RotoGuru history (T0.2)
+- **Fetch:** `hyday.pl?game=dk&mon=M&day=D&year=Y` in the HTML view (scsv truncates after 2017), 2014-10-29 → 2021-05. About 1,200 requests at 1/s, archived to `var/raw/rotoguru/dk/<date>.html.gz` and never re-fetched.
+- **Rows:** id, primary position, name, starter `^`, DK pts, salary, team, opp, venue, minutes, stats. They are joined to `player_games` on (date, team, normalised name).
+- **Slate:** the games where ≥ 80% of rotation players have a salary. A secondary main-slate proxy keeps games tipping ≥ 19:00 ET.
+- **Eligibility:** derived from the single position (PG → PG/G/UTIL). It is applied identically to our lineups, the baselines and hindsight-optimal.
 
-### 2.5 Reconciliation (team totals)
-After rate adjustments, solve two numbers per game:
-1. **Pace.** Set P̄ so that the log-gap g = log(μ_T / T_players) is split α to pace and 1 − α to efficiency. α is fit from history by regressing log(actual possessions / log5 pace) on g; the prior guess is 0.5.
-2. **Efficiency.** Per team, solve for the logit shift δ_t (1-D root, monotone) so that the mean-field E[team pts] = (μ_T ± μ_M)/2.
+### 3.2 Light daily DK capture (T0.7)
+- **Already running:** lobby, Classic/Showdown draftables, and rules at each pregame time.
+- **Added: payout tables** for **30–40 main-slate contests a day**: all double-ups and 50/50s, the top 10 GPPs by prizes, single-entry and 3-max GPPs, and up to 3 Showdowns.
+  - Fetched once before lock from `contests/v1/contests/{id}`, because `entries` reads 0 after completion.
+  - Stored fields: fee, `maximumEntries`, `maximumEntriesPerUser`, `isGuaranteed`, `payoutSummary`, attributes.
+- **Lock-relative draftables** at lock−50 and lock−12: status, disabled, swappable, news, starter.
+- **Not collected:** historical draft groups, leaderboards, ownership, anything behind a login.
 
-**Rules.**
-- **Acceptance:** \|Σ_i E_sim[pts_i] − E_model[team pts]\| ≤ 0.5 for every team-game.
-- The pre-reconciliation gap is logged as a diagnostic. \|gap\| > 6 pts raises a data-check warning, which usually means a stale injury report or a mis-matched name.
-- \|δ_t\| > 0.15 logit is capped, and the remaining gap is reported rather than hidden.
+### 3.3 Other inputs
+- **Official reports:** the 151 rescued days (verified by T0.1), the rolling capture, and a fetch right before each lock run.
+- **ESPN injuries.**
+- **Book lines and team totals** from `line_snapshots` (N1). **Props** from `prop_snapshots`.
+- **Box:** `player_games` back to 2000 (the box path).
+- **Stints** for 2019-20+, via T0.3/T0.4.
 
-### 2.6 Runtime budget (Mac mini M4, loaded, 2 threads)
+### 3.4 ID matching (T0.5)
+- **Keys:** DK `playerId` (stable across slates; `draftableId` is per slate) and the RotoGuru id → NBA `player_id`, persisted in `player_ids(source, source_id)`.
+- **Method:** name + team + date against `team_rosters` and the recent game rosters, reusing `injuries.match_player` (accents, suffixes, nicknames, FUZZY_MIN 0.86 with a 0.05 margin).
+- **Same-team near-duplicates** (Jalen/Jaylin Williams) need an exact first-token match.
+- **Unmatched players** raise a data check and go to `player_aliases`.
+- **Targets:**
+  - DK ≥ 98% of salaried players automatically, and 100% of players with projected minutes ≥ 10 after aliases;
+  - RotoGuru ≥ 99% of salaried player-games.
 
-| step | where | budget |
-|---|---|---|
-| nightly state: EB rates, stints, with/without, defense indices, xFG for last night's shots, post-game whys | postgame 03:00/09:00 | ≤ 5 min |
-| pregame for a 15-game slate: load state 2 s, minutes GBM over ≤ 16 scenarios per team 3 s, reconciliation 2 s, sims 10k × 15 (vectorised conditional-binomial multinomials, ≈ 1–2 s per game) ≤ 30 s, attribution 10 s, store 5 s | each pregame run | **≤ 60 s** (limit 120 s) |
-| DFS build: cash plus 20 GPP lineups | 17:00 and 18:30 only | ≤ 90 s |
+## 4. Modeling
 
-Storage: per-sim player FP and stat arrays as int16/float32 `npz` at `$COURTSIDE_DATA/sims/<day>/<run>.npz` (about 30 MB per slate, pruned after 8 days like `production.KEEP_DAYS`).
+### 4.1 Availability: P(play) (T1.3, Phase 1)
+- **Inputs:** the latest official status before the run; ESPN status; DK `status` and starter flag; hours to tip; and a reason class (rest / injury / illness / personal / G-League), parsed from the report text.
+- **Model:** a Beta posterior per (status × hours-to-tip bucket {> 6, 2–6, 0.75–2, < 0.75} × reason class).
+  - Prior: the current `injuries.PLAY_PROB` value with 20 pseudo-observations.
+  - Updated with snapshot status → played or not, using the 151 rescued days plus live data, refit weekly.
+  - A cell with n < 30 falls back to its status-level posterior.
+- **Overrides:**
+  - DK starter flag = 1 → P = 0.99.
+  - Unlisted regulars: P = 0.99.
+- **Scenarios (S2):** per team, enumerate joint availability outcomes of the uncertain players in descending probability until ≥ 95% of the mass is covered, capped at 16. The remaining mass is folded into the nearest enumerated scenario.
+- **Acceptance (T1.3):**
+  - reliability within ±0.08 per status with n ≥ 50;
+  - Brier ≤ the static table, reported with game-clustered SE.
 
-## 3. The "why" engine
+### 4.2 Minutes engine (the centerpiece)
+**Minutes are modelled conditional on the margin.**
+- **minutes = f(pregame features) + g_tier(|final margin|, won/lost)**, where g is a blowout curve fit on box data for seasons < S. Shape to reproduce: starters −3.5 min at 26+.
+- At prediction time, g is evaluated at each sim's *drawn* margin.
+- This box path runs back to 2000, covers every RotoGuru season, and is the S15 fallback.
+- From 2019-20, Q1–Q3 stint shares plus Q4-by-|m₃| shares can replace g on the sim path.
 
-### 3.1 Pre-game attribution
-**Baseline B** is his season average per game played, the number readers know.
-- With fewer than 10 games: B = (n·avg_cur + (10 − n)·avg_prev)/10.
-- Rookies with no history: B is the model's neutral projection, and the form term is 0.
+**Base minutes model** (Phase 1 v0: EWMA plus rules; Phase 2 v1: LightGBM refit per season walk-forward, pre-*d* features only):
 
-**Factor groups g:**
-1. form/talent (EB rate vs his raw season rate);
-2. role (rest, ramp-up, coach, other minutes changes);
-3. teammate absences (minutes and usage);
-4. opponent defense;
-5. primary defender;
-6. pace and game environment;
-7. venue and referees.
+| Group | Features |
+|---|---|
+| role | fast/slow minutes EWMA (α 0.2/0.02), last game, median of last 5, started last game, starts in last 10, team minutes rank |
+| return | games since returning from ≥ 3 missed games, games missed |
+| absences (per scenario) | vacated minutes: total, and in his position group G/F/C; his shrunk historical share of each absent teammate's minutes; **depth rank within his position group after removing absent players** |
+| coach | rotation concentration (top-7 share, count of 30+ minute players), coach by date (N4), 40 pseudo-games of shrinkage |
+| schedule | b2b, rest, 3-in-4, age × b2b, his rate of sitting second legs |
+| news | DK starter flag (lock−10 only), status, reason class |
+| early season | preseason starts and minutes in the last 2 preseason games, for the first 10 games (N2, T1.9) |
 
-**Mean-field function.** `f(S)` is the analytic expectation (minutes × possessions × rates × make probabilities) with the groups in S at tonight's values and the rest at neutral values: his season-average minutes, pace and rates, an average opponent, a healthy team, and neutral venue.
+**Value-play promotion (S14).** Proportional renormalisation spreads vacated minutes too thinly and misses the biggest DFS edge. Instead:
+1. **Next man up.** For each absent rotation player j, the top remaining player in j's position group, ranked by (starts in the last 10, minutes EWMA, historical share of j's minutes), is lifted toward the coach's median starter minutes for that group, shrunk 50% to his own EWMA. The remaining vacated minutes go to the group, then to adjacent groups (G↔F↔C), by historical share when j sat.
+2. **Team total** of 240 minutes, via `players.allocate_minutes` water-filling with a 40-minute cap.
+3. **Starter flag.** At lock−10, an unexpected confirmed starter is re-run through step 1.
 
-**Exact decomposition.**
-`Projection − B = Σ_g φ_g + script + (f(∅) − B)`, where:
-- φ_g is the **exact Shapley value** over the 7 groups (2⁷ = 128 vectorised evaluations per player-stat);
-- `script = sim mean − f(all)` (blowout risk, OT, caps; the reader label is "game script");
-- `f(∅) − B` is folded into the form term.
+**Tests (T1.2):**
+- **Two starters Out:** the top bench player's projected minutes rise **≥ 8** vs healthy (mean over ≥ 200 team-games), and the realised rise is within ±2.5 of the projected one.
+- **Star absence:** the remaining top-6 projected ΔDK is **+3.1 ± 0.6**.
 
-Inside the absences group, each absent teammate gets an Owen-value split (Shapley within the group), giving chips like "+3.1 Brunson out (usage to Hart)".
+**Noise.** The share is multiplied by exp(ξ), with ξ ~ N(0, σ²_tier), plus an early-exit mixture with probability q₀ + q₁·PF-rate, scaled by U(0.35, 0.85). σ_tier, q₀ and q₁ are fit on seasons < S (M2).
 
-**Display.** Show factors with \|φ\| ≥ 0.5 pts (≥ 0.3 reb/ast), at most 3. Fantasy points are attributed as the linear combination of the stat attributions, plus a DD/TD bonus term.
+**Targets (M6):**
+- minutes MAE for projected ≥ 15 is **≤ 4.5 in the avail backtest** (v1, Phase 2), with v0 ≤ 4.8;
+- ≥ 8% better than the rung-2 EWMA on the same rows;
+- the **live-like slice** (2025-12-22 → 2026-04-12, real official reports instead of the oracle) is reported separately and is expected to be worse;
+- **live MAE within +0.5 of the live-like slice.**
 
-### 3.2 xFG (our shot-quality model)
-**Data.** Every FGA in the cdn PBP from 2019-20 on, about 1.4M shots, excluding `heave` actions.
+### 4.3 Rates with usage redistribution
+- **Quantities:** per-minute DK components (pts via 2PA/3PA/FTA and makes, reb, ast, stl, blk, tov). The sim path uses per-possession rates.
+- **Estimate (EB):** `r̂ = (Σ_g w_g x_g + κ·μ_prior)/(Σ_g w_g n_g + κ)`.
+  - Weights have a 120-day half-life in season, and last season is multiplied by 0.6.
+  - **S1:** μ_prior is a ridge on position group, height, weight, age, draft slot, and the rate over **seasons ≤ S−2** (never last season, which is already in the likelihood).
+  - κ is set per stat by beta-binomial method of moments on seasons < S.
+  - The age curve is the delta method, as in v1.
+- **Usage under absences:**
+  - **Phase 1:** a role-tier per-minute bump fit on star-absence natural experiments in seasons < S. The study's values to reproduce: the other star +7.6%/min, non-star rotation +4.2%/min.
+  - **Phase 2 (T2.3):** individual with/without factors φ_ij from stints (2019+, `φ = φ_emp·n_off/(n_off+K_φ)`, K_φ chosen walk-forward) and box-level with/without for earlier seasons. Acceptance: on "teammate sat" games, the usage log-likelihood beats the tier bump by > 2 SE.
+- **Opponent and pace (Phase 2, T2.8, low priority):** opponent-by-position indices shrunk as in v1 (3P% allowed K ≈ 5,000). They ship only if DK CRPS improves by > 1 SE.
 
-**Features:**
-- distance;
-- angle from (x, y);
-- `area`, corner-3 flag, is_three;
-- `sub_type` (layup, dunk, hook, jump shot);
-- `descriptor` (pull-up, step-back, driving, floating, turnaround, fadeaway, alley-oop, putback, tip, cutting);
-- qualifiers (fast break, 2nd chance, from turnover);
-- seconds since the possession started and since an OREB (from events);
-- period, clock and last-2-minutes flag;
-- score margin and garbage flag;
-- home;
-- **context prior:** the shooter's *previous-season* defender-distance mix (shares 0–2 / 2–4 / 4–6 / 6+ ft) and the shot's zone-by-distance bucket.
-
-**Never used:**
-- `assist_id` (only exists on makes) and `block_id` (only on misses);
-- any qualifier with less than 1% of its occurrences on misses (an automated audit test). `pointsinthepaint` is the prime suspect.
-- shooter identity: xFG is shot quality, not skill.
-
-**Model.** LightGBM binary classifier, then isotonic calibration on the last training season.
-- **Evaluation:** walk-forward by season (train < S, test S), 2021-22..2025-26.
-- **Baselines:** zone × shot-type FG%, and distance-only logistic.
+### 4.4 Environment and reconciliation
+- **Environment (N1):** team implied points come from the book team totals in `line_snapshots`, using the median across books at the run time. Without them, they are (μ_T ± μ_M)/2 from `gbm_market`.
+- **Scaling (copula and Phase 1 path):** each team's projected points are scaled to the implied total, with α split between pace (all counting stats) and efficiency (points only). The prior guess is α = 0.5, fit on seasons < S.
+- **Sim path (M7):**
+  - Run a **2,000-sim pilot**.
+  - Measure the gap between Σ E_sim[pts_i] (including OT and the m₃ feedback) and the target.
+  - Take one Newton step on the efficiency shift δ_t, using the pilot's numerical derivative. Then run the full set.
 - **Acceptance:**
-  - log-loss at least 1.5% better than zone × type in every test season;
-  - ECE ≤ 0.01;
-  - per-zone calibration within ±1.5 pp for zones with n ≥ 5,000;
-  - team-game xPTS vs actual FG points r ≥ 0.6.
+  - |Σ_i E[pts_i] − target| ≤ 0.5 for every team-game.
+  - A pre-reconciliation gap > 6 raises a data check (stale report or mis-matched name).
+  - |δ_t| is capped at 0.15 logit, with any remainder reported.
 
-**Skill.** The player's shot-making ratio m̂_i = EB(FG pts / xPTS), with κ ≈ 400 xPTS-weighted shots. It is reported, not baked into xFG. The production model is frozen per season and refit in October.
+### 4.5 Joint distribution
 
-### 3.3 Post-game decomposition (actual − expected sums exactly)
-Expected is the stored last pre-tip projection, conditional on playing. DNPs get no why; DFS scores them 0.
+**The facts that set the bar** (study, 2015-16 → 2025-26):
+- teammate DK residual r = 0.034 (high-usage pairs 0.000, C–C −0.09, star–bench −0.03, bench–bench +0.09);
+- opponents 0.011;
+- drift by season, 0.017 → 0.059;
+- blowouts mostly cost minutes (stars −5.5 DK at |m| ≥ 26; losing starters −4.7 at |m| ≥ 16);
+- normal marginals fit stars and role players, gamma fits bench, and CV falls 0.79 → 0.24 with level.
 
-**Points.** Split actual and expected into garbage and non-garbage parts (garbage time as in ANALYTICS; expected garbage points come from the sim).
-`F = M · π · (v·q·m + f·c)` on non-garbage play, where:
-- M = minutes;
-- π = team possessions per minute while on court;
-- v = FGA per on-court possession;
-- q = xPTS per FGA from his actual shots;
-- m = FG pts / xPTS;
-- f = FTA per on-court possession;
-- c = FT%.
+Correlation is a weak lever, so **the marginals and the shared margin draw matter most.**
 
-Expected values (M̂, π̂, v̂, q̂ = his EB xPTS/FGA × the opponent's quality-allowed index, m̂, f̂, ĉ) come from the pre-game state.
+**Path A: copula (T1.4 v0 → T2.10 v1; the GPP default).** Per sim and game:
+1. Draw (H, A) errors from a bivariate normal with the game model's OOF sd(margin), sd(total) and correlation (T0.8, seasons < S). This gives the margin m_s.
+2. Draw the availability scenario.
+3. Draw minutes: base + g_tier(|m_s|, sign) + noise, then water-fill.
+4. Draw outcomes given minutes (means = minutes × rates, with the usage bump and a winner/loser per-minute shift):
+   - **v0** draws DK FP directly: normal for projected ≥ 25, gamma below, with CV-by-level fit on seasons < S;
+   - **v1** draws the **components** (pts, reb, ast, stl, blk, tov, 3PM) with a within-player 7×7 Gaussian copula per role tier, then scores them, so DD/TD are exact and props share the draws.
+5. Couple players with a Gaussian copula: the role-pair × position-pair matrix plus opponent entries, from T2.7 (last 1–3 seasons < S, **residuals vs our pregame projection**).
 
-**Terms.** Exact Shapley over six groups: **minutes, pace, shot volume, shot quality, shot-making, free throws**, plus **garbage time** = G − Ĝ.
-- **Jensen gap:** E[product] ≠ product of expectations, so M̂ is replaced by an effective M̃ = M̂·(Ŷ_ng/F(x̂)). The test is \|M̃ − M̂\| ≤ 1.5 min for 95% of player-games.
-- **Defender carve-out:** `D = Σ_d (s_d^act − s_d^exp)·θ̃_d·n`, moved from shot-making to a **defender** term. It is shown only when \|D\| ≥ 0.5 and his matchup partial possessions are ≥ 20.
-- Defenders also appear as descriptive facts: who guarded him (≥ 25% share), partial possessions, his points and FGM/FGA against them, and the defender's points allowed per 100 partial possessions tonight vs that defender's norm.
-- **Minutes sub-labels:** the minutes term is split by phase (Q1–Q3, Q4, OT), with labels foul trouble (PF ≥ 4 by half-time), blowout (\|m₃\| ≥ 15), overtime, early exit (the ANALYTICS heuristic), else rotation. If the phase differences offset each other (\|ΔM\| < 1), it stays one term.
+Path A takes team variance top-down from the market-calibrated game model, so M1's over-dispersion can't occur. It costs 15–30 s per 15-game slate. What it gives up: team totals match only in expectation.
 
-**Rebounds and assists:**
-- REB = M·π·o·s, with o = rebound chances per on-court possession and s = share.
-- AST = M·π·t·a, with t = teammates' FGM per on-court possession and a = assist share.
-- Terms: minutes, pace, opportunities, share, garbage.
+**Path B: possession sim (T2.5 → T2.6), measurement first.**
 
-**Fantasy points:** the scoring-weighted sum of the stat terms plus a bonus term, regrouped by label.
+**Step 0** measures on 2019-20 → 2023-24 PBP:
+- Var(team | line) and Cov(H, A | line);
+- the per-possession points variance;
+- the **lead restoring force**, E[Δm over the next 6 minutes | m];
+- the slope b₄ of final margin on m₃ (expect < 1);
+- E[Q4 pace | |m₃|];
+- leader/trailer Q4 efficiency;
+- team-rebound and missed-FT-rebound rates (S7).
 
-**Tests:** Σ terms = actual − expected to 1e-9 on all 2024-25 player-games; terms are zero-safe (Shapley handles FGA = 0).
+The arithmetic behind it:
+- The market errors (sd 17.7 total, 12.4 margin) imply Var(team) ≈ 117 and Cov ≈ 40.
+- iid possession noise alone is ≈ 130 per team, before pace (≈ 25) and rate uncertainty.
+- So an iid sim gives sd(margin) ≈ 16.4. Real games need a restoring force and a shared latent.
 
-### 3.4 Output to the writer, and fact-check rules
-`why_facts` per player-game:
-```
-{player, team, stat, expected, actual, diff, range80,
- terms: [{term, value, detail}],          # sorted by |value|
- shooting: {fgm, fga, fg3m, fg3a, xfg_pts, rim_att, typical_rim_att},
- minutes: {expected, actual, label, pf},
- defenders: [{name, partial_poss, pts, fgm, fga, allowed_vs_norm}],
- flags}
-```
+**Per sim:**
+- **Latents:** a game latent η_g ~ N(0, τ_g²) on both teams' efficiency; team latents η_t; player shooting latents ζ_i; pace P_s ~ N(P̄, σ_P²).
+- **Regulation** runs as eight 6-minute segments; in segments 7–8, pace shifts by E[pace | |m₃|].
+- **Each possession** draws a **multinomial terminal outcome** over {2PA, 3PA, FT trip, TOV} from the on-court rates. Independent Poissons are not used, because they double-count pace variance.
+  - Makes are binomial on logit p̂ + δ_t + η_g + η_t + ζ − ρ·m_{k−1}·s_t (s_t = +1 for the leader), so the **restoring force acts in every segment**. Q4 adds a leader-coasting term β_q(|m₃|).
+  - Misses continue as OREB with Binomial(reboundable misses, oreb%), for 3 rounds (residual mass < 0.3%).
+  - Reboundable misses include the last missed FT, and a team-rebound share is removed before player allocation (S7).
+- **Allocation** is Dirichlet-multinomial by on-court weight. Minutes come from §4.2: Q1–Q3 and Q4-by-|m₃| shares on the stint path, else box minutes pro rata.
+- **OT** periods are 5/48 of P_s each, repeated while tied.
 
-**Selection.** At most 2 players per game: the largest \|PIT − 0.5\| among players with expected minutes ≥ 20 or actual pts ≥ 25. The winning side breaks ties.
+**SMM (M1e, M2):**
+- σ_P, τ_g, τ_e, τ_p, ρ and β_q are fit **per test season on seasons < S**.
+- **Fit targets:** Var(H | line), Cov(H, A | line), sd(margin) and sd(total) within ±3%; b₄ within ±0.05; Q4 pace within ±1 per bin; P(OT) 5.5–6.5%; FG% dispersion.
+- **Validation targets (not fitted)**, from T2.7 on seasons < S:
+  - role-pair and opponent correlations within ±0.02;
+  - the blowout curve within ±1.0 DK per bin;
+  - the star-absence bump within ±0.6;
+  - CV by level within ±0.03.
+- All of these are quoted only on 2024-25 and 2025-26.
 
-**Fact-check** (extends `brief/factcheck.py` with kind `player_why`, in a new module):
-1. Existing number, name and pair rules apply.
-2. A term phrase (lexicon: minutes, shots/volume, shot quality/looks, shooting/made, free throws, defense/guarded, garbage/blowout) may only be used if \|value\| ≥ 1.0 pt (0.7 reb/ast) **and its direction matches the sign**.
-3. "Luck" and "unsustainable" are banned. Use "shot-making above his norm".
-4. A causal defender claim ("held by", "slowed by") needs a defender term ≥ 1.5. Otherwise only the descriptive "mostly guarded by X", and only when share ≥ 40%.
-5. "Injury" words follow the existing rule (`possible_injuries` gives only "left and did not return").
-6. Our number is "our number" or "projection", never a tip.
-7. If no term passes rule 2, fall back to the template: "{n} more minutes than expected and {k}-of-{m} from three".
+**Gates:**
+- **G1:** if the τ's reach 0 and the variance targets still fail, Path B runs in **allocation mode**. Team scores come top-down as in Path A, and the possessions only split them among players.
+- **G2:** Path B replaces Path A for DFS only if, on 2024-25/2025-26, player DK CRPS is not worse by more than 1 SE, lineup-score calibration is at least as good, and the realised proxy payout is not worse. Otherwise it serves props and the why.
 
-## 4. Fantasy and DFS
+**Monte Carlo and seeds.**
+- DFS uses **S = 25,000** sims, with 50,000 for portfolios of N > 20. At p = 0.01 the SE is 0.0006.
+- Seeds are `hash(slate_id, run_kind, model_version)`. These are common random numbers, so projections move between runs only when the inputs move.
+- Per-sim player FP is stored as float16 `npz`: about 8 MB per slate, pruned after 8 days.
 
-**Scoring** (DraftKings NBA Classic and FanDuel NBA rules pages; **confirm every coefficient against the `rules_json` captured with each slate before T1.4 ships**):
-- **DK:** `PTS + 0.5·3PM + 1.25·REB + 1.5·AST + 2·STL + 2·BLK − 0.5·TOV + 1.5·DD + 3·TD`. DD and TD count across PTS/REB/AST/STL/BLK. **To confirm:** whether a triple-double also earns the DD bonus (believed yes, 4.5 total).
-- **FD:** `PTS + 1.2·REB + 1.5·AST + 3·STL + 3·BLK − TOV`.
-- **Rosters:**
-  - DK: 8 slots (PG, SG, SF, PF, C, G, F, UTIL), $50,000 cap, players from ≥ 2 games.
-  - FD: 9 slots (2 PG, 2 SG, 2 SF, 2 PF, C), $60,000 cap, ≤ 4 players per team, ≥ 3 teams.
-  - Positional eligibility comes from each salary file. All rules are to be confirmed.
+## 5. DFS engine (`proj/dfs/`)
 
-**Distributions** are computed per sim from the simulated box line. Shown: mean, p25 (floor), p50, p75, p90 (ceiling), boom%, and P(DD).
-- DFS uses the **unconditional** distribution (0 when the player doesn't play).
-- Props use the distribution **conditional on playing**, because props are void on a DNP.
-- With late swap out of scope, cash lineups exclude players with P(play) < 0.85 by default.
+### 5.1 Rules and scoring (T0.6, M4)
+- **Scoring constants** live in `sources/dfs.CLASSIC_SCORING`, because DK's point values aren't in any JSON. They are verified two ways:
+  1. **FPPG reconciliation:** for **≥ 50 draftables** per check, recompute DK's `fppg` (attribute 219) from `player_games` over the matching window (season to date, or last season before ~5 games). Accept if |Δ| ≤ 0.1 for ≥ 95% of them. Players with ≥ 10 triple-doubles in the window discriminate between a 4.5 and a 3.0 TD bonus (about 0.5 FPPG apart).
+  2. **RotoGuru DK pts:** an exact match on ≥ 99.5% of joined player-games, with ≥ 20 triple-doubles among them.
 
-**Optimizer: OR-Tools CP-SAT** (Apache-2.0, arm64 wheels, fast repeated solves), with our own roster model of about 200 lines. `pydfs-lineup-optimizer` is the test oracle: it must agree on the optimal objective for 50 random slates.
-- **Why not pydfs in production:**
-  - its rules are hard-coded, so a site rule change means waiting for a release, and its maintenance is uncertain;
-  - its PuLP/CBC backend is about 10× slower per solve;
-  - GPP needs custom simulation objectives.
-- **Model.** Binary x_{i,slot} over eligible slots:
-  - each slot filled once;
-  - each player used at most once;
+  The check reruns weekly as a data check.
+- **Rules** come from the archived `rules_json` at build time and are **never hard-coded**: slots, salary cap, `gameCount.min`, and **`teamCount.min` (= 2)**.
+- **Eligibility** is per slot from the draftable rows: G = {PG, SG}, F = {SF, PF}, UTIL = any. **`isDisabled` rows are excluded**, and players whose game has started are locked.
+
+### 5.2 Solver
+- **OR-Tools CP-SAT** (Apache-2.0, arm64 wheels). The variables are binary x_{i,slot} over eligible slots. Constraints:
+  - each slot filled once, each player at most once;
   - salary ≤ cap;
-  - team and game constraints;
-  - FP scaled ×100 to integers;
-  - locks and excludes.
-- **Cash:** maximise Σ μ_i·x_i.
-- **GPP (Hunter–Vielma–Zaman style, but with a simulated objective):**
-  1. **Candidates:** for 600 random sims, solve the ILP on `0.5·μ_i + 0.5·FP_i,s` (the sim brings correlated outcomes: OT games, pace-ups, teammate absences). Add the top 50 mean lineups via no-good cuts.
-  2. **Field proxy (no ownership data):** 5,000 lineups from a randomised greedy-plus-swap builder on `μ_i·exp(N(0, 0.15²))`, standing in for a field of optimizer users. The per-sim target t_s is the 99.8th percentile of field scores in sim s, so the bar rises in sims where everyone scores.
-  3. **Portfolio:** greedily add the lineup that most increases `(1/S)·Σ_s 1[max_k score_k,s ≥ t_s]`, subject to overlap ≤ γ shared players (DK 5 of 8, FD 6 of 9, the HVZ overlap constraint) and exposure caps (default max 60%, user min/max per player).
-- **Without ownership data:** we show no ownership or leverage numbers. The field proxy is used internally only, and the GPP output is labelled "high-ceiling, diversified". If ownership is ever bought, it replaces the field-sampling weights.
+  - ≥ `gameCount.min` games and ≥ `teamCount.min` teams (indicator variables);
+  - locks and bans.
 
-## 5. Evaluation and MLOps
+  FP is scaled ×100 to integers. The roster model is about 200 lines.
+- **`pydfs-lineup-optimizer` is the test oracle:** equal optimal objectives on 50 slates (RotoGuru and live). It isn't used in production: its rules are hard-coded, the CBC backend is about 10× slower, and it has no simulation objectives.
+- **Concurrency:** each solve uses `num_workers=1`, run in a thread pool of 2 on the Mac.
 
-### 5.1 Backtest
-**Design.**
-- **Walk-forward by season:** test 2021-22..2025-26, with rates and minutes state run causally day by day. Model coefficients (GLM β, minutes GBM, xFG) are fit on seasons < S. Hyperparameters (κ, K_φ, K_D, K_θ, half-lives) are frozen on 2019-20/2020-21.
-- **Environment:** the dumped walk-forward `gbm_market` predictions (rung 3).
-- **Population:** players with pregame expected minutes ≥ 15 who played. Fringe players are reported separately. **Never filter on actual minutes.**
+### 5.3 Cash
+- **Primary objective:** maximise **P(score ≥ c_s)** over the shared sims.
+  - c_s is the cash line in sim s: the field-proxy (§5.5) score at the contest's paid fraction from its payout table (e.g. 44.4% for a double-up).
+  - Candidates: k-best (§5.4, 100 each) under μ_i − λ·(μ_i − p25_i) for λ ∈ {0, 0.15, 0.3, 0.5}, each scored on the sims. The best is returned, with its P(cash).
+- **Fallback** (Phase 1, before the field proxy exists): maximise Σ(μ_i − λ·(μ_i − p25_i))·x_i, with λ chosen on the RotoGuru backtest (default 0.3).
+- **Availability:**
+  - At lock−45, players with P(play) < 0.85 are excluded *only if their game locks before the next run*.
+  - Later-game Q players are allowed, with an automatic swap candidate recorded for §5.6.
 
-**Benchmarks:**
-1. season-to-date average (prior-season blend under 10 games);
-2. last-10 average;
-3. rung-2 EWMA minutes × season per-minute rates;
-4. **salary-implied** DK FP: a linear fit on salary, *if* RotoGuru history is reachable (T0.9);
-5. DARKO, **only with permission** (the research says don't scrape; ask Kostya Medvedovsky);
-6. from 2026-10-20, no-vig props: our P(above line) vs the market's.
+### 5.4 Top N
+- **k-best by no-good cuts:** after solution L_k, add Σ_{i∈L_k} x_i ≤ 8 − d (d = "min different players").
+- N solves are sequential. Lineups are ranked by mean, then by P(cash) if available.
+- **Display:** diff vs #1 and the p10–p90 range from the sims.
 
-No-vig method: multiplicative and power both get computed, and the one with better outcome log-loss after 4 weeks is kept as the benchmark.
+### 5.5 GPP portfolio (contest builder)
+**1. Candidates (S11).** 300 CP-SAT solves on the 2-thread pool:
+- 150 **scenario objectives** 0.5·μ_i + 0.5·FP_{i,s}, for random s;
+- 100 **ownership-penalised** objectives μ_i − λ·own_i, with λ ∈ U(0, 0.5·σ_μ);
+- 50 **noise** objectives μ_i·exp(N(0, 0.12²));
+- plus the Top-50 by mean.
 
-**Metrics:**
-- per stat: MAE, RMSE, CRPS (from samples), bias;
-- coverage of the 50% and 80% intervals, and the PIT histogram;
-- minutes MAE;
-- calibration of P(above line): Spiegelhalter z on the over/under outcome. Before props exist, the "lines" are proxies (season average rounded to .5); live, they are real lines;
-- log-loss vs no-vig on the same props, with SE clustered by game;
-- DFS: the actual score's percentile among 100k random valid lineups (salary ≥ 98% of cap), the ratio to hindsight-optimal, and a paired comparison against lineups the same optimizer builds from naive projections.
+**2. Ownership proxy** (no ownership data exists, so it is labelled "proxy" everywhere).
+- **Model:** logit own_i = a + b₁·value_z + b₂·position projection rank + b₃·salary_z + b₄·**injury_replacement** (promoted with Δmin ≥ 6) + b₅·`fppg`_z + b₆·team-total_z, normalised to Σ = 800%.
+- The b's start hand-set and documented. They are refit by beta regression on uploaded `%Drafted` once ≥ 10 slates exist (T3.2).
 
-**Acceptance targets for v1 champion** (walk-forward, all significant at 2 SE clustered by game):
+**3. Field proxy (S12).** F = min(field size, 20,000) lineups:
+- **40% noisy-optimal:** 200 CP-SAT solves on μ_i·exp(N(0, 0.15²)), resampled with replacement. This reproduces optimizer duplication.
+- **60% value-greedy with chalk tilt:** sequential sampling ∝ own_i^1.5 × value_i, subject to the slot and cap constraints, rejecting lineups below 97% of the cap.
+- The weights 40/60 and the tilt are **assumptions**.
+- **ROI is reported under three field strengths:** soft (20/80), medium (40/60), sharp (70/30). The page shows medium, with the soft–sharp range.
 
-| metric | target |
+**4. Payout ladder.**
+- Use the contest's real `payoutSummary`. A described contest uses its preset curve; with none, the fallback is the top-20% / 1% / 0.1% ladder.
+- Per sim, store the field-proxy score at each payout-tier boundary rank (F scaled to the field size): a tiers × S matrix built in chunks.
+- A lineup's payout in sim s is a tier lookup. Ties and our own entries split or occupy positions jointly.
+
+**5. Selection.**
+- Greedily add the candidate with the largest **marginal expected payout** of the portfolio, averaged over S = 25–50k.
+- Constraints: overlap ≤ γ shared players with every chosen lineup (default 5 of 8) and per-player exposure caps (default max 60%, plus user min/max).
+
+**6. Duplication.**
+- E[dupes_L] = field size × q(L), where q(L) ≈ c·Π_{i∈L} own_i × h(salary left).
+- c and h are calibrated on the field-proxy sample: exact matches for common lineups, and the product form for rare ones.
+- Expected dupes split the payout in step 5. The indicator reads Low < 0.3, Med 0.3–2, High > 2.
+
+### 5.6 Lock-relative runs and late swap (T1.6, T2.14)
+- **Watcher.** A launchd/systemd job on the Mac fires every 5 minutes from 16:00 to 23:59 ET. Each tick:
+  - for each archived slate, triggers `courtside dfs run --slate X --kind lock45|lock10` when now ∈ [lock−47, lock−40] or [lock−12, lock−7];
+  - first refreshes the official report, ESPN injuries and draftables (§3.2);
+  - is idempotent on (slate, kind).
+- **Late swap.** For each later game tip in a slate, a `swap` run fires at tip−10, but only if `late_news` touches a player in a saved lineup.
+- **Re-solver:** players in started games are fixed. The unlocked slots are re-solved under the same objective with the remaining cap. Portfolio overlap and exposure are re-checked against the fixed parts. The output is a DK edit CSV.
+- No automation of DK beyond the CSV.
+
+### 5.7 Showdown (T2.15, N6)
+- Binary c_i (captain) and u_i (UTIL) per player, with c_i + u_i ≤ 1, Σc = 1 and Σu = 5. Salary is Σ(1.5·s_i·c_i + s_i·u_i) ≤ cap. Score is 1.5·FP for the captain. ≥ 2 teams comes from `rules_json`.
+- One game, so the shared margin draw and the opposing-star correlation matter more. Path B is preferred here once G2 passes.
+- The field proxy gets a captain ownership term, so captain chalk is modelled separately.
+- No late swap (DK rule).
+
+### 5.8 Runtime budgets (Mac mini M4, loaded, 2 threads)
+
+| Step | Budget |
 |---|---|
-| minutes MAE (expected ≥ 15) | ≥ 8% better than rung-2 EWMA on the same rows; ≤ 4.5 in backtest; ≤ 4.0 live with real reports |
-| pts / reb / ast MAE and CRPS | ≥ 4% / 3% / 3% better than the best naive benchmark |
-| 80% / 50% coverage | 78–82% / 47–53% overall; 75–85% in each of 6 role buckets |
-| PIT | every decile bin within 8–12% |
-| P(above line) calibration | \|z\| < 2.5 on proxy lines (n ≥ 10k); live paired log-loss vs no-vig reported weekly (we expect the market to be sharper) |
-| DK FP MAE | ≥ 10% better than salary-implied (if available) |
-| cash lineup | median percentile ≥ 85th; beats the naive-projection optimizer in ≥ 55% of slates |
+| nightly state (rates, minutes features, ownership refit) | ≤ 3 min |
+| projection, 15-game slate, Path A, 25k sims | ≤ 30 s |
+| projection, Path B (pilot + 10k per game) | ≤ 60 s (limit 120) |
+| cash + Top-20 | ≤ 10 s |
+| GPP N = 20: 300 candidates + 200 field solves (~0.1–0.2 s each, 2 workers) ≈ 50 s; field 20k sampled ≈ 10 s; tier matrix + greedy over 25k sims ≈ 30 s | **≤ 120 s** |
+| GPP N = 150 at 50k sims | ≤ 300 s |
+| late-swap re-solve | ≤ 30 s |
 
-The research's "starters' points MAE 5–6" is unverified. We publish our own number instead.
+## 6. Data model: migration 9 (owner T0.0)
 
-### 5.2 Leakage rules (tests enforce each one)
-1. **Availability (the rung-2 trap).**
-   - Teammates use the `avail` rule: oracle only for regulars with expected ≥ 20 min; fringe teammates are available.
-   - The player himself is evaluated conditional on playing.
-   - Starting on 2025-12-xx, the backfilled official reports (T0.1) give a production-faithful slice. Report both, and quote only the faithful one as "live-like".
-   - **Leak probe:** a walk-forward LightGBM predicting projection residuals from availability-derived features alone must improve MAE by < 0.5%, the analogue of the 58.3% → 50.8% ATS probe.
-2. **No lookahead.** Scrambling every box, PBP, matchup and tracking row on or after a cut date must leave projections up to that date bit-identical (`check_no_lookahead` pattern).
-3. **Same-game matchup and tracking data are post-game only.** Pre-game defender shares come from games before *d*. **Season tables** (matchupsrollup, leagueseasonmatchups, defended FG%, defender distance, synergy) are end-of-season aggregates and are only used **lagged one season**. Causal to-date versions are rebuilt from per-game data.
-4. **No starters pre-tip.** Only "started last game" or starts in the last 10.
-5. **Never features:** props, salaries, actual game script (foul trouble, garbage time), and closing lines beyond what `gbm_market` already uses. The xFG feature audit (§3.2) runs in CI-less local tests.
-6. **Rotation features** come from games before *d* only, and DNP-CDs are never inferred from same-day box scores.
+| Table | Key columns |
+|---|---|
+| `dfs_salaries` (alter) | + `starter` INTEGER, + `swappable` INTEGER |
+| `player_ids` | (source, source_id) PK, player_id, name, team, first_seen, last_seen, how, confidence |
+| `player_aliases` | (source, name_norm, team) PK, player_id, note |
+| `dfs_hist_salaries` | (game_date, rg_id) PK, player_id, name, pos, team, opp, home, starter, salary, dk_pts, minutes, raw_stats, raw_path |
+| `dfs_slates` | slate_id PK (draft group), nba_day, game_type_id, tag (main / early / late / showdown), game_ids_json, lock_utc, rules_json |
+| `dfs_contests` | contest_id PK, slate_id, name, entry_fee, field_size, max_per_user, guaranteed, payout_json, attrs_json, captured_at, raw_path |
+| `player_projections` | id PK, game_id, slate_id, player_id, run_id, model_version, role, p_play, minutes_json, inputs_json |
+| `player_projection_stats` | (projection_id, stat, cond) PK; stat ∈ min, pts, reb, ast, fg3m, stl, blk, tov, pra, dk; cond ∈ played / all; mean, sd, q05…q95 |
+| `dfs_runs` | run_id PK, slate_id, kind (lock45 / lock10 / swap / manual), created_at, model_version, sim_path, path (A/B), late_news_json, seconds |
+| `dfs_ownership_proxy` | (run_id, player_id) PK, own, band, version |
+| `dfs_lineups` | id PK, run_id, mode (cash / topn / gpp / showdown / swap), contest_id, rank, slots_json, salary, mean, p10, p50, p90, p_cash, p_top1, e_payout, dupes, why_json, actual, pct_field_proxy, ratio_hindsight |
+| `dfs_contest_results` | (contest_id, rank, entry_hash) PK, points, lineup_text, payout, uploaded_at (manual uploads) |
+| `dfs_contest_ownership` | (contest_id, player_id) PK, name, pct_drafted, fpts |
+| `prop_compare` | (projection_id, market, line, captured_at) PK, mkt_p_above, our_p_above |
+| `postgame_why_v0` | (game_id, player_id) PK, expected, actual, terms_json, text |
+| `stints`, `player_game_oncourt` | as in v1 (Phase 2) |
+| `player_metric_snapshots`, `dfs_metric_snapshots` | (as_of, model, metric, window) PK, n, value, se, details_json |
 
-### 5.3 Registry, monitoring, alerts (reuse `mlops/`)
-**Model names:**
-- `player_minutes`
-- `player_rates`
-- `player_sim`: distribution and variance parameters; its spec hash includes the hashes of the other two, so it is the champion that labels rows.
-- `xfg`
+## 7. Evaluation
 
-Each row in `player_projections` carries `model_version` and `role`. One shadow is allowed, because it doubles the sim time.
+### 7.1 Leakage rules (each one enforced by a test)
+- **L1. No lookahead.** Scrambling all box, PBP, salary and injury rows on or after a cut date leaves projections and lineups up to that date bit-identical.
+- **L2. Fit < S.**
+  - Every model coefficient and every sim or copula parameter (σ_tier, q's, κ, CV-by-level, correlation matrix, SMM τ's, ρ, ownership b's) is fit on seasons < S inside the walk-forward.
+  - Box-path hyperparameters (κ, half-lives) are frozen on **2010-11 → 2013-14**, before every RotoGuru season.
+  - Stint-path hyperparameters (K_φ) are frozen on 2019-20/2020-21 and are tested only on 2021-22+.
+- **L3. Season aggregates are lagged one season or rebuilt causally.** This covers `matchup_rollup`, `season_matchups`, `pt_*`, `synergy_playtypes`, `hustle_season`, role tiers, and the correlation study. `player_index` positions are a current snapshot (a documented minor leak; the DK/RotoGuru position is preferred).
+- **L4. Availability.**
+  - The backtest uses the `avail` oracle for regulars with expected minutes ≥ 20. It is labelled "known availability", which equals a perfect lock−10.
+  - The **live-like slice** uses real reports.
+  - The leak probe from v1 is kept: < 0.5% MAE gain from availability-only features.
+- **L5. Starters.** The lock−45 mode never sees starters. Lock−10 mode uses the actual starters as a proxy for announced ones (≈ 99% identical), labelled as such.
+- **L6. Never features:** salaries (they are only benchmarks and ownership inputs), props, same-game facts, and closing lines beyond what `gbm_market` and book team totals give at run time.
 
-**Gates.**
-- **Offline:** composite CRPS (mean of per-stat CRPS ÷ baseline CRPS) below −2 SE; no stat worse beyond 2 SE; coverage still in band.
-- **Online:** ≥ 3,000 resolved player-games and ≥ 1,000 props, with paired CRPS ≤ 0 and no critical alert.
+### 7.2 Projection metrics
+- **Measures:** MAE, RMSE, CRPS from samples, bias, 50%/80% coverage, PIT.
+- **Randomised PIT for counts (S3):** u = F(y−1) + V·(F(y) − F(y−1)), V ~ U(0,1).
+- **SEs** are **two-way clustered by game and player-season** (Cameron–Gelbach–Miller, S4).
+- **Population:** projected minutes ≥ 15 and played, for the conditional metrics. For DK FP, the **unconditional** population is every salaried player with projected minutes ≥ 10, with a DNP scored 0. Never filter on actual minutes.
+- **Benchmarks:**
+  - season-to-date average (this equals DK `fppg`; historically reconstructed);
+  - last-10;
+  - **salary-implied** (a per-season linear fit of DK pts on salary, on seasons < S);
+  - rung-2 EWMA × per-minute rates;
+  - live: DK `fppg` itself.
 
-**Monitoring.** A new table `player_metric_snapshots`, per model × stat, over windows `7d`, `30d`, `last2000` (player-games), `season` and `props_last1000`.
+### 7.3 DFS backtest (T2.1, T2.17)
+- **Design:** walk-forward over the RotoGuru seasons, test **2015-16 → 2020-21** (about 1,000 slates), with the box path, Path A, and causal state day by day. Each slate runs cash, Top N and GPP (N = 20, medium field).
+- **Metrics:**
+  - FP MAE/CRPS vs salary-implied, the `fppg` equivalent and last-10;
+  - lineup score / hindsight-optimal (same eligibility);
+  - percentile vs the field proxy at all three strengths;
+  - a paired comparison vs the same optimizer fed salary-implied or `fppg`;
+  - realised cash rate vs the proxy cash line (the 44.4% field score);
+  - calibration of the simulated lineup-score distribution.
+- **Acceptance** (significant at 2 SE, two-way or slate clustered):
+
+| Metric | Target |
+|---|---|
+| DK FP MAE (unconditional) | ≥ 5% better than the best of salary-implied / `fppg`-equivalent / last-10 |
+| DK FP CRPS | ≥ 5% better than a naive-mean + tier-CV normal |
+| 80% / 50% coverage (DK FP) | 77–83% / 47–53%; each role bucket 74–86% |
+| PIT deciles (randomised) | each 8–12% |
+| cash lineup vs `fppg`-optimizer lineup | mean paired Δ > 0 at 2 SE; wins ≥ 55% of slates |
+| hindsight ratio (cash) | reported; must beat both baseline optimizers |
+| lineup-score calibration | PIT deciles 8–12%; 80% coverage 76–84% |
+| GPP simulated vs realised top-1% (vs field proxy) | ratio within 0.7–1.3 |
+| minutes MAE (≥ 15) | ≤ 4.5 avail; ≥ 8% better than EWMA |
+
+- **Projection-only backtest 2021-22 → 2025-26** (no salaries): the stint path (T2.2–T2.6) must not be worse on CRPS than the box path before it is used for DFS.
+
+### 7.4 Live tracking (from 2026-10-20)
+- **Every lock−10 build is stored:** cash, Top-N and default GPP. The nightly scoring gives realised points, hindsight ratio, field-proxy percentile, the comparison against the `fppg` optimizer, and FP MAE vs DK `fppg` and salary-implied.
+- These feed `dfs_metric_snapshots` (windows 7d, 30d, season) and a `/health` DFS tab.
+- **Real ground truth:** the owner may upload DK contest standings CSVs from contests he entered. They contain ranks, points, lineups, `%Drafted` and FPTS. From them we get:
+  - the **real cash line**, compared with our predicted c_s distribution (PIT);
+  - **real top-1% scores**;
+  - **real ownership**, which calibrates the proxy (Phase 3: MAE and rank correlation of the proxy are reported once ≥ 10 slates exist).
+
+### 7.5 Props bar (Fable answer, N5)
+- **Markets:** pts, reb, ast, PRA, 3PM, using the distribution **conditional on playing**.
+- **Three criteria:**
+  1. **Calibrated:** Spiegelhalter |z| < 2.5 on P(above line), n ≥ 500.
+  2. **Beats naive:** log-loss better than season-average and last-10 distributions.
+  3. **Adds information:** the logit-average of ours and the no-vig market beats the market alone by > 2 clustered SE, with both taken at the **same snapshot time**.
+- Parity with the market is *not* the v1 bar.
+
+### 7.6 What we can and can't claim
+- Simulated ROI isn't real ROI, and the field is a proxy.
+- A 19%-ROI player still loses money over 48% of 100-GPP stretches, so the owner's occasional entries **cannot** measure ROI. They measure ownership and cash lines.
+- The RotoGuru backtest is optimistic on minutes (known availability) and pessimistic on eligibility (single positions). Honest live numbers start 2026-10-20, and `/health` says so.
+- With ~1,000 slates, a top-1% rate has an SE of ≈ 0.3 pp: enough to tell 1% from 2%, but only against the proxy field.
+
+## 8. Build plan
+
+- **Code:** `src/courtside/proj/` and `proj/dfs/`. Tests: `tests/test_proj_*.py`, `tests/test_dfs_*.py`.
+- **Ownership of shared files:** `db.py` and the `cli.py` hooks belong to T0.0. `collect.py` and `sources/dfs.py` belong to T0.7, then are released.
+- **Legend:** ★ critical path; ∥ parallel; O / S / H = Opus / Sonnet / Haiku; **Mac** = heavy, run on the Mac mini (`~/Developer/NBA`, push from geekom1).
+- **Agent limit:** at most **3 agents at once on geekom1**, and one heavy job at a time.
+- **Priority order:** P(play) + minutes ≫ rates with usage > joint correlation (GPP only) > pace/opponent > defender/refs.
+
+### Phase 0: foundations (Oct 19–22)
+
+| ID | Task | Owned files | In → out | Acceptance |
+|---|---|---|---|---|
+| T0.0 ★ S | migration 9, `courtside proj` / `courtside dfs` CLI | `db.py`, `cli.py`, `proj/__init__.py`, `proj/cli.py` | §6 → schema | idempotent migrate; `test_db` green |
+| T0.1 ∥ H | verify rescued reports + rolling capture (S10) | `backfill_injuries.py` (checks only) | `injury_snapshots` → data-check report | 151 game days present; parse ≥ 99% of rows; name match ≥ 98%; a report capture is scheduled before every lock run |
+| T0.2 ★ H Mac | RotoGuru backfill + parse | `sources/rotoguru.py`, `backfill_rotoguru.py` | HTML → raw + `dfs_hist_salaries` | ≥ 98% of dates 2014-10-29 → 2021-05; ≥ 99% joined to `player_games`; slate table per §3.1 |
+| T0.3 ∥ H | cdn box backfill 2019+, PBP rsync to the Mac | `backfill_pbp.py` (box kind) | cdn → raw | ≥ 99% of PBP games have a box |
+| T0.4 ∥ S Mac | stints store (Phase 2 input) | `analytics/stints_store.py` | → `stints`, `player_game_oncourt` | ≥ 99% of games validate |
+| T0.5 ★ S | ID mapping DK/RotoGuru → NBA | `proj/ids.py` | §3.4 | §3.4 rates; Jalen/Jaylin test |
+| T0.6 ★ H | rules + scoring verification (M4) | `proj/dfs/rules.py` | `rules_json`, draftables, RotoGuru → rule objects + check | §5.1: ≥ 50 FPPG within 0.1; RotoGuru exact ≥ 99.5% incl. ≥ 20 TDs; `teamCount`, disabled, eligibility tests |
+| T0.7 ★ S | DK capture: starter/swappable, contest payouts, lock-relative refresh | `sources/dfs.py`, `collect.py` (dfs step) | lobby → `dfs_contests`, `dfs_slates` | 30–40 contests/day captured before lock; ≤ 60 DK requests/day added |
+| T0.8 ∥ H | GBM total OOF sd + margin–total residual corr per season | `model/gbm.py` (2 attrs) | — | values logged per fold; rung-3 tests green |
+
+### Phase 1: cash + Top N live (Oct 20 – 27)
+
+| ID | Task | Owned files | In → out | Acceptance |
+|---|---|---|---|---|
+| T1.0 ★ S Mac | **eval-lite** (M5): walk-forward 2024-25 (fit < 2024-25) and RotoGuru 2019-20/2020-21 | `proj/evallite.py` | projections → report | runs in ≤ 20 min; Phase 1 gate below |
+| T1.1 ★ S | EB per-minute rate state, nightly | `proj/state.py` | box → `rate_state` | no-lookahead test; ≤ 60 s |
+| T1.2 ★ O | minutes v0.5: EWMA + vacated minutes + promotion + margin-conditional g + starter flag | `proj/minutes.py` | state, scenarios → minute distributions | S14 ≥ 8-min test; star-absence +3.1 ± 0.6 DK; avail MAE ≤ 4.8 |
+| T1.3 ∥ S | P(play) recalibration (M6, was T2.9) | `proj/availability.py` | reports → Beta cells | §4.1 |
+| T1.4 ★ S | Path A v0 copula (tier correlations), reconciliation to team totals, store | `proj/copula.py`, `proj/reconcile.py`, `proj/store.py`, `proj/pipeline.py` | → sims, `player_projection_*` | DK FP 80% coverage 76–84% on 2024-25; ≤ 30 s per slate |
+| T1.5 ★ S | CP-SAT engine: cash fallback, Top N, min-different, lock/ban, exposure; pydfs oracle | `proj/dfs/optimizer.py`, `proj/dfs/topn.py` | rules, projections → lineups | pydfs equal on 50 slates; Top-20 ≤ 5 s |
+| T1.6 ★ S | lock-relative watcher, `late_news`, `dfs_runs` | `proj/dfs/runner.py`, `deploy/` (watcher units) | schedule, draftables → runs | replay of 3 captured slates fires inside the windows; idempotent; late_news unit tests |
+| T1.7 ∥ S | `/dfs` page v1: pool, Top N, cash, why-this-lineup, DK CSV | `web/dfs_view.py`, `templates/dfs.html`, `proj/dfs/why.py`, `proj/dfs/export.py` | runs → page/CSV | 390 px light/dark; CSV accepted by the DK template (owner manual check) |
+| T1.8 ∥ S | post-game why v0 + ≤ 30 LLM stories | `proj/why_v0.py`, `brief/prompts/player_why.md` | box vs projection → `postgame_why_v0` | exact sums; 50 samples: 0 sign violations, 0 unsupported numbers |
+| T1.9 ∥ H | preseason role evidence (N2) | `proj/preseason.py` | cdn preseason boxes → features | flags for players with ≥ 1 preseason start |
+
+**Phase 1 gate** (on eval-lite):
+- DK FP MAE ≥ 3% better than the season-to-date average on 2024-25 (avail);
+- not worse than salary-implied on 2019-21;
+- 80% coverage 76–84%;
+- minutes MAE ≤ 4.8.
+
+If the gate fails, the `/dfs` page ships with a "beta" label.
+
+### Phase 2: model v1 + backtest harness (Oct 28 – Nov 14)
+
+| ID | Task | Owned files | In → out | Acceptance |
+|---|---|---|---|---|
+| T2.1 ★ S (O review) Mac | RotoGuru DFS backtest harness: walk-forward, baselines, hindsight, random-lineup percentile, leak tests | `proj/backtest.py`, `proj/metrics.py` | history → report | reproduces T1.0; L1–L6 tests; leak probe < 0.5% |
+| T2.2 ★ O Mac | minutes v1 GBM (+ coach by date N4, learned promotion, S15 fallback) | `proj/minutes.py` (takes over) | → | §4.2 targets; S14 still passes |
+| T2.3 ∥ O | usage v1: with/without φ | `proj/usage.py` | stints, box → φ | > 2 SE over the tier bump |
+| T2.4 ∥ S | live-like slice eval (2025-12-22 → 2026-04-12, real reports, lock−45 mode) | `proj/backtest.py` (slice mode, after T2.1) | → report | minutes MAE and DK CRPS reported vs the avail backtest; sets the live alert baseline (M6) |
+| T2.5 ★ O Mac | **sim step 0 measurement** (M1a) | `research/sim_step0.py`, `docs/research/sim-step0.md` | PBP 2019-24 → targets | all §4.5 step-0 quantities with CIs |
+| T2.6 ★ O Mac | Path B sim v1 + SMM per fold + pilot reconciliation (M7) | `proj/sim.py`, `proj/smm.py` | → | §4.5 fit/validation targets; G1/G2 verdict written |
+| T2.7 ∥ S Mac | causal correlation study v2 (residual vs projection, tiers to date, per season < S) | `research/dfs_correlations_v2.py`, `proj/corr.py` | → matrices | matrices per fold; drift reported |
+| T2.8 ∥ S | environment v1 (team totals, pace α) + opponent-by-position | `proj/environment.py`, `proj/defense.py` | → | ships only with CRPS gain > 1 SE |
+| T2.9 ∥ S | Tonight cards + `prop_compare` (pts/reb/ast/PRA/3PM) | `web/players_view.py`, `templates/_players.html`, `proj/props.py` | → | ≥ 90% main props joined; both % shown |
+| T2.10 ★ S | Path A copula v1 (T2.7 matrices, CV-by-level fit, winner/loser shift) | `proj/copula.py` | → | §7.3 coverage/PIT; blowout curve ±1.0 DK |
+
+### Phase 2.5: contest builder, GPP, late swap, Showdown (Nov 15 – 21)
+
+| ID | Task | Owned files | In → out | Acceptance |
+|---|---|---|---|---|
+| T2.11 ★ O | ownership proxy + field proxy (3 strengths) | `proj/dfs/field.py` | → field samples | Σ own = 800%; field lineups valid; ≤ 20 s |
+| T2.12 ★ O | GPP portfolio: candidates, payout ladder, greedy, caps, dupes | `proj/dfs/portfolio.py` | → | N = 20 ≤ 120 s; caps exact; greedy portfolio beats "top N by individual E[payout]" on realised proxy payout over 100 backtest slates (paired) |
+| T2.13 ★ S | cash P(score ≥ c_s) | `proj/dfs/cash.py` | → | P(cash) calibration on the backtest proxy line within ±5 pp |
+| T2.14 ∥ S | late-swap re-solver + edit CSV + UI action | `proj/dfs/swap.py` | → | locked players untouched; ≤ 30 s |
+| T2.15 ∥ S | Showdown (CPT binary) | `proj/dfs/showdown.py` | → | pydfs equal on 30 Showdown slates |
+| T2.16 ∥ S | contest builder UI + guidance text | `templates/dfs_contest.html`, `web/dfs_view.py` | → | labels present ("simulated, not real", "proxy"); screenshots |
+| T2.17 S Mac | backtest extension: field-proxy percentiles, `fppg` optimizer, cash proxy, lineup calibration | `proj/backtest.py` | → | §7.3 table filled |
+
+### Phase 3: DFS MLOps and calibration (Nov 24 – Dec 5)
+
+| ID | Task | Owned files | Acceptance |
+|---|---|---|---|
+| T3.1 S | registry specs (`player_minutes`, `player_rates`, `player_dist`, `dfs_engine`), gates, `dfs_metric_snapshots`, alerts, `/health` DFS tab | `mlops/dfs_monitor.py`, `web/health.py` (tab) | replay of the season to date produces snapshots; alerts dedupe |
+| T3.2 S | standings-CSV importer + ownership-proxy calibration | `proj/dfs/standings.py` | importer exact on 3 sample CSVs; calibration report once ≥ 10 slates |
+| T3.3 H | guidance polish + weekly DFS report | `proj/reports.py` | clustered SEs; proxy labels |
 
 **Alerts:**
+- minutes bias on projected starters > ±1.0 min (last 300);
+- DK FP 80% coverage outside 0.80 ± 3 SE;
+- FPPG reconciliation failure;
+- a missed lock run;
+- ID match < 98%;
+- reconciliation gap > 0.5;
+- live minutes MAE > live-like + 0.5.
 
-| alert | fires when |
-|---|---|
-| performance | props log-loss worse than no-vig by > 2 clustered SE (last 1,000) |
-| calibration | Spiegelhalter \|z\| > 2.5 on P(above line), n ≥ 500 |
-| coverage | 80% coverage outside 0.80 ± 3 clustered SE (last 2,000) |
-| minutes bias | projected starters off by more than ±1.0 min (last 300) |
-| reconciliation | any team gap > 0.5 after reconciliation, or > 6 before |
-| xFG drift | league xFG% − FG% beyond ±1.5 pp over 7 days |
-| drift | PSI on projected minutes, usage weights, pace |
+### Phase 4: why engine and deferred items (Dec 8 – 23)
 
-**Data checks:**
-- props captured pre-tip for ≥ 90% of games (last snapshot ≤ 90 min before tip);
-- DK/FD main-slate salaries by 12:00 ET;
-- ID match rate ≥ 98%;
-- matchups fetched for all finals;
-- stint validation pass rate ≥ 99%;
-- all shots scored by xFG.
+| ID | Task | Acceptance |
+|---|---|---|
+| T4.1 O | xFG (with S5's revised criteria) | per v1 §3.2, criteria rewritten at start |
+| T4.2 O | full post-game decomposition | exact sums |
+| T4.3 O | pre-game Shapley (S6 per-coalition reconciliation) | exact sums; ≤ 10 s per slate |
+| T4.4 O | primary defender, matchup ingestion | ships only with a CRPS gain |
+| T4.5 S | referee crew test | written verdict |
+| T4.6 S | player page season views | screenshots |
 
-**Surfaces.** A "Players" tab on `/health`.
+**Critical path:** T0.0 → T0.5/T0.6 (and T0.2 → T1.0) → T1.1 → T1.2 → T1.4 → T1.5 → T1.6 (live by Oct 27) → T2.1 → T2.2 → T2.10 → T2.11 → T2.12. T2.5 → T2.6 is a parallel upgrade track that is off the GPP critical path, because of the copula.
 
-## 6. Data model (migration 7: one owner, task T0.0)
+**Machine plan:**
+- On geekom1, run at most 3 agents: the critical-path agent, one ∥ coding agent, and one H/data agent.
+- On the Mac, run the backtests, SMM, RotoGuru parse, stints and T2.7, one heavy job at a time.
 
-| table | key columns |
-|---|---|
-| `player_bio` | player_id PK, name, birthdate, height_in, weight, position, pos_group (G/F/C), draft_year, draft_pick, source, updated_at |
-| `player_ids` | (source, source_id) PK, player_id, name, team, first_seen, last_seen, how (game_join / roster_name / fuzzy / manual), confidence |
-| `player_aliases` | (source, name_norm, team) PK, player_id, note: manual overrides |
-| `stints` | game_id, period, start, end, home5, away5, home_pts, away_pts, home_poss, away_poss |
-| `player_game_oncourt` | (game_id, player_id) PK, sec_q13, sec_q4, sec_ot, sec_garbage, on_poss, opp_on_poss, team_fga/fgm/misses_on, opp_misses_on, tm_fgm_on (teammates), opp_tov_on, opp_2pa_on, started |
-| `shots` | (game_id, action_number) PK, player_id, team, period, clock, x, y, distance, area, is_three, sub_type, descriptor, quals, made, garbage, xfg, xfg_version |
-| `rate_state` | (as_of, player_id, stat) PK, rate, n_eff, prior, kappa: nightly EB state |
-| `player_projections` | id PK, game_id, nba_day, player_id, team, created_at, model, model_version, role, p_play, scenario_json, inputs_json; UNIQUE(game_id, player_id, created_at, model_version) |
-| `player_projection_stats` | (projection_id, stat, cond) PK; stat ∈ min, pts, reb, ast, fg3m, stl, blk, tov, dd, td, dk, fd; cond ∈ played / all; mean, sd, q05, q10, q25, q50, q75, q90, q95 |
-| `projection_factors` | (projection_id, stat, factor, sub) PK, value, detail_json |
-| `sim_runs` | run_id PK, nba_day, created_at, n_sims, seed, model_version, path, seconds, recon_json |
-| `prop_compare` | (projection_id, market, line, captured_at) PK, over_price, under_price, mkt_p_above (no-vig), our_p_above, our_p_push |
-| `postgame_why` | (game_id, player_id, stat) PK, model_version, expected, actual, terms_json, facts_json, computed_at |
-| `postgame_terms` | (game_id, player_id, stat, term) PK, value: long form for season "running hot" views |
-| `dfs_slates` | slate_id PK, site, nba_day, slate_type, game_ids_json, lock_utc, rules_json |
-| `dfs_salaries` | (slate_id, site_player_id) PK, player_id, name, team, positions, salary, status, captured_at |
-| `dfs_lineups` | id PK, slate_id, created_at, model_version, mode (cash/gpp), rank, players_json, salary, mean, p90, p_target, actual, pct_random |
-| `player_metric_snapshots` | (as_of, model, stat, window) PK, model_version, n, mae, rmse, crps, cov50, cov80, bias, mkt_n, ll, ll_mkt, ll_diff, ll_diff_se, details_json |
-
-The prop, salary and referee *snapshot* tables belong to the opening-night collector. If that agent has already defined them, adopt its tables. This design only requires these columns:
-- props: `game_id, captured_at, provider, espn_athlete_id, market, line, over_price, under_price, raw_path`;
-- salaries: `site_player_id, name, team, positions, salary, game`.
-
-**ID matching** (`proj/ids.py`, reusing `injuries.match_player`: accents, suffixes, nickname groups, FUZZY_MIN 0.86 with a 0.05 margin):
-1. **ESPN athlete id:** join each final game's ESPN summary box to the cdn box by (game, team, normalised name). That is exact for anyone who has played. Players who haven't played yet are matched by name against the ESPN team roster plus `commonteamroster`.
-2. **DK/FD:** match name + team + slate date against `recent_rosters`, extended with `commonteamroster` for new signings. Persist (site, site_player_id), with DK's stable player id, not the per-slate draftable id (to confirm).
-3. **Same-team near-duplicates** (Jalen and Jaylin Williams, OKC) need an exact first-name token match whenever a second candidate on the team clears 0.80.
-4. **Unmatched** players raise a data check and go to the aliases table.
-
-**Expected match rates:** ESPN → NBA ≥ 99.5% after week 1; DK/FD ≥ 98% of salaried players automatically and 100% of players with expected ≥ 10 min after aliases.
-
-## 7. Phased build plan
-
-Code lives in a new package `src/courtside/proj/` (`dfs/` inside it), with tests `tests/test_proj_*.py`. `db.py` migrations and the `cli.py` hook are owned **only** by T0.0; later schema changes go through one agent at a time.
-
-Legend: ★ = critical path; ∥ = can run in parallel within its phase; O / S / H = Opus / Sonnet / Haiku.
-
-### Phase 0: foundations (Oct 19–23, all ∥ after T0.0)
-
-| ID | task | files owned | in → out | acceptance |
-|---|---|---|---|---|
-| T0.0 ★ S | migration 7 (all §6 tables), `courtside proj` CLI hook | `db.py`, `cli.py`, `proj/__init__.py`, `proj/cli.py` | §6 → schema | migrate is idempotent; `tests/test_db.py` green |
-| T0.1 ★ S | **URGENT** backfill of official injury PDFs, late Dec 2025 → June 2026: game days at 13:30, 17:30 and the last before first tip | `backfill_injuries.py` | server → raw + `injury_snapshots` | earliest available date recorded; ≥ 95% of game days captured; parse rate ≥ 99% of rows |
-| T0.2 ★ H | cdn boxscore backfill 2019-20+; rsync the PBP archive to the Mac | `backfill_pbp.py` (box kind) | cdn → raw | ≥ 99% of games that have PBP also have a box |
-| T0.3 ★ S | historical stints and on-court tallies | `analytics/stints_store.py` | box + PBP → `stints`, `player_game_oncourt` | validation pass (±1 s, +/- exact) ≥ 99% of games; ≤ 10 min run |
-| T0.4 H | bio, positions, coaches | `proj/bio.py` | playerindex, commonteamroster → `player_bio` | position on ≥ 99% of 2019+ player-games; birthdate ≥ 95% for 2015+ |
-| T0.5 S | ingest matchups, tracking, hustle | `proj/matchups.py` | tonight's raw → tables | Σ partial possessions per offensive player within 10% of on-court possessions in ≥ 95% of player-games |
-| T0.6 S | ID mapping (ESPN, DK, FD) + data check | `proj/ids.py` | §6 | rates as in §6 on archived and opening-night data |
-| T0.7 H | fantasy scoring and roster rules from `rules_json` | `proj/fantasy.py` | rules → functions | 30 hand-scored lines exact; DD/TD edge cases |
-| T0.8 H | GBM total OOF sd and margin–total residual correlation | `model/gbm.py` (2 attributes) | — | values logged; rung-3 tests green |
-| T0.9 H | probes: RotoGuru salary history depth; any CC-licensed historical props data | `docs/research/` note | — | yes/no with seasons and licence |
-
-### Phase 1: MVP, live by about Oct 27 (ships early)
-- **Minutes v0:** rung-2 EWMA + P(play) + `allocate_minutes`. The blowout effect comes from a box-score regression of the minutes deviation on final \|margin\| by tier (2001+ data is available now).
-- **Rates v0:** EB per-minute rates.
-- **Sim v0:** per-stat negative binomial, sharing the minutes draw, pace scaled by the total.
-- Proportional reconciliation, cash optimizer, Tonight cards, and DFS page v0.
-
-| ID | task | files | acceptance |
-|---|---|---|---|
-| T1.1 ★ S | rate state v0 and nightly job | `proj/state.py` | causal (no-lookahead test); ≤ 60 s nightly |
-| T1.2 ★ S | minutes v0 + sim v0 + store + pregame hook | `proj/minutes.py`, `proj/sim.py`, `proj/store.py`, `proj/pipeline.py` | on 2024-25 (avail mode): pts MAE ≤ season-average benchmark; 80% coverage 75–85%; ≤ 60 s per slate |
-| T1.3 ∥ S | prop parse, no-vig, `prop_compare` | `proj/props.py` | over/under semantics verified (P(over) falls as the alt line rises); ≥ 90% of main props joined |
-| T1.4 ∥ S | cash optimizer (CP-SAT) + pydfs oracle test | `proj/dfs/optimizer.py` | matches pydfs on 50 slates; < 0.5 s |
-| T1.5 ∥ S | web: Tonight player panel, `/dfs` v0, Brief 1.2 keys | `web/players_view.py`, `templates/dfs.html`, `_players.html`, `brief/assemble.py` (players keys only) | 390 px screenshots light/dark; null-safe |
-
-### Phase 2: model v1 (Oct 27 – Nov 21)
-
-| ID | task | files | acceptance |
-|---|---|---|---|
-| T2.1 ★ S (O review) | player backtest harness: walk-forward, benchmarks, metrics, leak tests and probe, report | `proj/backtest.py`, `proj/metrics.py` | reproduces the T1.2 numbers; probe < 0.5% |
-| T2.2 ∥ O | with/without engine (φ, K_φ fit) | `proj/usage.py` | on "teammate sat" games: usage log-likelihood beats proportional-only by > 2 SE |
-| T2.3 ∥ S | opponent defense indices by stat and position | `proj/defense.py` | 3P% allowed effect shrunk to near 0; β_opp in [0.5, 1.5] |
-| T2.4 ∥ O | primary-defender θ with reliability shrinkage | `proj/defender.py` | ρ and K_θ reported; adds ≥ 0 CRPS (else ships switched off) |
-| T2.5 ★ O | rate model v1: EB + age curve + GLM | `proj/rates.py` | §5.1 pts/reb/ast targets reached with T2.6–T2.7 |
-| T2.6 ★ O | minutes v1: Q1–Q3 GBM, Q4 tables, OT, noise mixture, coach | `proj/minutes.py` (takes it over) | minutes target in §5.1; P(OT) 5.5–6.5% |
-| T2.7 ★ O | joint team-allocation sim, variance SMM, reconciliation | `proj/sim.py`, `proj/reconcile.py` | §2.4–2.5 targets; ≤ 30 s per 15 games |
-| T2.8 ∥ S | referee crew test | `proj/refs.py` | written verdict with reliability and log-likelihood gain |
-| T2.9 ∥ S | P(play) recalibration (weekly) | `proj/availability.py` | Beta posteriors stored; Brier vs the static table reported |
-
-### Phase 3: the why engine (Nov 3 – Dec 5)
-
-| ID | task | files | acceptance |
-|---|---|---|---|
-| T3.1 ★ O | xFG model + per-shot scoring + m̂ | `proj/xfg.py` | §3.2 targets; leakage audit test |
-| T3.2 ★ O | post-game decomposition (all stats, FP) | `proj/postgame.py` | exact sum to 1e-9; M̃ test; zero-safe |
-| T3.3 ∥ O | pre-game Shapley attribution | `proj/attribution.py` | exact sum; ≤ 10 s per slate |
-| T3.4 S | why facts + writer prompt + fact-check extension | `proj/facts.py`, `brief/prompts/player_why.md`, `brief/factcheck_why.py` | 50 sampled games: 0 unsupported numbers, 0 sign violations after retry |
-| T3.5 ∥ S | web: Last Night beats, game-page waterfall, `/player/<id>` | `templates/player.html`, `web/charts.py` (waterfall fn only) | screenshots; fallbacks quote only facts |
-
-A post-game why v0 (minutes / volume / making against his FG%) can ship as soon as T0.3 and T1.2 exist, before xFG.
-
-### Phase 4: DFS GPP + MLOps (Nov 17 – Dec 12)
-
-| ID | task | files | acceptance |
-|---|---|---|---|
-| T4.1 O | GPP portfolio (candidates, field proxy, greedy P(≥ t), overlap/exposure) | `proj/dfs/portfolio.py` | ≤ 90 s for 20 lineups; exposure caps exact; simulated P(≥ t) of the portfolio > best single lineup |
-| T4.2 ∥ S | DFS page full + CSV export | `templates/dfs.html`, `proj/dfs/export.py` | CSVs import cleanly into DK/FD templates (manual check) |
-| T4.3 ∥ S | MLOps: registry specs, `player_metric_snapshots`, alerts, `/health` Players tab | `mlops/player_monitor.py`, `web/health.py` (tab only) | replay over 2025-26 produces snapshots; alerts dedupe |
-| T4.4 ∥ S | weekly props benchmark + DFS backtest report | `proj/reports.py` | clustered SE; random-lineup percentiles |
-
-**Critical path:** T0.0 → T0.2 → T0.3 → T2.1 → (T2.5, T2.6) → T2.7 → T3.2 → T3.4. xFG (T3.1) can start once T0.2 is done, in parallel with phase 2. **Dependencies:** T1.x needs T0.0, T0.6 and T0.7. T2.2 and T3.2 need T0.3. T2.4 needs T0.5. Keep at most 3 agents at once on geekom1, and run heavy fits on the Mac.
-
-## 8. Risks and open questions
+## 9. Risks and open questions
 
 **Risks.**
-- **Licensing.** NBA.com, ESPN, Action Network and DK/FD data is personal-use only. A paid launch needs licensed feeds (balldontlie, Sportradar), and the DFS optimizer may raise gambling-adjacent legal questions by state.
-- **Minutes and late scratches.** The last pregame run is at 22:00, but scratches happen right before tip. Proposal: add game-relative runs at T−60 and T−20 min for injuries and props.
-- **No historical availability before December 2025.** Backtests use the `avail` proxy and overstate accuracy. The honest numbers come from the T0.1 slice and the live season. Say so on `/health`.
-- **Props semantics are unverified,** and DK props 404 after the game: a missed pre-tip snapshot is gone for good.
-- **Sim mis-specification.** Fat tails in margins, and the OREB↔FGA feedback is ignored in v1. Guarded by the coverage and PIT alerts.
-- **Small effects adding noise** (defender, referees, position defense). Each must show a measured gain, or it ships switched off.
-- **Early season** (5–10 games): rates lean on priors. Show "small sample" and widen intervals; don't hide it.
-- **The LLM over-reading the why.** Thresholds and sign checks in the fact-checker, with a template fallback.
+- **ToS.**
+  - DK forbids automated collection "for any purpose". Our capture (~100 requests a day, no login) is still automated, and the owner accepted the risk. If DK blocks or objects, fall back to the lobby's manual salary CSV.
+  - RotoGuru: polite, one-time, personal use, credited.
+  - NBA, ESPN and Action Network data is personal-use only.
+  - Entry is never automated.
+- **Single machine.** Lock runs need the Mac awake. A missed run alerts. Fallback: `courtside dfs run --kind manual` on geekom1, which fetches its own draftables and stores locally.
+- **Ownership proxy limits.** Without uploads there is no truth, so leverage and dupe numbers can be badly wrong. They are shown as bands, labelled, and ROI is shown as a range.
+- **RotoGuru main-slate ambiguity.** The game set is inferred, positions are single, and 2019-20 includes the bubble. Report both slate definitions, and don't carry historical cash rates to live.
+- **Backtest optimism** (known availability), and **early season** (prior-heavy rates, noisy preseason roles). Show "small sample" and widen the intervals.
+- **Over-engineering.** Correlations are about 0.03. Path B ships for DFS only through G2.
+- **DK rule changes.** Rules are read every run; scoring is checked weekly.
 
-**Open questions (with a proposed answer).**
-1. Should the environment be the market game model or our opinion model? Proposal: market, with opinion as a shadow; compare props log-loss after 4 weeks.
-2. Should the ceiling be p75 (industry habit) or p90? Proposal: show p25–p75 as the range and label p90 as the "ceiling".
-3. Which props to show? Proposal: pts/reb/ast main lines only in v1; 3PM and PRA later.
-4. DK rules: does a triple-double also earn the DD bonus? Is the DK player id stable across slates? Answer from captured `rules_json` and salary files (T0.7).
-5. Is there a historical props or salary source we're allowed to use? T0.9 decides; otherwise all benchmarks are live from 2026-10-20 (≈350 props per night gives an SE of about 0.001 log-loss within a month, before clustering).
-6. Contest results and cash lines are paid data. Until then, DFS quality is judged against random and naive-optimizer lineups only.
+**Open questions for the owner (with proposals).**
+1. **Top N defaults:** N = 10, min-different d = 1?
+2. **Contest selection rule** for the payout archive (§3.2), with a cap of 40 a day. OK?
+3. **Will you upload standings CSVs** from contests you enter? They are the only real ownership and cash-line truth (§7.4).
+4. **Ownership display:** bands only, or percentages after calibration?
+5. **Late-news alert channel:** page banner only (proposed), or a push notification?
+6. **Tonight cards in Phase 2** (proposed) rather than Phase 1?
+7. **FanDuel CSV import:** when?
+8. **N3** isn't in the review text this revision had. Please confirm what it was.
+9. **Stint-path features in production DFS:** allow them once the 2021-26 projection backtest shows no CRPS loss, even though the DFS backtest only validates the box path? Proposed: yes.
