@@ -1,0 +1,141 @@
+{
+ "contestSummary": "This 35294-player contest features $600,000.00 in total prizes and pays out the top 7215 finishing positions. First place wins $200,000.00.",
+ "PayoutDescription": "$600,000",
+ "IsCashPrizeOnly": true,
+ "scoringStyleId": 1,
+ "contestStateDetail": "Upcoming",
+ "sport": "NBA",
+ "isGuaranteed": true,
+ "isPrivate": false,
+ "isResizable": false,
+ "wasResized": false,
+ "exclusions": [
+  "AllContests",
+  "ContestTypeBlackList-70",
+  "GameTypeBlackList-70",
+  "PaidGameTypeBlackList-70",
+  "DenyLeagueList-4",
+  "DenyPaidLeagueList-4",
+  "SportsBlackList-0",
+  "DenyPaidSportsList-0",
+  "PaidContests",
+  "PublicContest"
+ ],
+ "acceptedTickets": [
+  526,
+  8391,
+  12193,
+  13445,
+  15257,
+  17035,
+  17782,
+  17965
+ ],
+ "payoutDescriptions": {
+  "Cash": "$600,000.00"
+ },
+ "payoutDescriptionMetadata": [
+  {
+   "payoutDescriptionType": "Text",
+   "order": 0,
+   "payoutDescription": "$600,000.00",
+   "quantity": 1,
+   "value": 600000.0
+  }
+ ],
+ "fppAward": 0,
+ "sortOrder": -1001,
+ "filters": [],
+ "contestStartTime": "2026-10-20T19:00:00.0000000Z",
+ "gameTypeId": 70,
+ "ticketOnlyEntry": false,
+ "gameSetKey": "0E3A5A2EE320669DBE833C45E2075541",
+ "contestKey": "196456057",
+ "name": " NBA $600K Opening Tip Off [$200K to 1st]",
+ "draftGroupId": 154575,
+ "playTypeId": 184485,
+ "entries": 4447,
+ "maximumEntries": 35294,
+ "maximumEntriesPerUser": 150,
+ "entryFee": 20,
+ "crownAmount": 11000,
+ "totalPayouts": 600000.0,
+ "contestState": "Upcoming",
+ "attributes": {
+  "IsGuranteed": "true",
+  "Is Starred": "true",
+  "Allow Pregeneration": "true",
+  "Ignore EntryFeeMin": "true",
+  "ShortName": "%leaguename% Opening Tip Off",
+  "IsTournament": "true",
+  "ContestApproved": "true"
+ },
+ "crownsAwarded": 0,
+ "payoutSummary_first3": [
+  {
+   "minPosition": 1,
+   "maxPosition": 1,
+   "tierPayoutDescriptions": {
+    "Cash": "$200,000.00"
+   },
+   "payoutDescriptions": [
+    {
+     "payoutDescriptionType": "Text",
+     "order": 1,
+     "payoutDescription": "$200,000.00",
+     "quantity": 1,
+     "value": 200000.0
+    }
+   ]
+  },
+  {
+   "minPosition": 2,
+   "maxPosition": 2,
+   "tierPayoutDescriptions": {
+    "Cash": "$50,000.00"
+   },
+   "payoutDescriptions": [
+    {
+     "payoutDescriptionType": "Text",
+     "order": 1,
+     "payoutDescription": "$50,000.00",
+     "quantity": 1,
+     "value": 50000.0
+    }
+   ]
+  },
+  {
+   "minPosition": 3,
+   "maxPosition": 3,
+   "tierPayoutDescriptions": {
+    "Cash": "$25,000.00"
+   },
+   "payoutDescriptions": [
+    {
+     "payoutDescriptionType": "Text",
+     "order": 1,
+     "payoutDescription": "$25,000.00",
+     "quantity": 1,
+     "value": 25000.0
+    }
+   ]
+  }
+ ],
+ "payoutSummary_n": 24,
+ "payoutSummary_last": {
+  "minPosition": 2366,
+  "maxPosition": 7215,
+  "tierPayoutDescriptions": {
+   "Cash": "$30.00"
+  },
+  "payoutDescriptions": [
+   {
+    "payoutDescriptionType": "Text",
+    "order": 1,
+    "payoutDescription": "$30.00",
+    "quantity": 1,
+    "value": 30.0
+   }
+  ]
+ }
+}
