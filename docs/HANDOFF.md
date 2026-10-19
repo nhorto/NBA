@@ -44,9 +44,11 @@ Operational notes:
 
 **Phase 0: complete.** T0.0 migrations 9–11 + CLI; T0.1 reports verified; T0.2 RotoGuru 1,110 days / 249k rows; T0.3 cdn boxscores; T0.4 stints (99.55%); T0.5 ids; T0.6 rules/scoring (TD = +4.5 confirmed); T0.7 DK capture (slates, payouts ≤ 60 added DK requests/day); T0.8 game-env residuals (margin sd ~13.5–14, not 12.4).
 
-**Phase 1: 9/10 committed.** T1.1 EB rates; T1.2 minutes (MAE 4.6, value-play promotion); T1.3 P(play); T1.4 Path A copula pipeline `pathA-v0.1` (DK MAE −5.6% vs season-to-date on 2024-25, 80% coverage 0.82); T1.5 CP-SAT (= pydfs on 300/300); T1.6 runner + watcher; T1.7 `/dfs` page; T1.8 why v0; T1.9 preseason. **T1.0 eval-lite (the formal gate incl. RotoGuru salary-implied baseline) is running.**
+**Phase 1: complete (2026-10-19, a week early).** T1.0 gate PASSES on every line (full runs): 2024-25 DK MAE +5.54% vs season-to-date (SE 0.47), 80% coverage 0.825, minutes MAE 4.57, RotoGuru 2019-20/2020-21 player MAE +2.3% vs best salary-implied; lineups 0.68 of hindsight vs 0.47–0.52 for salary-implied (`var/reports/evallite_20261019.txt`). Live model `pathA-v0.1`. Postgame job now also writes `rate_state` and runs the post-game why.
 
-**Open items:** owner to test one DK CSV upload (numeric draftable ids vs "Name (ID)"); wire `why_v0.top_stories` into the Brief; postgame job should run `courtside proj why`; nightly `rate_state` write + weekly availability refit not yet scheduled; 17 in-progress + 5 stub cdn boxscores to re-fetch. Then Phase 2 (§8).
+**Phase 2 started:** T2.1 backtest harness, T2.5 sim step-0 measurement, T2.7 causal correlation v2 (agents running; heavy parts in the Mac scratch dir `~/Developer/courtside-compute/`).
+
+**Open items:** owner to test one DK CSV upload (numeric draftable ids vs "Name (ID)"); wire `why_v0.top_stories` into the Brief; weekly availability refit not yet scheduled; 17 in-progress + 5 stub cdn boxscores to re-fetch. Then Phase 2 (§8).
 
 **Agent rules** (unchanged): ≤ 3 agents on geekom1, one heavy job; agents don't commit; give each its task row, owned files, acceptance, and the no-browser/no-DK-crawl rules.
 
