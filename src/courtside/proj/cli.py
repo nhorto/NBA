@@ -14,6 +14,7 @@ import importlib
 PROJ_MODULES: tuple[str, ...] = (
     "courtside.proj.ids",
     "courtside.analytics.stints_store",
+    "courtside.proj.why_v0",
 )
 DFS_MODULES: tuple[str, ...] = (
     "courtside.proj.dfs.rules",
