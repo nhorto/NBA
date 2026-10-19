@@ -1,0 +1,388 @@
+{
+ "contestDetail": {
+  "contestSummary": "This 14268-player contest features $60,000.00 in total prizes and pays out the top 3325 finishing positions. First place wins $10,000.00.",
+  "payoutSummary": [
+   {
+    "minPosition": 1,
+    "maxPosition": 1,
+    "tierPayoutDescriptions": {
+     "Cash": "$10,000.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$10,000.00",
+      "quantity": 1,
+      "value": 10000.0
+     }
+    ]
+   },
+   {
+    "minPosition": 2,
+    "maxPosition": 2,
+    "tierPayoutDescriptions": {
+     "Cash": "$5,000.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$5,000.00",
+      "quantity": 1,
+      "value": 5000.0
+     }
+    ]
+   },
+   {
+    "minPosition": 3,
+    "maxPosition": 3,
+    "tierPayoutDescriptions": {
+     "Cash": "$2,500.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$2,500.00",
+      "quantity": 1,
+      "value": 2500.0
+     }
+    ]
+   },
+   {
+    "minPosition": 4,
+    "maxPosition": 4,
+    "tierPayoutDescriptions": {
+     "Cash": "$1,000.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$1,000.00",
+      "quantity": 1,
+      "value": 1000.0
+     }
+    ]
+   },
+   {
+    "minPosition": 5,
+    "maxPosition": 5,
+    "tierPayoutDescriptions": {
+     "Cash": "$700.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$700.00",
+      "quantity": 1,
+      "value": 700.0
+     }
+    ]
+   },
+   {
+    "minPosition": 6,
+    "maxPosition": 6,
+    "tierPayoutDescriptions": {
+     "Cash": "$500.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$500.00",
+      "quantity": 1,
+      "value": 500.0
+     }
+    ]
+   },
+   {
+    "minPosition": 7,
+    "maxPosition": 8,
+    "tierPayoutDescriptions": {
+     "Cash": "$350.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$350.00",
+      "quantity": 1,
+      "value": 350.0
+     }
+    ]
+   },
+   {
+    "minPosition": 9,
+    "maxPosition": 10,
+    "tierPayoutDescriptions": {
+     "Cash": "$250.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$250.00",
+      "quantity": 1,
+      "value": 250.0
+     }
+    ]
+   },
+   {
+    "minPosition": 11,
+    "maxPosition": 15,
+    "tierPayoutDescriptions": {
+     "Cash": "$200.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$200.00",
+      "quantity": 1,
+      "value": 200.0
+     }
+    ]
+   },
+   {
+    "minPosition": 16,
+    "maxPosition": 20,
+    "tierPayoutDescriptions": {
+     "Cash": "$150.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$150.00",
+      "quantity": 1,
+      "value": 150.0
+     }
+    ]
+   },
+   {
+    "minPosition": 21,
+    "maxPosition": 30,
+    "tierPayoutDescriptions": {
+     "Cash": "$100.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$100.00",
+      "quantity": 1,
+      "value": 100.0
+     }
+    ]
+   },
+   {
+    "minPosition": 31,
+    "maxPosition": 45,
+    "tierPayoutDescriptions": {
+     "Cash": "$70.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$70.00",
+      "quantity": 1,
+      "value": 70.0
+     }
+    ]
+   },
+   {
+    "minPosition": 46,
+    "maxPosition": 70,
+    "tierPayoutDescriptions": {
+     "Cash": "$50.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$50.00",
+      "quantity": 1,
+      "value": 50.0
+     }
+    ]
+   },
+   {
+    "minPosition": 71,
+    "maxPosition": 100,
+    "tierPayoutDescriptions": {
+     "Cash": "$35.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$35.00",
+      "quantity": 1,
+      "value": 35.0
+     }
+    ]
+   },
+   {
+    "minPosition": 101,
+    "maxPosition": 150,
+    "tierPayoutDescriptions": {
+     "Cash": "$25.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$25.00",
+      "quantity": 1,
+      "value": 25.0
+     }
+    ]
+   },
+   {
+    "minPosition": 151,
+    "maxPosition": 250,
+    "tierPayoutDescriptions": {
+     "Cash": "$20.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$20.00",
+      "quantity": 1,
+      "value": 20.0
+     }
+    ]
+   },
+   {
+    "minPosition": 251,
+    "maxPosition": 450,
+    "tierPayoutDescriptions": {
+     "Cash": "$15.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$15.00",
+      "quantity": 1,
+      "value": 15.0
+     }
+    ]
+   },
+   {
+    "minPosition": 451,
+    "maxPosition": 950,
+    "tierPayoutDescriptions": {
+     "Cash": "$12.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$12.00",
+      "quantity": 1,
+      "value": 12.0
+     }
+    ]
+   },
+   {
+    "minPosition": 951,
+    "maxPosition": 1825,
+    "tierPayoutDescriptions": {
+     "Cash": "$10.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$10.00",
+      "quantity": 1,
+      "value": 10.0
+     }
+    ]
+   },
+   {
+    "minPosition": 1826,
+    "maxPosition": 3325,
+    "tierPayoutDescriptions": {
+     "Cash": "$8.00"
+    },
+    "payoutDescriptions": [
+     {
+      "payoutDescriptionType": "Text",
+      "order": 1,
+      "payoutDescription": "$8.00",
+      "quantity": 1,
+      "value": 8.0
+     }
+    ]
+   }
+  ],
+  "PayoutDescription": "$60,000",
+  "IsCashPrizeOnly": true,
+  "scoringStyleId": 1,
+  "contestStateDetail": "Upcoming",
+  "sport": "NBA",
+  "isGuaranteed": true,
+  "isPrivate": false,
+  "isResizable": false,
+  "wasResized": false,
+  "exclusions": [
+   "AllContests",
+   "ContestTypeBlackList-70",
+   "GameTypeBlackList-70",
+   "PaidGameTypeBlackList-70",
+   "DenyLeagueList-4",
+   "DenyPaidLeagueList-4",
+   "SportsBlackList-0",
+   "DenyPaidSportsList-0",
+   "PaidContests",
+   "PublicContest"
+  ],
+  "payoutDescriptions": {
+   "Cash": "$60,000.00"
+  },
+  "payoutDescriptionMetadata": [
+   {
+    "payoutDescriptionType": "Text",
+    "order": 0,
+    "payoutDescription": "$60,000.00",
+    "quantity": 1,
+    "value": 60000.0
+   }
+  ],
+  "fppAward": 0,
+  "sortOrder": -1001,
+  "filters": [],
+  "contestStartTime": "2026-10-20T19:00:00.0000000Z",
+  "gameTypeId": 70,
+  "ticketOnlyEntry": false,
+  "gameSetKey": "0E3A5A2EE320669DBE833C45E2075541",
+  "contestKey": "196456028",
+  "name": "NBA $60K Zone [$10K to 1st]",
+  "draftGroupId": 154575,
+  "playTypeId": 157698,
+  "entries": 1711,
+  "maximumEntries": 14268,
+  "maximumEntriesPerUser": 150,
+  "entryFee": 5,
+  "crownAmount": 2750,
+  "totalPayouts": 60000.0,
+  "contestState": "Upcoming",
+  "attributes": {
+   "IsGuranteed": "true",
+   "Is Starred": "true",
+   "Allow Pregeneration": "true",
+   "Ignore EntryFeeMin": "true",
+   "IsTournament": "true",
+   "ContestApproved": "true"
+  },
+  "crownsAwarded": 0
+ },
+ "errorStatus": {}
+}

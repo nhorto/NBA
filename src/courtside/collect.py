@@ -41,7 +41,7 @@ from pathlib import Path
 
 from . import archive, config, db, teams
 from .http import FetchError
-from .sources import action_network, dfs, espn, espn_props, nba_cdn, referees
+from .sources import action_network, dfs, dfs_capture, espn, espn_props, nba_cdn, referees
 
 log = logging.getLogger("courtside.collect")
 
@@ -369,8 +369,9 @@ def _official_report_step(conn: sqlite3.Connection, day: date) -> dict:
 #
 # Request volume per pregame run (6 runs/day): props ~ 5 per upcoming game (providers + 2 pages
 # of 1000 + 2 rosters the first time a team is seen), referees 1, action_network 1, dfs 1 lobby +
-# 1 per Classic/Showdown draft group (+ rules once per day). Each source is polite (the shared
-# per-host throttle) and its failure never blocks the others.
+# 1 per Classic/Showdown draft group (+ rules once per day) + the payout tables of <= 40
+# selected contests per day, each once (<= 60 ADDED requests a day, logged in dk_requests).
+# Each source is polite (the shared per-host throttle) and its failure never blocks the others.
 
 PROPS_ATHLETE_LOOKUP_CAP = 40     # athlete-document fallbacks per game (rosters cover ~all)
 DFS_MAX_GROUPS = 12
@@ -553,22 +554,28 @@ def _action_network_step(conn: sqlite3.Connection, day: date, captured_at: str) 
             "started_skipped": started, "unmatched": unmatched}
 
 
-def _dfs_fingerprint(rows: list[dict]) -> tuple:
-    return tuple(sorted((r["draftable_id"], r["salary"], r["status"], r["disabled"])
-                        for r in rows))
-
-
 def _dfs_step(conn: sqlite3.Connection, day: date, captured_at: str) -> dict:
+    """DraftKings light capture (docs/PLAYERS.md §3.2): lobby, rules, draftables (salary, status,
+    swappable, starter) of every upcoming Classic/Showdown group, one ``dfs_slates`` row per
+    group, then the payout tables of the day's selected contests (once each, before lock; at
+    most 60 added requests a day, see sources/dfs_capture.py). A payout failure is recorded in
+    the summary under ``payouts`` and never fails the salary capture."""
     now = _utcnow()
+    dfs_capture.ensure_log(conn)
+    rid = dfs_capture.log_request(conn, "lobby", now=now)
     lobby = dfs.fetch_lobby()
+    dfs_capture.mark_request(conn, rid, True)
     lobby_path = archive.save_raw("draftkings", "lobby", day, "lobby", lobby, snapshot=True,
                                   now=now)
-    groups = [g for g in dfs.lobby_draft_groups(lobby, day=day,
-                                                game_types=dfs.SALARY_GAME_TYPES)
+    day_groups = dfs.lobby_draft_groups(lobby, day=day, game_types=dfs.SALARY_GAME_TYPES)
+    tags = dfs.classify_slates(day_groups)
+    groups = [g for g in day_groups
               if g["start_utc"] and g["start_utc"] > _iso(now)][:DFS_MAX_GROUPS]
     out: dict = {"lobby_path": str(lobby_path),
                  "all_nba_groups": len(dfs.lobby_draft_groups(lobby, day=day)),
-                 "groups": len(groups), "requests": 1, "slates": {}, "failed": {}}
+                 "groups": len(groups), "requests": 1, "slates": {}, "failed": {},
+                 "tags": {str(k): v for k, v in tags.items() if k in
+                          {g["draft_group_id"] for g in day_groups}}}
     if not groups:
         return {**out, "status": "skipped", "reason": "no upcoming Classic/Showdown groups"}
     rules_by_type: dict[int, dict] = {}
@@ -582,46 +589,40 @@ def _dfs_step(conn: sqlite3.Connection, day: date, captured_at: str) -> dict:
             if rpath.exists():
                 rules_by_type[gt] = archive.load_raw(rpath)
             else:
+                dfs_capture.log_request(conn, "rules", str(gt), now=now, ok=True)
                 rules_by_type[gt] = dfs.fetch_rules(gt)
                 out["requests"] += 1
                 archive.save_raw("draftkings", "rules", day, key, rules_by_type[gt])
         except Exception as e:  # noqa: BLE001 - slot names are nice-to-have
             log.warning("dk rules %s failed: %s", gt, e)
-    games_today = {(r["home"], r["away"]): r["game_id"] for r in conn.execute(
-        "SELECT game_id, home, away FROM games WHERE nba_day=?", (day.isoformat(),))}
+    games_today = dfs_capture.games_by_teams(conn, day)
     total = 0
     for g in groups:
         sid = g["draft_group_id"]
         try:
+            dfs_capture.log_request(conn, "draftables", str(sid), now=now, ok=True)
             payload = dfs.fetch_draftables(sid)
             out["requests"] += 1
-            path = archive.save_raw("draftkings", "draftgroup", day, f"draftgroup_{sid}",
-                                    payload, snapshot=True, now=now)
-            rows = dfs.parse_draftables(payload, draft_group_id=sid, game_type_id=g["game_type_id"],
-                                        rules=rules_by_type.get(g["game_type_id"]), lobby=lobby)
-            last = conn.execute("SELECT MAX(captured_at) FROM dfs_salaries WHERE site=? AND "
-                                "slate_id=?", (dfs.SITE, str(sid))).fetchone()[0]
-            prev = [dict(draftable_id=r["draftable_id"], salary=r["salary"], status=r["status"],
-                         disabled=r["disabled"]) for r in conn.execute(
-                "SELECT draftable_id, salary, status, disabled FROM dfs_salaries WHERE site=? "
-                "AND slate_id=? AND captured_at=?", (dfs.SITE, str(sid), last))] if last else []
-            unchanged = bool(prev) and _dfs_fingerprint(prev) == _dfs_fingerprint(rows)
-            for r in rows:
-                r["game_id"] = games_today.get((r["home"], r["away"]))
-                r.update(captured_at=captured_at, raw_path=str(path))
-            n = 0 if unchanged else db.insert_rows(conn, "dfs_salaries", rows)
-            total += n
-            out["slates"][str(sid)] = {
-                "game_type": g["game_type"], "label": g["suffix"], "draftables": len(rows),
-                "players": len({r["site_player_id"] for r in rows}), "inserted": n,
-                "unchanged": unchanged,
-                "games": [f'{x["away"]}@{x["home"]}' for x in dfs.slate_games(payload)]}
+            res = dfs_capture.store_draftables(
+                conn, payload, slate_id=sid, game_type_id=g["game_type_id"], day=day,
+                tag=tags.get(sid), rules=rules_by_type.get(g["game_type_id"]), lobby=lobby,
+                start_utc=g["start_utc"], captured_at=captured_at, now=now, games=games_today)
+            total += res["inserted"]
+            out["slates"][str(sid)] = {"game_type": g["game_type"], "label": g["suffix"], **res}
         except Exception as e:  # noqa: BLE001 - one slate must not stop the others
             log.exception("dfs draft group %s failed", sid)
             out["failed"][str(sid)] = f"{type(e).__name__}: {e}"
     out["inserted"] = total
     if out["failed"] and not out["slates"]:
         raise RuntimeError(f"all {len(groups)} draft groups failed: {out['failed']}")
+    try:
+        pay = dfs_capture.capture_contests(conn, lobby, day, now=now)
+        out["requests"] += pay["requests"]
+        out["payouts"] = pay
+    except Exception as e:  # noqa: BLE001 - payout tables are extra; salaries matter more
+        log.exception("dfs payout capture failed")
+        out["payouts"] = {"error": f"{type(e).__name__}: {e}"}
+    out["dk_requests_today"] = dfs_capture.requests_today(conn, now)
     return out
 
 

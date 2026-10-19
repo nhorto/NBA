@@ -812,6 +812,18 @@ MIGRATIONS: list[str] = [
         PRIMARY KEY (as_of, model, metric, window)
     );
     """,
+    # 10: DraftKings request log for the light-capture daily budget (sources/dfs_capture.py).
+    """
+    CREATE TABLE IF NOT EXISTS dk_requests (
+        id INTEGER PRIMARY KEY,
+        ts TEXT NOT NULL,
+        et_day TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        ref TEXT,
+        ok INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_dk_requests_day ON dk_requests(et_day, kind);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
