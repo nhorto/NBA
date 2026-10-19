@@ -44,3 +44,12 @@ Status: `systemctl --user list-timers`
 - Linux service output also lands in `journalctl --user -u courtside-pregame`.
 - Run manually: `deploy/run-job.sh pregame` (or `postgame`). `--dry-run` as a second argument shows the resolved paths and command without running.
 - `COURTSIDE_DATA`, if set when you run an installer, is baked into the units.
+
+## Web app (always-on)
+
+`deploy/run-web.sh` serves the Brief on this machine's Tailscale IP, port 8765, so it's reachable only from your tailnet. Set `COURTSIDE_HOST` or `COURTSIDE_PORT` to override.
+
+- macOS (Mac mini, primary): `bash deploy/macos/install-web.sh`. It installs launchd `com.courtside.web` with KeepAlive. Logs go to `var/logs/web.log`.
+- Linux (geekom1): `bash deploy/linux/install-web.sh`. It installs the systemd user unit `courtside-web.service`.
+
+Open `http://mac-mini:8765` (or `http://<tailnet-ip>:8765`) from any device on the tailnet.
