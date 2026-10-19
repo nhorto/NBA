@@ -139,6 +139,8 @@ def lobby_draft_groups(lobby: dict, *, day: date | None = None,
     for g in lobby.get("DraftGroups") or []:
         if g.get("Sport") not in (None, "NBA"):
             continue
+        if "WNBA" in (g.get("ContestStartTimeSuffix") or "").upper():
+            continue   # DK files WNBA groups under Sport "NBA", e.g. suffix " (WNBA ATL @ GSV)"
         gt = g.get("GameTypeId") or g.get("ContestTypeId")
         if gt is None or (game_types is not None and gt not in game_types):
             continue

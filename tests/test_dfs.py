@@ -91,3 +91,12 @@ def test_classic_scoring_rules():
     # triple-double: both bonuses
     assert dfs.classic_points(10, 0, 10, 10) == 10 + 12.5 + 15 + 1.5 + 3
     assert dfs.classic_points() == 0
+
+
+def test_lobby_draft_groups_skip_wnba_listed_under_nba():
+    lobby = {"DraftGroups": [
+        {"DraftGroupId": 1, "GameTypeId": 81, "Sport": "NBA", "GameCount": 1,
+         "ContestStartTimeSuffix": " (WNBA ATL @ GSV)", "StartDateEst": "2026-10-19T20:00:00.0000000"},
+        {"DraftGroupId": 2, "GameTypeId": 81, "Sport": "NBA", "GameCount": 1,
+         "ContestStartTimeSuffix": " (DET vs BOS)", "StartDateEst": "2026-10-20T15:00:00.0000000"}]}
+    assert [g["draft_group_id"] for g in dfs.lobby_draft_groups(lobby)] == [2]
