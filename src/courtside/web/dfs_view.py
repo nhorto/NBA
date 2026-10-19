@@ -626,11 +626,13 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
             lu["d_salary"] = (lu["salary"] or 0) - (best["salary"] or 0)
         else:
             lu["d_mean"] = lu["d_salary"] = None
-    lows = [lu["p10"] for lu in topn if lu["p10"] is not None]
-    highs = [lu["p90"] for lu in topn if lu["p90"] is not None]
+    shown = ([v["cash"]] if v["cash"] else []) + topn
+    lows = [lu["p10"] for lu in shown if lu["p10"] is not None]
+    highs = [lu["p90"] for lu in shown if lu["p90"] is not None]
+    v["has_lineup_ranges"] = bool(lows and highs)
     if lows and highs:
         lo_s, hi_s = min(lows) * 0.97, max(highs) * 1.01
-        for lu in topn:
+        for lu in shown:
             lu["bar"] = _lineup_bar(lu, lo_s, hi_s)
     v["topn"], v["topn_total"], v["cash_fallback"] = topn, topn_total, cash_fallback
     v["has_lineups"] = bool(v["cash"] or topn)
@@ -751,8 +753,8 @@ def _lineup_bar(lu: dict, lo_s: float, hi_s: float) -> Markup:
     if lu["p10"] is not None and lu["p90"] is not None:
         parts.append(f'<line class="rng-span" x1="{x(lu["p10"]):.1f}" x2="{x(lu["p90"]):.1f}" '
                      f'y1="7" y2="7"/>')
-        desc = f"10th to 90th percentile {lu['p10']:.0f} to {lu['p90']:.0f}, projection " \
-               f"{lu['mean']:.1f}"
+        desc = f"Simulated range, 10th to 90th percentile {lu['p10']:.0f} to {lu['p90']:.0f}, " \
+               f"projection {lu['mean']:.1f}"
     parts.append(f'<circle class="rng-dot" cx="{x(lu["mean"]):.1f}" cy="7" r="3.6"/>')
     return Markup(f'<svg class="rng" viewBox="0 0 {width} {h}" width="{width}" height="{h}" '
                   f'role="img" aria-label="{escape(desc)}"><title>{escape(desc)}</title>'

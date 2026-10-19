@@ -1125,7 +1125,8 @@ details.see-all > .alert-list { margin-top: 10px; }
 .dfs-big { display: flex; align-items: baseline; gap: 8px; }
 .dfs-big-n { font-size: clamp(2rem, 1.6rem + 1.6vw, 2.8rem); font-weight: 750; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
 .dfs-big-k { font-size: .84rem; color: var(--ink-3); }
-.dfs-lu-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .86rem; color: var(--ink-2); }
+.dfs-lu-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: .86rem; color: var(--ink-2); }
+.dfs-lu-bar { display: inline-flex; align-items: center; max-width: 100%; }
 .dfs-why { margin-top: 8px; padding-top: 4px; border-top: 1px solid var(--line); }
 .dfs-reasons { display: grid; gap: 6px; font-size: .92rem; color: var(--ink); }
 .dfs-reasons li { padding-left: 14px; position: relative; text-wrap: pretty; }

@@ -134,7 +134,7 @@
         <p class="dfs-big"><span class="dfs-big-n">{{ lu.mean|num(1) }}</span><span class="dfs-big-k">projected DK points</span></p>
         <p class="dfs-lu-meta">
           <span>{{ lu.salary_text }} of $50,000</span>
-          {% if lu.p10 is not none and lu.p90 is not none %}<span>Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }} (10th to 90th percentile)</span>{% endif %}
+          {% if lu.p10 is not none and lu.p90 is not none %}<span class="dfs-range">Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }} (10th to 90th percentile, simulated)</span>{% if lu.bar %}<span class="dfs-lu-bar">{{ lu.bar }}</span>{% endif %}{% endif %}
           {% if lu.p_cash is not none %}<span>Simulated chance to cash {{ lu.p_cash|pct }}</span>{% endif %}
           {% if lu.late %}<span class="flag flag-neg">Late news: {{ lu.late|join(", ") }}</span>{% endif %}
         </p>
@@ -157,7 +157,7 @@
     {% if v.topn %}
     {% if v.topn_note %}<p class="footnote dfs-srcnote">{{ v.topn_note }}.</p>{% endif %}
     <div class="dfs-topn-bar">
-      <p class="muted dfs-topn-note">Chips show who is in and out against #1.</p>
+      <p class="muted dfs-topn-note">Chips show who is in and out against #1.{% if v.has_lineup_ranges %} Range is the 10th to 90th percentile of simulated lineup points.{% endif %}</p>
       <a class="btn btn-sm" href="{{ v.export.topn }}" download>Download all as DK CSV</a>
     </div>
     <ol class="dfs-topn">
@@ -168,7 +168,7 @@
             <span class="dfs-rank">#{{ lu.rank }}</span>
             <span class="dfs-sum-main">
               <span class="dfs-sum-line"><b class="num">{{ lu.mean|num(1) }}</b> proj
-                {% if lu.p10 is not none and lu.p90 is not none %}<span class="muted">&middot; {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }}</span>{% endif %}
+                {% if lu.p10 is not none and lu.p90 is not none %}<span class="muted">&middot; Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }}</span>{% endif %}
                 <span class="muted">&middot; {{ lu.salary_text }}</span>
                 {% if lu.d_mean is not none %}<span class="muted">&middot; {{ lu.d_mean|signed(1) }} vs #1</span>{% endif %}
                 {% if lu.late %}<span class="flag flag-neg flag-xs">Late news</span>{% endif %}

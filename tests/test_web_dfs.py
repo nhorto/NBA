@@ -58,7 +58,7 @@ def lineup_slots(ids: list[int]) -> list[dict]:
 
 
 def populate(conn, *, run: bool = True, model: bool = False, late: bool = False,
-             tag: str = "main", salary_only: bool = False) -> None:
+             tag: str = "main", salary_only: bool = False, ranges: bool = True) -> None:
     conn.execute("INSERT INTO dfs_slates (slate_id, nba_day, game_type_id, tag, game_ids_json, "
                  "lock_utc) VALUES (?,?,?,?,?,?)",
                  (SLATE, DAY, 70, tag, '["G0","G1"]', "2026-10-20T19:00:00Z"))
@@ -111,11 +111,13 @@ def populate(conn, *, run: bool = True, model: bool = False, late: bool = False,
                    [29, 28, 27, 26, 25, 24, 21, 20]]
         conn.execute("INSERT INTO dfs_lineups (run_id, mode, rank, slots_json, salary, mean, "
                      "p10, p50, p90, p_cash) VALUES ('run1','cash',1,?,?,?,?,?,?,?)",
-                     (json.dumps(lineup_slots(lineups[0])), 49500, 300.5, 270, 299, 330, 0.55))
+                     (json.dumps(lineup_slots(lineups[0])), 49500, 300.5,
+                      *((270, 299, 330) if ranges else (None, None, None)), 0.55))
         for k, ids in enumerate(lineups, 1):
             conn.execute("INSERT INTO dfs_lineups (run_id, mode, rank, slots_json, salary, mean, "
                          "p10, p50, p90) VALUES ('run1','topn',?,?,?,?,?,?,?)",
-                         (k, json.dumps(lineup_slots(ids)), 49000 + k, 310 - k, 280, 308, 340))
+                         (k, json.dumps(lineup_slots(ids)), 49000 + k, 310 - k,
+                          *((280, 308, 340) if ranges else (None, None, None))))
     conn.commit()
 
 
@@ -161,6 +163,31 @@ def test_page_renders_full(make):
     # slot rows of the cash lineup
     for slot in SLOTS:
         assert f">{slot}</th>" in r.text
+
+
+def test_lineup_ranges_render_when_present(make):
+    c = make(model=True)
+    html = c.get(f"/dfs/{DAY}").text
+    t = text_of(html)
+    assert "Range 270" in t and "330 (10th to 90th percentile, simulated)" in t   # cash
+    assert t.count("Range 280") == 3 and "340" in t                               # each Top N card
+    assert "Range is the 10th to 90th percentile of simulated lineup points" in t
+    # the lineup bars are inline SVG with an accessible description, light/dark via CSS vars
+    assert html.count("Simulated range, 10th to 90th percentile 270 to 330") == 2  # aria + title
+    assert 'class="dfs-lu-bar"' in html and html.count('class="dfs-sum-bar"') == 3
+    css = c.get("/static/style.css").text
+    assert ".dfs-lu-bar" in css and "var(--accent)" in css
+
+
+def test_lineup_ranges_hidden_when_absent(make):
+    c = make(model=True, ranges=False)
+    html = c.get(f"/dfs/{DAY}").text
+    t = text_of(html)
+    assert "percentile, simulated)" not in t and "simulated lineup points" not in t
+    assert "Range 2" not in t
+    assert "Simulated range" not in html
+    assert 'class="dfs-lu-bar"' not in html and 'class="dfs-sum-bar"' not in html
+    assert "Cash lineup" in t and "300.5" in t          # the rest of the card is unchanged
 
 
 def test_fallback_badge_and_pool_without_model(make):

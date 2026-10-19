@@ -704,3 +704,145 @@ def test_cli_run_and_tick(conn, tmp_path, slate3, pipe, avail, capsys):
     assert handlers["run"](args) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "already_done"
     assert config.data_dir().exists()
+
+
+# --------------------------------------------------------------------------- lineup sim ranges
+
+def write_sims(conn, run_id, dk_ids, fp, tmp_path):
+    """Store a synthetic sims npz and point dfs_runs(run_id).sim_path at it."""
+    import numpy as np
+    from courtside.proj import store
+    path = store.save_sims("S", run_id, np.arange(len(dk_ids)) + 1, fp, dk_id=dk_ids,
+                           root=tmp_path / "sims")
+    conn.execute("UPDATE dfs_runs SET sim_path=? WHERE run_id=?", (str(path), run_id))
+    conn.commit()
+    return path
+
+
+def sim_matrix(dk_ids, n=2000, seed=3):
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    mu = 12 + 2.5 * np.arange(len(dk_ids))
+    return (mu + 6 * rng.standard_normal((n, len(dk_ids)))).clip(0).astype(np.float16)
+
+
+def test_run_fills_lineup_sim_stats(conn, slate3, avail, tmp_path, monkeypatch):
+    import numpy as np
+    pool = R.build_pool(conn, "S1")
+    ids = [p.dk_player_id for p in pool.players]
+    fp = sim_matrix(ids)
+    pipe = Pipe(None)
+    store_to = {}
+
+    def project_slate(c, slate_id, at, *, run_id, **kw):
+        write_run = pipe.project_slate(c, slate_id, at, run_id=run_id)
+        O.save_run(c, slate_id=slate_id, kind="manual", ok=True, run_id=run_id,
+                   created_at=runner.iso(at))
+        store_to["path"] = write_sims(c, run_id, ids, fp, tmp_path)
+        return write_run
+    mod = types.ModuleType("courtside.proj.pipeline")
+    mod.project_slate = project_slate
+    mod.MODEL_VERSION = "stub-1"
+    monkeypatch.setitem(sys.modules, "courtside.proj.pipeline", mod)
+    r = runner.run_slate(conn, "S1", "lock45", now=T(G1) - timedelta(minutes=45), refresh=False,
+                         n=3)
+    assert r["status"] == "ok"
+    rows = conn.execute("SELECT slots_json, mean, p10, p50, p90, why_json FROM dfs_lineups "
+                        "WHERE run_id=?", (r["run_id"],)).fetchall()
+    assert len(rows) == 4
+    col = {d: i for i, d in enumerate(ids)}
+    for slots_json, mean, p10, p50, p90, why_json in rows:
+        slots = json.loads(slots_json)
+        tot = sum(fp[:, col[s["player_id"]]].astype(np.float32) for s in slots)
+        assert mean == pytest.approx(float(tot.mean()), rel=1e-5)
+        assert (p10, p50, p90) == pytest.approx(tuple(np.percentile(tot, [10, 50, 90])), rel=1e-5)
+        assert p10 < p50 < p90
+        assert json.loads(why_json)["sim"] == {"sd": pytest.approx(float(tot.std()), abs=0.01),
+                                               "n_sims": 2000}
+    detail = json.loads(conn.execute("SELECT detail FROM dfs_runs WHERE run_id=?",
+                                     (r["run_id"],)).fetchone()[0])
+    assert detail["lineup_sims"] == 4
+
+
+def test_lineup_totals_showdown_captain_is_x1_5():
+    import numpy as np
+    fp = np.array([[10, 20, 30], [20, 40, 60]], np.float16)
+    sims = runner.RunSims(fp, ["a", "b", "c"])
+    slots = [{"slot": "CPT", "player_id": "a"}, {"slot": "UTIL", "player_id": "b"},
+             {"slot": "UTIL", "player_id": "c"}]
+    assert sims.lineup_totals(slots).tolist() == [15 + 20 + 30, 30 + 40 + 60]
+    st = runner.lineup_stats(sims.lineup_totals(slots))
+    assert st["mean"] == pytest.approx(97.5) and st["p50"] == pytest.approx(97.5)
+    assert st["p10"] < st["p50"] < st["p90"]
+    # a player without a column: no stats rather than a lineup that is short a player
+    assert sims.lineup_totals(slots + [{"slot": "UTIL", "player_id": "zz"}]) is None
+
+
+def test_annotate_showdown_lineup_uses_captain_multiplier(conn, tmp_path):
+    import numpy as np
+    ids = ["1", "2", "3", "4", "5", "6"]
+    fp = sim_matrix(ids, n=500)
+    O.save_run(conn, slate_id="SD", kind="manual", ok=True, run_id="r1",
+               created_at="2026-10-20T10:00:00Z")
+    write_sims(conn, "r1", ids, fp, tmp_path)
+    slots = [{"slot": "CPT" if i == "3" else "UTIL", "player_id": i} for i in ids]
+    conn.execute("INSERT INTO dfs_lineups (run_id, mode, rank, slots_json, mean, why_json) "
+                 "VALUES ('r1','cash',1,?,1.0,?)", (json.dumps(slots), json.dumps({"from": "x"})))
+    assert runner.annotate_lineups(conn, "r1") == 1
+    mean, p10, p90, why = conn.execute("SELECT mean, p10, p90, why_json FROM dfs_lineups"
+                                       ).fetchone()
+    f = fp.astype(np.float32)
+    want = f.sum(axis=1) + 0.5 * f[:, 2]
+    assert mean == pytest.approx(float(want.mean()), rel=1e-5)
+    assert p10 == pytest.approx(float(np.percentile(want, 10)), rel=1e-5)
+    assert json.loads(why)["from"] == "x" and "sd" in json.loads(why)["sim"]   # merged, not lost
+
+
+def test_fppg_fallback_leaves_lineup_stats_null(conn, slate3, avail, monkeypatch):
+    monkeypatch.setitem(sys.modules, "courtside.proj.pipeline", None)     # import fails
+    r = runner.run_slate(conn, "S1", "lock45", now=T(G1) - timedelta(minutes=45), refresh=False,
+                         n=2)
+    assert r["status"] == "ok" and r["model_version"] == runner.FALLBACK_VERSION
+    rows = conn.execute("SELECT mean, p10, p50, p90, why_json FROM dfs_lineups").fetchall()
+    assert rows and all(x[0] is not None and x[1:4] == (None, None, None) for x in rows)
+    assert all(x[4] is None or "sim" not in json.loads(x[4]) for x in rows)
+
+
+def test_missing_sim_file_does_not_fail_the_run(conn, slate3, pipe, avail):
+    # a dfs_runs row pointing at a file that is not there: stats stay NULL, the run is ok
+    orig = pipe.project_slate
+
+    def ps(c, slate_id, at, *, run_id, **kw):
+        out = orig(c, slate_id, at, run_id=run_id)
+        O.save_run(c, slate_id=slate_id, kind="manual", ok=True, run_id=run_id,
+                   created_at=runner.iso(at))
+        c.execute("UPDATE dfs_runs SET sim_path='/nonexistent/x.npz' WHERE run_id=?", (run_id,))
+        return out
+    pipe.project_slate = ps
+    sys.modules["courtside.proj.pipeline"].project_slate = ps
+    r = runner.run_slate(conn, "S1", "lock45", now=T(G1) - timedelta(minutes=45), refresh=False,
+                         n=2)
+    assert r["status"] == "ok"
+    assert conn.execute("SELECT COUNT(*) FROM dfs_lineups WHERE p10 IS NOT NULL").fetchone()[0] == 0
+
+
+def test_backfill_lineup_ranges(conn, tmp_path):
+    import numpy as np
+    ids = ["11", "22", "33"]
+    fp = sim_matrix(ids, n=300)
+    O.save_run(conn, slate_id="S", kind="manual", ok=True, run_id="r1",
+               created_at="2026-10-20T10:00:00Z")
+    O.save_run(conn, slate_id="S", kind="manual", ok=True, run_id="r2",
+               created_at="2026-10-20T11:00:00Z")                  # no sims: untouched
+    write_sims(conn, "r1", ids, fp, tmp_path)
+    slots = json.dumps([{"slot": "UTIL", "player_id": i} for i in ids])
+    for rid in ("r1", "r2"):
+        conn.execute("INSERT INTO dfs_lineups (run_id, mode, rank, slots_json, salary, mean) "
+                     "VALUES (?,?,?,?,?,?)", (rid, "cash", 1, slots, 1, 1.0))
+    conn.commit()
+    assert runner.backfill_lineup_ranges(conn) == {"runs": 1, "lineups": 1, "skipped": 0}
+    r1 = conn.execute("SELECT mean, p10, p50, p90 FROM dfs_lineups WHERE run_id='r1'").fetchone()
+    assert r1[0] == pytest.approx(float(fp.astype(np.float32).sum(axis=1).mean()), rel=1e-5)
+    assert r1[1] < r1[2] < r1[3]
+    assert conn.execute("SELECT p10 FROM dfs_lineups WHERE run_id='r2'").fetchone()[0] is None
+    assert runner.backfill_lineup_ranges(conn) == {"runs": 0, "lineups": 0, "skipped": 0}

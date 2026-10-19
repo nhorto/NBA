@@ -668,6 +668,133 @@ def _insert_lineup(conn, run_id: str, mode: str, rank: int, lu, why: dict | None
          json.dumps(why, default=str) if why else None))
 
 
+# ============================================================================== lineup sims
+
+PCT_COLS = (("p10", 10), ("p50", 50), ("p90", 90))
+CAPTAIN_SLOT = "CPT"
+
+
+class RunSims:
+    """A run's per-sim DK points keyed by DK player id: ``fp`` (S, n) float16 and ``col`` {dk id:
+    column}. Shared by the lineup range stats and (later) the field model (proj/dfs/field.py)."""
+
+    def __init__(self, fp, dk_ids, path: str | None = None):
+        self.fp = fp
+        self.path = path
+        self.col: dict[str, int] = {}
+        for i, d in enumerate(dk_ids):
+            d = str(d)
+            if d and d not in ("None", "nan") and d not in self.col:
+                self.col[d] = i
+        self.n_sims = int(fp.shape[0])
+
+    def lineup_totals(self, slots: list[dict]):
+        """(S,) float32 sum of the lineup's players' sims (CPT x1.5), or None when any player has
+        no column (the stats then stay NULL rather than understate the lineup)."""
+        import numpy as np
+        from ...sources import dfs as _dfs
+        idx, w = [], []
+        for s in slots:
+            c = self.col.get(str(s.get("player_id")))
+            if c is None:
+                return None
+            idx.append(c)
+            w.append(_dfs.SHOWDOWN_CAPTAIN_MULTIPLIER if s.get("slot") == CAPTAIN_SLOT else 1.0)
+        if not idx:
+            return None
+        return self.fp[:, idx].astype(np.float32) @ np.asarray(w, np.float32)
+
+
+def load_run_sims(conn: sqlite3.Connection, run_id: str) -> RunSims | None:
+    """The run's stored sims (``dfs_runs.sim_path``), or None: no path (FPPG fallback), a missing
+    or unreadable file, or an npz without DK ids."""
+    from ..store import load_sims
+    r = conn.execute("SELECT sim_path FROM dfs_runs WHERE run_id=?", (run_id,)).fetchone()
+    path = r[0] if r else None
+    if not path:
+        return None
+    try:
+        z = load_sims(path)
+    except (OSError, ValueError):
+        log.warning("sims for run %s unreadable at %s", run_id, path)
+        return None
+    if "fp" not in z or "dk_id" not in z:
+        return None
+    return RunSims(z["fp"], z["dk_id"], str(path))
+
+
+def lineup_stats(totals) -> dict[str, float]:
+    """mean, sd, p10, p50, p90 of a (S,) per-sim lineup total."""
+    import numpy as np
+    q = np.percentile(totals, [q for _, q in PCT_COLS])
+    return {"mean": float(totals.mean()), "sd": float(totals.std()),
+            **{c: float(v) for (c, _), v in zip(PCT_COLS, q)}}
+
+
+def annotate_lineups(conn: sqlite3.Connection, run_id: str, sims: RunSims | None = None) -> int:
+    """Fill ``mean`` (sim mean), ``p10`` / ``p50`` / ``p90`` of the run's ``dfs_lineups`` rows from
+    the stored sims and add ``{"sim": {"sd", "n_sims"}}`` to ``why_json``. Lineups with a player
+    missing from the sims, and runs without sims (FPPG fallback), are left as they are (NULL).
+    Returns the number of lineups updated. Does not commit.
+
+    HOOK (T2.11): proj/dfs/field.py fills p_cash / p_top1 / e_payout / dupes on the same rows;
+    call it from `post_lineups` with the same `RunSims`."""
+    sims = sims or load_run_sims(conn, run_id)
+    if sims is None:
+        return 0
+    n = 0
+    for lid, slots_json, why_json in conn.execute(
+            "SELECT id, slots_json, why_json FROM dfs_lineups WHERE run_id=?",
+            (run_id,)).fetchall():
+        tot = sims.lineup_totals(_loads(slots_json, []) or [])
+        if tot is None:
+            continue
+        st = lineup_stats(tot)
+        why = _loads(why_json, {}) or {}
+        if not isinstance(why, dict):
+            why = {}
+        why["sim"] = {"sd": round(st["sd"], 2), "n_sims": sims.n_sims}
+        conn.execute("UPDATE dfs_lineups SET mean=?, p10=?, p50=?, p90=?, why_json=? WHERE id=?",
+                     (st["mean"], st["p10"], st["p50"], st["p90"], json.dumps(why, default=str),
+                      lid))
+        n += 1
+    return n
+
+
+def post_lineups(conn: sqlite3.Connection, run_id: str) -> dict:
+    """Everything computed from a run's saved lineups and sims. Never raises: a failure only
+    leaves the extra columns NULL."""
+    out: dict = {}
+    try:
+        sims = load_run_sims(conn, run_id)
+        out["lineup_sims"] = annotate_lineups(conn, run_id, sims) if sims else 0
+        # HOOK (T2.11): field.annotate(conn, run_id, sims) -> p_cash, p_top1, e_payout, dupes
+    except Exception as e:  # noqa: BLE001
+        log.exception("lineup sim stats failed for %s", run_id)
+        out["lineup_sims_error"] = f"{type(e).__name__}: {e}"
+    return out
+
+
+def backfill_lineup_ranges(conn: sqlite3.Connection, *, only_missing: bool = True) -> dict:
+    """One-off: annotate the lineups of every existing run whose sims file exists. By default only
+    runs with a lineup lacking p10 are touched. Returns {runs, lineups, skipped}."""
+    where = "AND l.p10 IS NULL" if only_missing else ""
+    runs = [r[0] for r in conn.execute(
+        f"SELECT DISTINCT r.run_id, r.created_at FROM dfs_runs r JOIN dfs_lineups l "
+        f"ON l.run_id=r.run_id WHERE r.sim_path IS NOT NULL {where} "
+        f"ORDER BY r.created_at").fetchall()]
+    res = {"runs": 0, "lineups": 0, "skipped": 0}
+    for rid in runs:
+        k = annotate_lineups(conn, rid)
+        conn.commit()
+        if k:
+            res["runs"] += 1
+            res["lineups"] += k
+        else:
+            res["skipped"] += 1
+    return res
+
+
 # ============================================================================== run_slate
 
 def _next_tip(slate: dict, tips: list[datetime], now: datetime) -> datetime | None:
@@ -831,6 +958,7 @@ def _execute(conn, slate, tips, kind, now, run_id, detail, n, min_diff, refresh,
         counts["topn"] = len(res)
         detail["topn"] = {"requested": n, "min_diff": min_diff, "stopped": res.stopped}
     detail["late_news"] = len(news)
+    detail.update(post_lineups(conn, run_id))
     _save_run(conn, run_id, sid, kind, now, model_version, t0, detail, news)
     return {"status": "ok", "model_version": model_version, "lineups": counts,
             "late_news": len(news), "excluded": len(excluded)}
@@ -941,3 +1069,12 @@ def tick(conn: sqlite3.Connection, now: datetime | None = None, *, dry_run: bool
             out.append({**d, "action": "ran", "result": res,
                         **({"inputs": global_refresh} if global_refresh is not None else {})})
     return out
+
+
+if __name__ == "__main__":      # python -m courtside.proj.dfs.runner backfill-ranges
+    import sys
+    if sys.argv[1:] == ["backfill-ranges"]:
+        from ... import db
+        print(json.dumps(backfill_lineup_ranges(db.connect())))
+    else:
+        sys.exit("usage: python -m courtside.proj.dfs.runner backfill-ranges")
