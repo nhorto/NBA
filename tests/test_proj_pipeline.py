@@ -352,3 +352,15 @@ def test_drop_moved_players_uses_current_roster():
     assert out["player_id"].tolist() == [1628369, 201935]   # Brown (now PHI) leaves BOS
     forced = pipeline.drop_moved_players(panel, {1627759: "PHI"}, {("g1", "BOS"): [1627759]})
     assert 1627759 in forced["player_id"].tolist()           # DK pool / report says BOS: keep
+
+
+def test_season_of_bubble_2020():
+    from datetime import date
+    from courtside.proj import pipeline, state
+    from courtside.proj.dfs import rules
+    from courtside.trends import common
+    for f in (pipeline.season_of, state.season_of, rules.season_of, common.season_of):
+        assert f(date(2020, 8, 14)) == "2019-20"
+        assert f(date(2020, 10, 11)) == "2019-20"
+        assert f(date(2020, 12, 22)) == "2020-21"
+        assert f(date(2026, 10, 20)) == "2026-27"
