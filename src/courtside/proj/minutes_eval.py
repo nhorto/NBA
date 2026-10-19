@@ -410,16 +410,21 @@ def compare_frames(fr: dict) -> dict:
 
 
 def run_compare(conn, h: M.History, season: str, log: Callable[[str], None] = print,
-                window: int = 5, v1_kw: dict | None = None) -> dict:
-    """Walk-forward v0.5 and v1 (fit < S) on the same test rows (T2.2)."""
+                window: int = 5, v1_kw: dict | None = None, prms: dict | None = None) -> dict:
+    """Walk-forward v0.5 and v1 (fit < S) on the same test rows (T2.2). prms: optional
+    already-fitted {"v0.5": .., "v1": ..} (fit < S) to skip the fits."""
     t0 = time.time()
     v1_kw = dict(v1_kw or {})
     ctx = prepare_season(conn, h, season, window=window,
                          use_share=bool(v1_kw.get("use_share")))
     sh_tr = M.PairShares(ctx["ev_tr"])
-    prm05 = M.fit(h, season, window=window, log=log, panel=ctx["ptr"], shares=sh_tr)
-    t05 = time.time() - t0
-    prm1 = M.fit_v1(h, prm05, ctx["ptr"], sh_tr, log=log, **v1_kw)
+    if prms is not None:
+        prm05, prm1 = prms["v0.5"], prms["v1"]
+        t05 = 0.0
+    else:
+        prm05 = M.fit(h, season, window=window, log=log, panel=ctx["ptr"], shares=sh_tr)
+        t05 = time.time() - t0
+        prm1 = M.fit_v1(h, prm05, ctx["ptr"], sh_tr, log=log, **v1_kw)
     t1 = time.time() - t0 - t05
     out = {"season": season, "fit_seconds": {"v0.5": round(t05, 1), "v1_extra": round(t1, 1)},
            "versions": {}}
@@ -449,9 +454,10 @@ def report_scenarios(av: pd.DataFrame, key_of: dict, lo: float = 0.02, hi: float
     p <= lo -> out; p >= hi -> available; the MAX_ENUM most uncertain are enumerated, any
     further uncertain player is out when p < 0.5."""
     from itertools import product
-    from . import pipeline as P
+    from . import availability as AV
+    listed = set(AV.LISTED) | {"removed", "daytoday"}      # = pipeline.LISTED
     out = {}
-    av = av[av["status"].isin(list(P.LISTED))]
+    av = av[av["status"].isin(listed)]
     for (gid, team), d in av.groupby(["game_id", "team"]):
         key = key_of.get((gid, team))
         if key is None:
@@ -660,20 +666,47 @@ def run_v1(conn, seasons=("2023-24", "2024-25"), live: bool = True,
            log: Callable[[str], None] = print, history: M.History | None = None,
            v1_kw: dict | None = None, params_dir=None) -> dict:
     """T2.2: v0.5 vs v1 walk-forward on `seasons` + the live-like slice (fit < 2025-26)."""
+    from pathlib import Path
     t0 = time.time()
     h = history if history is not None else M.load_history(conn)
     res = {"load_seconds": round(time.time() - t0, 1), "seasons": {}}
     prms = {}
+    pdir = Path(params_dir) if params_dir is not None else None
+
+    def saved(s):
+        if pdir is None:
+            return None
+        f = {v: pdir / f"minutes_params_{s}_{v}.json" for v in ("v0.5", "v1")}
+        if all(x.exists() for x in f.values()):
+            return {v: M.MinutesParams.from_json(x.read_text()) for v, x in f.items()}
+        return None
+
+    def save(s, d, partial=None):
+        if pdir is None:
+            return
+        pdir.mkdir(parents=True, exist_ok=True)
+        for v, prm in d.items():
+            (pdir / f"minutes_params_{s}_{v}.json").write_text(prm.to_json())
+        if partial is not None:
+            (pdir / f"minutes_v1_eval_partial_{s}.json").write_text(
+                json.dumps(partial, default=float))
+
     for s in seasons:
-        r = run_compare(conn, h, s, log=log, v1_kw=v1_kw)
+        r = run_compare(conn, h, s, log=log, v1_kw=v1_kw, prms=saved(s))
         prms[s] = r.pop("_prm")
         res["seasons"][s] = r
+        save(s, prms[s], r)
     if live:
         tl = time.time()
         ctx = prepare_season(conn, h, "2025-26")
         sh = M.PairShares(ctx["ev_tr"])
-        p05 = M.fit(h, "2025-26", log=log, panel=ctx["ptr"], shares=sh)
-        p1 = M.fit_v1(h, p05, ctx["ptr"], sh, log=log, **(v1_kw or {}))
+        got = saved("2025-26")
+        if got is None:
+            p05 = M.fit(h, "2025-26", log=log, panel=ctx["ptr"], shares=sh)
+            p1 = M.fit_v1(h, p05, ctx["ptr"], sh, log=log, **(v1_kw or {}))
+            save("2025-26", {"v0.5": p05, "v1": p1})
+        else:
+            p05, p1 = got["v0.5"], got["v1"]
         prms["2025-26"] = {"v0.5": p05, "v1": p1}
         ll = live_like(conn, h, {"v0.5": p05, "v1": p1}, log=log, shares=ctx["shares"])
         ll["fit_v1_diagnostics"] = p1.diagnostics.get("v1")
@@ -683,12 +716,6 @@ def run_v1(conn, seasons=("2023-24", "2024-25"), live: bool = True,
     res["coach_coverage"] = coach_coverage(conn, h, all_s)
     last = list(prms)[-1]
     res["latency"] = latency(h, prms[last], seasons[-1])
-    if params_dir is not None:
-        from pathlib import Path
-        Path(params_dir).mkdir(parents=True, exist_ok=True)
-        for s, d in prms.items():
-            for v, prm in d.items():
-                (Path(params_dir) / f"minutes_params_{s}_{v}.json").write_text(prm.to_json())
     res["total_seconds"] = round(time.time() - t0, 1)
     return res
 

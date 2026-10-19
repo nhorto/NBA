@@ -240,7 +240,9 @@ def test_run_date_methods_hindsight_and_topn(conn, days):
     assert (one.drop("hindsight") <= one["hindsight"] + 1e-9).all()
     tn = lineups[lineups["method"] == "ours_topn"].sort_values("rank")
     assert list(tn["rank"]) == [1, 2, 3]
-    assert (np.diff(tn["proj"]) <= 1e-9).all()                        # Top-N is non-increasing
+    # Top-N is non-increasing up to the solver's objective rounding (each player's score is
+    # scaled x100 to an integer: at most 8 x 0.005 = 0.04 per lineup).
+    assert (np.diff(tn["proj"]) <= 0.04 + 1e-9).all()
     assert tn["ids"].nunique() == 3
     assert lineups["pct_rand"].between(0, 1).all() and lineups["pct_spend"].between(0, 1).all()
     assert one["hindsight"] == pytest.approx(lineups[lineups["method"] == "hindsight"]

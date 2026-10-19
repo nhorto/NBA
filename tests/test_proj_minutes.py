@@ -393,7 +393,24 @@ def test_v1_no_lookahead(league_v1):
     h3 = M.build_history(pg3, tg, pos, stints=_stints())
     prm3 = M.fit(h3, "2022-23", window=3, log=lambda s: None, f_grid=(0.6,), version="v1",
                  v1_kw=V1_KW)
-    assert prm3.gbm_model == prm.gbm_model and prm3.to_json() == prm.to_json()
+    assert prm3.gbm_model == prm.gbm_model
+
+    def _no_timing(j):  # fit durations differ run to run; everything else must match exactly
+        import json
+
+        def strip(x):
+            if isinstance(x, dict):
+                return {k: strip(v) for k, v in x.items() if not str(k).startswith("seconds")}
+            if isinstance(x, list):
+                return [strip(v) for v in x]
+            if isinstance(x, str) and x[:1] in "{[":
+                try:
+                    return strip(json.loads(x))
+                except ValueError:
+                    return x
+            return x
+        return strip(json.loads(j))
+    assert _no_timing(prm3.to_json()) == _no_timing(prm.to_json())
 
 
 def test_coach_by_date_continuity(league_v1):

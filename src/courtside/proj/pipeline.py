@@ -57,7 +57,11 @@ from . import state as ST
 from . import store as SO
 from .dfs.optimizer import Projection
 
-MODEL_VERSION = C.MODEL_VERSION
+# Minutes engine used by the live/backtest pipeline (T2.2: v1 = LightGBM base with learned
+# promotion; walk-forward MAE 4.49 / 4.40 vs v0.5 4.63 / 4.58, DK gate 8.049 vs 8.181).
+MINUTES_VERSION = "v1"                 # "v0.5" | "v1"
+_VS = "" if MINUTES_VERSION == "v0.5" else f"_{MINUTES_VERSION}"
+MODEL_VERSION = C.MODEL_VERSION if MINUTES_VERSION == "v0.5" else "pathA-v0.2"
 HISTORY_SEASONS = 7            # box seasons loaded for the minutes engine (window 5 + warm-up)
 MINUTES_WINDOW = 5
 LISTED = set(AV.LISTED) | {"removed", "daytoday"}
@@ -202,19 +206,19 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
                 refit: bool = False, log=None) -> Bundle:
     """The fitted Bundle for season S (everything fit on seasons < S), cached on disk."""
     say = log or (lambda m: None)
-    path = cache_dir() / f"bundle_{season}.json"
+    path = cache_dir() / f"bundle_{season}{_VS}.json"
     if path.exists() and not refit:
         return Bundle.from_json(path.read_text())
     t0 = time.time()
     sp = fit_state_params(conn, season, log=say)
-    mpath = cache_dir() / f"minutes_params_{season}.json"
+    mpath = cache_dir() / f"minutes_params_{season}{_VS}.json"
     if mpath.exists() and not refit:
         mp = M.MinutesParams.from_json(mpath.read_text())
     else:
         ctx = ctx or Context(conn, season, log=say)
         panel = ctx.train_panel()
         mp = M.fit(ctx.h, season, window=MINUTES_WINDOW, log=say, panel=panel,
-                   shares=M.PairShares(M.pair_events(panel)))
+                   shares=M.PairShares(M.pair_events(panel)), version=MINUTES_VERSION)
     cp = C.fit_copula(conn, season, sp, log=say)
     b = Bundle(season=season, minutes=mp, state=sp, copula=cp)
     path.parent.mkdir(parents=True, exist_ok=True)
