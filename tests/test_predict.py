@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from synth import day_date, synth_conn
 
-from courtside import predict
+from courtside import predict, production
 from courtside.model import baselines
 
 
@@ -22,7 +22,14 @@ DAY = day_date("2024-25", 22)          # a day whose games are already in team_g
 
 
 def _strip(rows):
-    return [{k: v for k, v in r.items() if k != "created_at"} for r in rows]
+    """Rows minus what legitimately differs between runs (clock, fit bookkeeping)."""
+    def one(r):
+        out = {k: v for k, v in r.items() if k not in ("created_at", "opinion")}
+        out["inputs"] = {k: v for k, v in r["inputs"].items() if k != "fit"}
+        if r.get("opinion"):
+            out["opinion"] = one(r["opinion"])
+        return out
+    return [one(r) for r in rows]
 
 
 def test_predict_past_day_from_team_games_and_stores_history():
@@ -33,13 +40,14 @@ def test_predict_past_day_from_team_games_and_stores_history():
     assert len(rows) == n_games == 3
     for r in rows:
         assert 0 < r["home_win_prob"] < 1 and r["total"] > 150
-        assert r["model"] == predict.PRODUCTION_MODEL
+        assert r["model"] == predict.PRODUCTION_MODEL == predict.PRODUCTION_WINPROB
+        assert r["opinion"]["model"] == predict.PRODUCTION_OPINION
         assert r["created_at"] == f"{DAY.isoformat()}T12:00:00Z"       # past day: virtual time
         assert set(r["injuries"]) == {"home", "away"}
     stored = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
-    assert stored == 3
+    assert stored == 6                                  # two model rows per game
     predict.predict_day(conn, DAY)                                   # idempotent for past days
-    assert conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0] == 6
     latest = predict.latest_pretip(conn, day=DAY.isoformat())
     assert set(latest) == {r["game_id"] for r in rows}
     assert latest[rows[0]["game_id"]]["inputs"]["schedule"]["home"]["rest"] is not None
@@ -126,7 +134,7 @@ def test_upcoming_games_come_from_games_table_without_leakage():
     # a later prediction row never replaces the earlier one (append-only)
     predict.predict_day(conn, nxt, created_at="2024-12-01T16:00:00Z")
     n = conn.execute("SELECT COUNT(*) FROM predictions WHERE game_id='0022400901'").fetchone()[0]
-    assert n == 2
+    assert n == 4                                   # two models x two runs
 
 
 def test_market_line_is_pre_tip_devigged_and_falls_back_to_closing():
@@ -201,3 +209,217 @@ def test_registry_is_generic():
         predict.model_factory("nope")
     rows = predict.predict_day(conn, DAY, model="elo", store=False)
     assert rows and rows[0]["model"] == "elo"
+
+
+# --- the production pair: lines, injuries, factors, cache -------------------------------------
+
+def _closing_lines(conn, before: date, noise: float = 4.0):
+    """A closing spread/total for every game before `before` that tracks the real margin."""
+    rng = np.random.default_rng(3)
+    rows = conn.execute("SELECT h.game_id, h.pts - a.pts AS m, h.pts + a.pts AS t FROM team_games h "
+                        "JOIN team_games a ON a.game_id=h.game_id AND a.is_home=0 "
+                        "WHERE h.is_home=1 AND h.game_date < ?", (before.isoformat(),)).fetchall()
+    conn.executemany(
+        "INSERT INTO closing_lines (game_id, source, provider, home_spread_close, total_close, "
+        "home_ml_close, away_ml_close) VALUES (?, 'espn', 'x', ?, ?, -150, 130)",
+        [(r["game_id"], -0.7 * r["m"] + rng.normal(0, noise), r["t"] + rng.normal(0, noise))
+         for r in rows])
+    conn.commit()
+
+
+def _by_game(rows, which="headline"):
+    return {r["game_id"]: (r if which == "headline" else r["opinion"]) for r in rows}
+
+
+def _snapshot_line(conn, day, spread, total=220.0, at=None):
+    at = at or f"{day}T11:00:00Z"
+    for r in conn.execute("SELECT DISTINCT game_id FROM team_games WHERE game_date=?",
+                          (day.isoformat(),)).fetchall():
+        conn.execute("INSERT INTO odds_snapshots (game_id, captured_at, source, provider, "
+                     "home_spread, total, home_ml, away_ml) VALUES (?,?,?,?,?,?,?,?)",
+                     (r[0], at, "espn", "DK", spread, total, -200, 170))
+    conn.commit()
+
+
+def test_headline_model_takes_the_live_line_and_the_opinion_does_not():
+    conn = synth_conn()
+    _closing_lines(conn, DAY)
+    base = predict.predict_day(conn, DAY, store=False)
+    assert all(r["market_home_spread"] is None for r in base)           # no line for DAY yet
+    _snapshot_line(conn, DAY, spread=-14.0, total=250.0)                 # home -14, total 250
+    new = predict.predict_day(conn, DAY, store=False)
+    for b, n in zip(base, new):
+        assert n["market_home_spread"] == -14.0 and n["market_total"] == 250.0
+        assert n["home_margin"] > b["home_margin"] + 1.0                 # moved toward the line
+        assert n["total"] > b["total"]
+        assert n["opinion"]["home_margin"] == b["opinion"]["home_margin"]    # no market input
+        assert n["opinion"]["home_win_prob"] == b["opinion"]["home_win_prob"]
+        # the stored market columns are the line both models were compared with
+        assert n["opinion"]["market_home_spread"] == -14.0
+    # the closing line is the fallback when no snapshot exists
+    conn.execute("DELETE FROM odds_snapshots")
+    gid = base[0]["game_id"]
+    conn.execute("INSERT INTO closing_lines (game_id, source, provider, home_spread_close, "
+                 "total_close, home_ml_close, away_ml_close) VALUES (?, 'espn', 'x', -3.5, 221, "
+                 "-160, 140)", (gid,))
+    r = _by_game(predict.predict_day(conn, DAY, store=False))[gid]
+    assert r["market_home_spread"] == -3.5 and r["inputs"]["market"]["kind"] == "closing"
+
+
+def test_injury_report_is_priced_by_both_models_and_explained():
+    conn = synth_conn()
+    base = predict.predict_day(conn, DAY, store=False)
+    g = base[0]
+    home = g["home"]
+    # no report for a past day with box scores: the engine's leak-safe "regulars who played"
+    av = g["inputs"]["availability"]
+    assert av["home"]["basis"] == av["away"]["basis"] == "regulars_played"
+    assert av["home"]["source"] is None
+    ins = ("INSERT INTO injury_snapshots (captured_at, source, team, player_name, status, "
+           "reason) VALUES (?,?,?,?,?,?)")
+    # a report that lists the star as healthy: the lineup is the full roster
+    conn.execute(ins, (f"{DAY}T14:00:00Z", "nba_official", home, f"{home} Player 0", "Available", "x"))
+    conn.commit()
+    healthy = _by_game(predict.predict_day(conn, DAY, store=False))[g["game_id"]]
+    assert healthy["inputs"]["availability"]["home"]["basis"] == "injury_report"
+    # a newer report: he is out
+    conn.execute(ins, (f"{DAY}T15:00:00Z", "nba_official", home, f"{home} Player 0", "Out", "knee"))
+    conn.commit()
+    out = _by_game(predict.predict_day(conn, DAY, store=False))[g["game_id"]]
+    for key in ("headline", "opinion"):
+        a, b = (healthy, out) if key == "headline" else (healthy["opinion"], out["opinion"])
+        assert b["home_margin"] != a["home_margin"], key               # the absence is priced
+        assert b["home_win_prob"] != a["home_win_prob"], key
+    nav = out["inputs"]["availability"]
+    assert nav["home"]["source"] == "nba_official" and nav["away"]["source"] is None
+    (p,) = nav["home"]["players"]
+    assert p["player"] == f"{home} Player 0" and p["p_play"] == 0.0 and p["how"] == "exact"
+    # what the absence is worth = the difference between the two runs, from the home side
+    (eff,) = [e for e in out["opinion"]["inputs"]["model_effects"]
+              if e["player_id"] == p["player_id"]]
+    assert eff["team"] == home and eff["side"] == "home"
+    assert eff["effect_margin"] == pytest.approx(
+        out["opinion"]["home_margin"] - healthy["opinion"]["home_margin"], abs=0.02)
+    fac = {f["factor"]: f for f in out["opinion"]["inputs"]["factors"]}
+    if "absences" in fac:                                # shown when it clears the noise floor
+        assert fac["absences"]["team"] == home
+        assert fac["absences"]["detail"] == f"{home} absences: {home} Player 0 (Out)"
+        assert fac["absences"]["impact_pts"] == pytest.approx(eff["effect_margin"], abs=0.3)
+    # the injuries the Brief lists agree with the ones priced
+    assert [x["player"] for x in out["injuries"]["home"]] == [f"{home} Player 0"]
+
+
+def test_factor_shape_in_the_stored_inputs():
+    conn = synth_conn()
+    rows = predict.predict_day(conn, DAY)
+    for r in rows:
+        for x in (r, r["opinion"]):
+            fac = x["inputs"]["factors"]
+            assert len(fac) <= 4
+            for f in fac:
+                assert set(f) == {"kind", "factor", "team", "side", "value", "impact_pts",
+                                  "favors", "detail"}
+                assert f["kind"] == "model_factor" and f["team"] in (x["home"], x["away"])
+            assert [abs(f["impact_pts"]) for f in fac] == sorted(
+                [abs(f["impact_pts"]) for f in fac], reverse=True)
+            json.dumps(x["inputs"], allow_nan=False)
+    stored = conn.execute("SELECT inputs_json FROM predictions WHERE model=?",
+                          (predict.PRODUCTION_OPINION,)).fetchone()[0]
+    assert json.loads(stored)["factors"]
+
+
+class Counter:
+    """Counts cold fits by wrapping production.fit_bundle."""
+    def __init__(self, monkeypatch):
+        self.n = 0
+        real = production.fit_bundle
+
+        def counting(*a, **k):
+            self.n += 1
+            return real(*a, **k)
+        monkeypatch.setattr(production, "fit_bundle", counting)
+
+
+def test_fitted_models_are_cached_per_day_and_reused_with_fresh_lines(monkeypatch, data_dir):
+    conn = synth_conn()
+    _closing_lines(conn, DAY)
+    cnt = Counter(monkeypatch)
+    first = predict.predict_day(conn, DAY, store=False)
+    assert cnt.n == 1 and first[0]["inputs"]["fit"]["cache"] == "miss"
+    assert (data_dir / "models" / DAY.isoformat() / "bundle.pkl").exists()
+    # later runs of the same day: no refit, but new lines and injuries are picked up
+    _snapshot_line(conn, DAY, spread=-12.0)
+    home = first[0]["home"]
+    conn.execute("INSERT INTO injury_snapshots (captured_at, source, team, player_name, status, "
+                 "reason) VALUES (?,?,?,?,?,?)",
+                 (f"{DAY}T15:00:00Z", "nba_official", home, f"{home} Player 1", "Out", "x"))
+    conn.commit()
+    second = predict.predict_day(conn, DAY, store=False)
+    assert cnt.n == 1 and second[0]["inputs"]["fit"]["cache"] == "hit"
+    assert second[0]["inputs"]["fit"]["fitted_at"] == first[0]["inputs"]["fit"]["fitted_at"]
+    assert second[0]["market_home_spread"] == -12.0 and first[0]["market_home_spread"] != -12.0
+    assert second[0]["home_margin"] != first[0]["home_margin"]
+    assert second[0]["inputs"]["availability"]["home"]["basis"] == "injury_report"
+    # a cached run equals a cold run with the same inputs
+    cold = predict.predict_day(conn, DAY, store=False, use_cache=False)
+    assert cnt.n == 2 and cold[0]["inputs"]["fit"]["cache"] == "miss"
+    assert _strip(second)[0]["home_margin"] == _strip(cold)[0]["home_margin"]
+    assert _strip(second)[0]["opinion"]["home_win_prob"] == _strip(cold)[0]["opinion"]["home_win_prob"]
+    # explicit refit
+    forced = predict.predict_day(conn, DAY, store=False, refit=True)
+    assert cnt.n == 3 and forced[0]["inputs"]["fit"]["cache"] == "refit"
+
+
+def test_cache_is_invalidated_when_new_results_arrive(monkeypatch, data_dir):
+    conn = synth_conn()
+    cnt = Counter(monkeypatch)
+    predict.predict_day(conn, DAY, store=False)
+    predict.predict_day(conn, DAY, store=False)
+    assert cnt.n == 1
+    key0 = production.cache_key(conn, DAY, ["a"], predict.PRODUCTION_MODELS)
+    # another result (even a late one that leaves the newest date alone) invalidates it ...
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(team_games)")]
+    sel = ", ".join("'9' || substr(game_id, 2)" if c == "game_id" else
+                    "'2023-09-15'" if c == "game_date" else c for c in cols)
+    conn.execute(f"INSERT INTO team_games SELECT {sel} FROM team_games "
+                 f"WHERE game_id = (SELECT MIN(game_id) FROM team_games)")
+    conn.commit()
+    key1 = production.cache_key(conn, DAY, ["a"], predict.PRODUCTION_MODELS)
+    assert key1["n_team_games"] > key0["n_team_games"] and key1["through"] == key0["through"]
+    predict.predict_day(conn, DAY, store=False)
+    assert cnt.n == 2
+    # ... and so does a newer game date; results ON the day (which the model must not see) do not
+    conn.execute("UPDATE team_games SET pts = pts + 3 WHERE game_date = ?", (DAY.isoformat(),))
+    conn.commit()
+    predict.predict_day(conn, DAY, store=False)
+    assert cnt.n == 2
+    other = DAY + timedelta(days=1)
+    k_later = production.cache_key(conn, other, ["a"], predict.PRODUCTION_MODELS)
+    assert k_later["through"] == DAY.isoformat() != key1["through"]
+    # a different slate or different frozen hyperparameters are different fits too
+    assert production.cache_key(conn, DAY, ["b"], predict.PRODUCTION_MODELS) != key1
+
+
+def test_old_model_dirs_are_pruned_and_a_corrupt_cache_is_just_a_miss(monkeypatch, data_dir):
+    conn = synth_conn()
+    old = data_dir / "models" / "2000-01-01"
+    old.mkdir(parents=True)
+    (old / "bundle.pkl").write_bytes(b"x")
+    cnt = Counter(monkeypatch)
+    predict.predict_day(conn, DAY, store=False)
+    assert not old.exists() and cnt.n == 1
+    (data_dir / "models" / DAY.isoformat() / "bundle.pkl").write_bytes(b"not a pickle")
+    predict.predict_day(conn, DAY, store=False)
+    assert cnt.n == 2
+
+
+def test_backfill_with_weekly_refit_reuses_heads_but_not_features():
+    conn = synth_conn()
+    d0, d1 = day_date("2024-25", 10), day_date("2024-25", 16)
+    res = predict.predict_days(conn, d0, d1, refit_days=3)
+    assert res["days"] == 7 and res["games"] == 21 and res["fits"] == 3
+    daily = predict.predict_days(synth_conn(), d0, d1)
+    assert daily["fits"] == 7
+    n = conn.execute("SELECT COUNT(*) FROM predictions WHERE model IN (?, ?)",
+                     predict.PRODUCTION_MODELS).fetchone()[0]
+    assert n == 42

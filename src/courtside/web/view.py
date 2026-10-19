@@ -662,6 +662,13 @@ def factor_chip(f: dict) -> dict | None:
                 "detail": f.get("detail") or label, "status": st}
     elif kind in ("form", "model_vs_market"):
         return None
+    elif kind == "model_factor":
+        # GBM explain() contribution, signed from `team`'s point of view.
+        name = (f.get("factor") or "model").replace("_", " ").capitalize()
+        pts = f.get("impact_pts")
+        sub = f"{pts:+.1f} pts".replace("-", "−") if isinstance(pts, (int, float)) else ""
+        return {"team": t, "label": name, "kind": kind, "sub": sub,
+                "detail": f.get("detail") or f"{name} {sub}".strip()}
     else:
         label = f.get("detail") or (kind or "").replace("_", " ")
     return {"team": t, "label": label, "kind": kind or "", "sub": "",

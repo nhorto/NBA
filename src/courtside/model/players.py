@@ -630,7 +630,7 @@ def _norm_name(s: str) -> str:
 
 
 def availability_from_injuries(conn: sqlite3.Connection, state: PlayerState, team: str,
-                               as_of: str, sources=("official", "espn")) -> dict:
+                               as_of: str, sources=("nba_official", "espn")) -> dict:
     """{player_id: P(plays)} for `team` from the latest injury snapshot at or before `as_of`
     (ISO UTC). Names are matched to the rated players; the first listed source that has a
     snapshot wins. Unmatched names are ignored (reported in the attrs of nothing: callers can

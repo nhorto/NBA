@@ -712,7 +712,7 @@ class GBMModel:
         self.fc.prime(full)
 
     def with_injuries(self, conn, test_df: pd.DataFrame, as_of: str,
-                      sources=("official", "espn")) -> pd.DataFrame:
+                      sources=("nba_official", "espn")) -> pd.DataFrame:
         """test_df + lineup_home / lineup_away: expected-lineup strength from the latest injury
         snapshot at or before `as_of` (players.availability_from_injuries; tighter rotation in
         the postseason). Pass the result to predict_* / explain. Teams without a snapshot get

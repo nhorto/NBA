@@ -33,7 +33,7 @@ from ..trends.summarize import league_facts
 
 log = logging.getLogger("courtside.brief")
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 MIN_REAL_TRAIN = 500
 CONFIDENCE_TIERS = ((0.56, "toss-up"), (0.65, "lean"), (0.75, "solid"), (1.01, "strong"))
 UPSET_MIN_FAVORITE = 0.60      # the market favourite must be at least this likely to win ...
@@ -335,13 +335,25 @@ def _impact_for(index: dict[str, list[dict]], player: str, team: str) -> dict | 
     return pick
 
 
-def _enrich(entry: dict, index: dict) -> dict:
+def model_effects(preds: dict[str, dict]) -> dict[tuple[str, str], float]:
+    """(team, normalised player name) -> what the opinion model's lineup pricing says that
+    player's status is worth to his team's expected margin, in points (negative = hurts his
+    team). From the `inputs.model_effects` stored with the day's opinion predictions."""
+    out = {}
+    for p in preds.values():
+        for e in (p.get("inputs") or {}).get("model_effects") or []:
+            out[(e["team"], injuries.norm_name(e["player"]))] = e["effect_margin"]
+    return out
+
+
+def _enrich(entry: dict, index: dict, effects: dict | None = None) -> dict:
     imp = _impact_for(index, entry["player"], entry["team"])
     return {**entry, "mpg": imp["mpg"] if imp else None,
             "impact": imp["impact"] if imp else None,
             "impact_games": imp["games"] if imp else None,
             "last_played": imp["last_played"] if imp else None,
-            "model_effect_margin": None}
+            "model_effect_margin": (effects or {}).get(
+                (entry["team"], injuries.norm_name(entry["player"])))}
 
 
 def _impact_key(e: dict):
@@ -364,10 +376,12 @@ def _team_form(conn: sqlite3.Connection, day: date, notes: list[str]) -> dict[st
 
 
 def _factors(sched: dict, home: str, away: str, inj: dict, form: dict, market: dict | None,
-             pred: dict, index: dict) -> list[dict]:
+             pred: dict, index: dict, model_factors: list[dict] | None = None) -> list[dict]:
     """Machine-readable reasons. Every factor: kind, team (whom it is about), side, value,
-    favors ('home'|'away'|None), detail."""
-    out: list[dict] = []
+    favors ('home'|'away'|None), detail. The model's own top factors (kind "model_factor",
+    from the opinion model's explain) come first; `pred` is the prediction the
+    `model_vs_market` gap is measured with (the opinion model when there is one)."""
+    out: list[dict] = [dict(f) for f in model_factors or []]
     sides = {"home": home, "away": away}
     opp = {"home": "away", "away": "home"}
     for s in ("home", "away"):
@@ -440,6 +454,14 @@ def upset_assessment(home: str, away: str, p_home: float | None,
             "edge": _r(dog_model - dog_mkt, 4), "model_picks_underdog": bool(dog_model > 0.5)}
 
 
+def _availability_view(pred: dict | None) -> dict | None:
+    av = ((pred or {}).get("inputs") or {}).get("availability")
+    if not av:
+        return None
+    return {s: {k: av[s].get(k) for k in ("basis", "source", "captured_at")}
+            for s in ("home", "away") if s in av}
+
+
 def tonight_section(conn: sqlite3.Connection, day: date, notes: list[str], index: dict,
                     form: dict, inj_now: dict) -> dict:
     base = day_results(conn, day)
@@ -451,6 +473,9 @@ def tonight_section(conn: sqlite3.Connection, day: date, notes: list[str], index
         except Exception as e:  # noqa: BLE001
             log.exception("predict_day failed")
             notes.append(f"tonight's predictions unavailable: {type(e).__name__}: {e}")
+    opinions = predict.latest_pretip(conn, day=day.isoformat(), model=predict.PRODUCTION_OPINION) \
+        if predict.PRODUCTION_OPINION != predict.PRODUCTION_MODEL else {}
+    effects = model_effects(opinions)
     games = dict(base)
     for gid, p in preds.items():
         games.setdefault(gid, {"game_id": gid, "home": p["home"], "away": p["away"],
@@ -461,7 +486,9 @@ def tonight_section(conn: sqlite3.Connection, day: date, notes: list[str], index
     for g in _sorted_games(games):
         gid, h, a = g["game_id"], g["home"], g["away"]
         pred = preds.get(gid)
+        opin = opinions.get(gid)
         pblock = _prediction_block(pred, h, a)
+        oblock = _prediction_block(opin, h, a)
         line = None if pred and pred.get("inputs", {}).get("market") else \
             predict.market_line(conn, gid, g.get("tipoff_utc"))
         mk = _market_block(pred, line)
@@ -469,22 +496,27 @@ def tonight_section(conn: sqlite3.Connection, day: date, notes: list[str], index
                 and mk.get("total") is None:
             mk = None
         sched = (pred or {}).get("inputs", {}).get("schedule")
-        inj = {"home": [_enrich(e, index) for e in inj_now["by_team"].get(h, [])],
-               "away": [_enrich(e, index) for e in inj_now["by_team"].get(a, [])]}
+        inj = {"home": [_enrich(e, index, effects) for e in inj_now["by_team"].get(h, [])],
+               "away": [_enrich(e, index, effects) for e in inj_now["by_team"].get(a, [])]}
         for s in inj:
             inj[s].sort(key=lambda e: (-e["severity"],) + _impact_key(e))
+        # "our number vs the market" is the independent model when we have it
+        ours, ours_pred = (oblock, opin) if oblock else (pblock, pred)
         edge = None
-        if pblock and mk:
-            edge = {"win_prob": (_r(pblock["home_win_prob"] - mk["home_prob"], 4)
+        if ours and mk:
+            edge = {"model": ours["model"],
+                    "win_prob": (_r(ours["home_win_prob"] - mk["home_prob"], 4)
                                  if mk.get("home_prob") is not None else None),
-                    "margin": (_r(pblock["home_margin"] + mk["home_spread"], 2)
+                    "margin": (_r(ours["home_margin"] + mk["home_spread"], 2)
                                if mk.get("home_spread") is not None
-                               and pblock["home_margin"] is not None else None),
-                    "total": (_r(pblock["total"] - mk["total"], 1)
-                              if mk.get("total") is not None and pblock["total"] is not None
+                               and ours["home_margin"] is not None else None),
+                    "total": (_r(ours["total"] - mk["total"], 1)
+                              if mk.get("total") is not None and ours["total"] is not None
                               else None)}
-        factors = _factors(sched, h, a, inj, form, mk, pred, index) if sched else []
-        up = upset_assessment(h, a, pblock["home_win_prob"] if pblock else None,
+        mfac = ((ours_pred or pred or {}).get("inputs") or {}).get("factors") or []
+        factors = _factors(sched, h, a, inj, form, mk, ours_pred or pred, index, mfac) \
+            if sched else []
+        up = upset_assessment(h, a, ours["home_win_prob"] if ours else None,
                               mk.get("home_prob") if mk else None)
         if up and up["flag"]:
             upsets.append(gid)
@@ -495,7 +527,8 @@ def tonight_section(conn: sqlite3.Connection, day: date, notes: list[str], index
                                         ("record", "last10", "streak", "power_rank")}},
             "away": {**_team_ref(a), **{k: form.get(a, {}).get(k) for k in
                                         ("record", "last10", "streak", "power_rank")}},
-            "prediction": pblock, "market": mk, "edge": edge, "factors": factors,
+            "prediction": pblock, "opinion": oblock, "market": mk, "edge": edge,
+            "factors": factors, "availability": _availability_view(pred or opin),
             "injuries": inj, "upset_watch": bool(up and up["flag"]), "upset": up,
             "text": {"preview": None},
         })
@@ -512,11 +545,13 @@ def tonight_section(conn: sqlite3.Connection, day: date, notes: list[str], index
 def injury_watch_section(conn: sqlite3.Connection, day: date, at: str, tonight: dict,
                          index: dict, inj_now: dict) -> dict:
     d = injuries.diff(conn, at)
+    effects = model_effects(predict.latest_pretip(conn, day=day.isoformat(),
+                                                  model=predict.PRODUCTION_OPINION))
     playing = {g["home"]["team"]: g for g in tonight["games"]}
     playing.update({g["away"]["team"]: g for g in tonight["games"]})
 
     def enrich(c: dict) -> dict:
-        e = _enrich(c, index)
+        e = _enrich(c, index, effects)
         g = playing.get(c["team"])
         e["playing_tonight"] = g is not None
         e["game_id"] = g["game_id"] if g else None
@@ -533,7 +568,7 @@ def injury_watch_section(conn: sqlite3.Connection, day: date, at: str, tonight: 
         if g is None:
             continue
         for e in lst:
-            en = _enrich(e, index)
+            en = _enrich(e, index, effects)
             en["game_id"] = g["game_id"]
             en["opponent"] = g["away"]["team"] if g["home"]["team"] == team else g["home"]["team"]
             out_tonight.append(en)
@@ -673,7 +708,24 @@ def scorecard_section(conn: sqlite3.Connection, day: date, model: str | None = N
             **score_rows(rows),
             "recent": {"last_night": rec([r for r in rows if r["nba_day"] == last]),
                        "last_7_days": rec([r for r in rows if r["nba_day"] >= week])},
+            "opinion": _opinion_scorecard(conn, season, start, day),
             "text": None}
+
+
+def _opinion_scorecard(conn: sqlite3.Connection, season: str, start: str, day: date
+                       ) -> dict | None:
+    """The independent (no-market) model on the same footing, season to date: the honest
+    "us vs the market" line. Null while it has no resolved predictions."""
+    model = predict.PRODUCTION_OPINION
+    if model == predict.PRODUCTION_MODEL:
+        return None
+    rows = resolved_predictions(conn, start, day.isoformat(), model)
+    if not rows:
+        return None
+    sc = score_rows(rows)
+    return {"model": model, "season": season,
+            **{k: sc[k] for k in ("n", "correct", "incorrect", "accuracy", "brier", "log_loss",
+                                  "ece", "vs_market")}}
 
 
 # ------------------------------------------------------------------ meta / freshness
@@ -798,6 +850,16 @@ def carry_text(old: dict | None, new: dict) -> int:
     return n
 
 
+def _availability_counts(tonight: dict) -> dict:
+    """How many team-sides of tonight's slate were priced from each availability basis:
+    injury_report | regulars_played | full_roster (see predict.py)."""
+    out: dict[str, int] = {}
+    for g in tonight["games"]:
+        for side in ((g.get("availability") or {}).values()):
+            out[side["basis"]] = out.get(side["basis"], 0) + 1
+    return out
+
+
 def build_brief(conn: sqlite3.Connection, day, *, write: bool = True,
                 run_writer: bool = True, model: str | None = None) -> dict:
     """Build (and store) the morning-of Brief for `day`. See docs/BRIEF.md."""
@@ -834,6 +896,13 @@ def build_brief(conn: sqlite3.Connection, day, *, write: bool = True,
     elif not injury_watch["diff_available"]:
         notes.append("injury changes unavailable: need two snapshots at least 12 hours apart")
     model_name = model or predict.PRODUCTION_MODEL
+    basis = _availability_counts(tonight)
+    if basis.get("regulars_played"):
+        notes.append(f"availability for {basis['regulars_played']} teams comes from the "
+                     f"rotation regulars who played (backfilled/demo day), not an injury report")
+    if basis.get("full_roster"):
+        notes.append(f"no injury report covers {basis['full_roster']} teams tonight: the model "
+                     f"assumes their full recent roster is available")
     if model_name in RESULTS_ONLY_MODELS:
         notes.append(f"model {model_name} is results-only: injuries are listed as factors but "
                      f"not priced into win probability or margin")
@@ -846,6 +915,10 @@ def build_brief(conn: sqlite3.Connection, day, *, write: bool = True,
             "last_night_day": ln_day.isoformat(), "season": season_of(day),
             "built_at": t0.strftime("%Y-%m-%dT%H:%M:%SZ"), "model": model_name,
             "model_uses_injuries": model_name not in RESULTS_ONLY_MODELS,
+            "opinion_model": (predict.PRODUCTION_OPINION
+                              if model_name == predict.PRODUCTION_MODEL else None),
+            "model_uses_market": model_name == predict.PRODUCTION_MODEL,
+            "availability_basis": basis,
             "data_freshness": freshness, "notes": notes, "text_filled": False,
             "path": f"briefs/{day.isoformat()}.json",   # relative to the data dir
         },

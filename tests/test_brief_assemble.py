@@ -50,7 +50,7 @@ def test_sections_present_json_clean_and_stored():
     assert set(b) == SECTIONS
     json.dumps(b, allow_nan=False)
     m = b["meta"]
-    assert m["schema_version"] == assemble.SCHEMA_VERSION == "1.0"
+    assert m["schema_version"] == assemble.SCHEMA_VERSION == "1.1"
     assert m["day"] == DAY.isoformat() and m["last_night_day"] == (DAY - timedelta(1)).isoformat()
     assert m["text_filled"] is False and b["headline"] == {"text": None}
     assert m["data_freshness"]["team_games_through"] == m["last_night_day"]
@@ -91,7 +91,7 @@ def test_sections_present_json_clean_and_stored():
     # stored in the table and on disk, identical
     row = conn.execute("SELECT brief_json, version FROM briefs WHERE nba_day=?",
                        (DAY.isoformat(),)).fetchone()
-    assert json.loads(row["brief_json"]) == b and row["version"] == "1.0"
+    assert json.loads(row["brief_json"]) == b and row["version"] == "1.1"
     on_disk = json.loads((config.data_dir() / m["path"]).read_text())
     assert on_disk == b
     assert assemble.load_brief(conn, DAY) == b
@@ -209,7 +209,8 @@ def test_scorecard_uses_only_pretip_predictions_before_day():
     q = conn.execute("""SELECT p.home_win_prob p, h.pts hp, a.pts ap FROM predictions p
                         JOIN team_games h ON h.game_id=p.game_id AND h.team=p.home
                         JOIN team_games a ON a.game_id=p.game_id AND a.team=p.away
-                        WHERE p.nba_day < ?""", (DAY.isoformat(),)).fetchall()
+                        WHERE p.nba_day < ? AND p.model = ?""",
+                     (DAY.isoformat(), predict.PRODUCTION_MODEL)).fetchall()
     y = np.array([r["hp"] > r["ap"] for r in q], float)
     p = np.array([r["p"] for r in q])
     assert sc["brier"] == pytest.approx(metrics.brier(y, p), abs=1e-4)
@@ -281,3 +282,97 @@ def test_rebuild_carries_prose_whose_content_is_unchanged(monkeypatch):
     assert t[stored["tonight"]["games"][1]["game_id"]] == "P1"    # unchanged: kept
     assert second["headline"]["text"] is None                     # a tonight game changed
     assert first["meta"]["built_at"] <= second["meta"]["built_at"]
+
+
+# ------------------------------------------------------------------ the production pair
+
+def seed_production(conn):
+    """Closing lines for every game (history and DAY), an Out report for BOS Player 0 on DAY,
+    then predictions for the run-in: two model rows per game."""
+    rows = conn.execute("SELECT h.game_id, h.pts - a.pts AS m, h.pts + a.pts AS t FROM team_games h "
+                        "JOIN team_games a ON a.game_id=h.game_id AND a.is_home=0 "
+                        "WHERE h.is_home=1").fetchall()
+    rng = np.random.default_rng(1)
+    conn.executemany("INSERT INTO closing_lines (game_id, source, provider, home_spread_close, "
+                     "total_close, home_ml_close, away_ml_close) VALUES (?, 'espn', 'x', ?, ?, "
+                     "-150, 130)", [(r["game_id"], -0.7 * r["m"] + rng.normal(0, 4),
+                                     r["t"] + rng.normal(0, 4)) for r in rows])
+    ins = ("INSERT INTO injury_snapshots (captured_at, source, team, player_name, status, "
+           "reason) VALUES (?,?,?,?,?,?)")
+    conn.execute(ins, (f"{DAY}T15:00:00Z", "nba_official", "BOS", "BOS Player 0", "Out", "knee"))
+    conn.execute(ins, (f"{DAY}T15:00:00Z", "nba_official", "BOS", "BOS Player 5", "Questionable", "x"))
+    conn.commit()
+    predict.predict_days(conn, day_date("2024-25", 8), DAY)
+
+
+def test_brief_meta_flags_and_schema_for_the_production_pair():
+    conn = synth_conn()
+    seed_production(conn)
+    b = assemble.build_brief(conn, DAY)
+    m = b["meta"]
+    assert m["schema_version"] == "1.1" and m["model"] == predict.PRODUCTION_WINPROB == "gbm_market"
+    assert m["model_uses_injuries"] is True and m["model_uses_market"] is True
+    assert m["opinion_model"] == predict.PRODUCTION_OPINION == "gbm_opinion"
+    assert m["availability_basis"].get("injury_report", 0) >= 2          # BOS's game: both sides
+    assert not any("results-only" in n for n in m["notes"])
+    json.dumps(b, allow_nan=False)
+    # a results-only model flips the flags back
+    old = assemble.build_brief(conn, DAY, write=False, model="elo_sched")
+    assert old["meta"]["model_uses_injuries"] is False and old["meta"]["opinion_model"] is None
+    assert old["meta"]["model_uses_market"] is False
+    assert any("results-only" in n for n in old["meta"]["notes"])
+
+
+def test_tonight_edge_uses_the_opinion_model_and_carries_model_factors():
+    conn = synth_conn()
+    seed_production(conn)
+    b = assemble.build_brief(conn, DAY)
+    games = b["tonight"]["games"]
+    assert len(games) == 3
+    for g in games:
+        assert g["prediction"]["model"] == "gbm_market" and g["opinion"]["model"] == "gbm_opinion"
+        assert g["market"] and g["edge"]["model"] == "gbm_opinion"
+        assert g["edge"]["win_prob"] == pytest.approx(
+            g["opinion"]["home_win_prob"] - g["market"]["home_prob"], abs=1e-4)
+        assert g["edge"]["margin"] == pytest.approx(
+            g["opinion"]["home_margin"] + g["market"]["home_spread"], abs=0.01)
+        mf = [f for f in g["factors"] if f["kind"] == "model_factor"]
+        assert 1 <= len(mf) <= 4 and g["factors"][:len(mf)] == mf          # model factors first
+        for f in mf:
+            assert {"kind", "factor", "team", "side", "value", "impact_pts", "favors",
+                    "detail"} <= set(f)
+        assert g["availability"]["home"]["basis"] in ("injury_report", "regulars_played")
+    bos = next(g for g in games if "BOS" in (g["home"]["team"], g["away"]["team"]))
+    assert bos["availability"]["home"]["basis"] == bos["availability"]["away"]["basis"] \
+        == "injury_report"
+    ab = [f for f in bos["factors"] if f.get("factor") == "absences"]
+    assert ab and ab[0]["team"] == "BOS" and "BOS Player 0 (Out)" in ab[0]["detail"]
+    # the injury entries carry what the model thinks the absence is worth
+    outs = {e["player"]: e for e in b["injury_watch"]["out_tonight"]}
+    eff = outs["BOS Player 0"]["model_effect_margin"]
+    assert isinstance(eff, float) and eff != 0
+    stored = predict.latest_pretip(conn, day=DAY.isoformat(), model="gbm_opinion")[bos["game_id"]]
+    (e0,) = [e for e in stored["inputs"]["model_effects"] if e["player"] == "BOS Player 0"]
+    assert eff == e0["effect_margin"]
+    in_game = [e for s in ("home", "away") for e in bos["injuries"][s]
+               if e["player"] == "BOS Player 0"]
+    assert in_game and in_game[0]["model_effect_margin"] == eff
+    # a player the model priced at 0.5 also has an effect (smaller in size)
+    assert outs["BOS Player 5"]["model_effect_margin"] is not None
+    sc = b["scorecard"]
+    assert sc["model"] == "gbm_market" and sc["opinion"]["model"] == "gbm_opinion"
+    assert sc["opinion"]["n"] == sc["n"] > 0
+
+
+def test_writer_still_reads_the_model_factors():
+    from courtside.brief import writer
+    conn = synth_conn()
+    seed_production(conn)
+    b = assemble.build_brief(conn, DAY, write=False)
+    bos = next(g for g in b["tonight"]["games"] if "BOS" in (g["home"]["team"], g["away"]["team"]))
+    n = writer.normalize_prediction({**bos, "model_uses_injuries": b["meta"]["model_uses_injuries"]})
+    assert n["reasons"], "writer found no reasons"
+    detail = {f["detail"] for f in bos["factors"] if f["kind"] == "model_factor"}
+    assert detail & set(n["reasons"])                 # model factors arrive as plain phrases
+    assert n["model_prices_injuries"] is True         # the writer copies meta's flag onto each game
+    assert n["our_number_minus_market_pts"] == pytest.approx(bos["edge"]["margin"], abs=0.1)

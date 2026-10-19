@@ -521,3 +521,11 @@ def test_no_none_anywhere_with_new_fields(data_dir):
         r = c.get(url)
         assert r.status_code == 200
         no_none(r.text)
+
+
+def test_factor_chip_model_factor():
+    from courtside.web.view import factor_chip
+    chip = factor_chip({"kind": "model_factor", "factor": "absences", "team": "LAL",
+                        "impact_pts": -2.21, "detail": "LAL absences: LeBron James (Questionable)"})
+    assert chip["label"] == "Absences" and chip["sub"] == "−2.2 pts"
+    assert "LeBron James" in chip["detail"]

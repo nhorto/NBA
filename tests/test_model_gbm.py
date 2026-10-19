@@ -297,7 +297,7 @@ def test_with_injuries_lowers_the_injured_teams_lineup(league):
     conn = sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE injury_snapshots (captured_at TEXT, source TEXT, team TEXT, "
                  "player_name TEXT, status TEXT)")
-    conn.execute("INSERT INTO injury_snapshots VALUES ('2099-01-01T00:00:00Z', 'official', ?, "
+    conn.execute("INSERT INTO injury_snapshots VALUES ('2099-01-01T00:00:00Z', 'nba_official', ?, "
                  "?, 'Out')", (team, star["name"]))
     out = m.with_injuries(conn, nxt, "2099-12-31T00:00:00Z")
     assert np.isnan(out["lineup_away"].iloc[0])           # no snapshot for the away team

@@ -1,9 +1,25 @@
 """Daily predictions: fit on everything strictly before `day`, predict that day's games.
 
-`predict_day(conn, day)` is what the pregame job and the Brief call. The production model is a
-name in the model registry (`PRODUCTION_MODEL`), so swapping in the player-strength model is a
-one-line change. Rows are appended to `predictions` (history is never rewritten) together with
-the market line that was available and the injuries known at that moment.
+`predict_day(conn, day)` is what the pregame job and the Brief call. Production is a *pair* of
+stacked LightGBM models (docs/MODEL.md, rung 3), both stored in `predictions` (two `model` rows
+per game, appended, never rewritten):
+
+* `PRODUCTION_WINPROB = "gbm_market"`: the headline win probability, margin and total. It sees
+  the live market line (`mkt_margin`, `mkt_total`: the newest pre-tip `odds_snapshots` batch,
+  else `closing_lines`), so it is about as good as the market and is what the Brief shows.
+* `PRODUCTION_OPINION = "gbm_opinion"`: "our independent number" with no market input at all.
+  The Brief's "our number vs market" edge is this model minus the market, so the comparison
+  means something.
+
+Injuries are priced: the newest usable report (official over ESPN when it is the newer one;
+`injuries.availability`) becomes an expected lineup per team, and the lineup strength replaces
+the engine's availability (`production.apply_overrides`). Days without a report keep the
+engine's own availability: the rotation regulars who played (leak-safe, past/demo days only) or
+the full recent roster (live days). Each row's `inputs.availability.<side>.basis` says which.
+
+Fits are cached per NBA day (`production.py`): the first run of the day fits (~1 min), later
+runs only re-price with fresh lines and injuries. Any other `model=` name (the Elo baselines)
+still goes through the one-model path below.
 
 No leakage, by construction
 ---------------------------
@@ -32,12 +48,15 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from . import config, injuries, odds_history, teams
-from .model import dataset, elo as elo_mod, schedule, sites
+from . import config, injuries, odds_history, production, teams
+from .model import dataset, elo as elo_mod, gbm, schedule, sites
 
 log = logging.getLogger("courtside.predict")
 
-PRODUCTION_MODEL = "elo_sched"
+PRODUCTION_WINPROB = "gbm_market"      # headline probability / margin / total (mirrors gbm.*)
+PRODUCTION_OPINION = "gbm_opinion"     # "our number" for the edge vs the market
+PRODUCTION_MODELS = (PRODUCTION_WINPROB, PRODUCTION_OPINION)
+PRODUCTION_MODEL = PRODUCTION_WINPROB  # the model name the Brief and scorecard read by default
 MIN_TRAIN_GAMES = 500
 TOTAL_WINDOW = 20           # games per team in the total projection
 TOTAL_SHRINK = 8.0          # pseudo-games of league average
@@ -56,7 +75,7 @@ def model_factory(name: str, conn: sqlite3.Connection | None = None) -> Callable
     if conn is None:
         raise KeyError(f"unknown model {name!r}")
     from .model import player_model, players
-    reg, _cache = player_model.make_registry(lambda: players.load_player_games(conn))
+    reg, _cache = player_model.make_registry(lambda: players.load_player_games(conn), conn=conn)
     if name not in reg:
         raise KeyError(f"unknown model {name!r}; known: "
                        f"{sorted(baselines.MODELS) + sorted(reg)}")
@@ -319,21 +338,41 @@ def store_predictions(conn: sqlite3.Connection, rows: list[dict]) -> int:
     return len(rows)
 
 
-def predict_day(conn: sqlite3.Connection, day, *, model: str | None = None, store: bool = True,
-                created_at: str | None = None) -> list[dict]:
-    """Predict every game of `day` with a model fit on games strictly before `day`.
+def _is_production(model: str | None) -> bool:
+    return model is None or model in PRODUCTION_MODELS
 
-    Returns one dict per game: game_id, nba_day, home, away, model, created_at, tipoff_utc,
-    home_win_prob, home_margin, total, market_home_spread/total/prob, `inputs` (schedule
-    factors, Elo, market, injuries) and `injuries` ({"home": [...], "away": [...]}, latest
-    Out/Doubtful/Questionable per team). Stores the rows in `predictions` unless store=False."""
+
+def _flat(rows: list[dict]) -> list[dict]:
+    """Headline rows with their attached `opinion` row -> every row to store."""
+    return [x for r in rows for x in (r, r.get("opinion")) if x]
+
+
+def predict_day(conn: sqlite3.Connection, day, *, model: str | None = None, store: bool = True,
+                created_at: str | None = None, refit: bool = False,
+                use_cache: bool = True) -> list[dict]:
+    """Predict every game of `day` with models fit on games strictly before `day`.
+
+    Default (`model=None`): the production pair. Returns one dict per game (the headline
+    `gbm_market` row) with the `gbm_opinion` row under `"opinion"`; both are stored. Row keys:
+    game_id, nba_day, home, away, model, created_at, tipoff_utc, home_win_prob, home_margin,
+    total, market_home_spread/total/prob, `inputs` (schedule factors, Elo, market, availability,
+    model factors, injury effects, fit info) and `injuries` ({"home": [...], "away": [...]},
+    latest Out/Doubtful/Questionable per team). The fitted models are cached per NBA day and
+    reused (`refit=True` or `use_cache=False` to force a fit); new results invalidate them.
+
+    Any other `model` name is a registry model (an Elo baseline), one row per game."""
     day = _as_date(day)
-    name = model or PRODUCTION_MODEL
     created_at = created_at or default_created_at(day)
     if not _enough_history(conn):
         log.warning("predict %s: team_games is (nearly) empty; no predictions", day)
         return []
     full = build_prediction_frame(conn, [day])
+    if _is_production(model):
+        rows = _production_day(conn, full, day, created_at, refit=refit, use_cache=use_cache)
+        if store:
+            store_predictions(conn, _flat(rows))
+        return rows
+    name = model or PRODUCTION_MODEL
     rows = _predict_one_day(conn, full, day, name, created_at, model_factory(name, conn))
     if store:
         store_predictions(conn, rows)
@@ -341,19 +380,24 @@ def predict_day(conn: sqlite3.Connection, day, *, model: str | None = None, stor
 
 
 def predict_days(conn: sqlite3.Connection, start, end, *, model: str | None = None,
-                 log_fn: Callable[[str], None] | None = None) -> dict:
+                 log_fn: Callable[[str], None] | None = None, refit_days: int = 1) -> dict:
     """Walk-forward predictions for every game day in [start, end] (e.g. a demo backfill).
 
-    The combined frame is built once; each day is fit on `date < day` only. Market lines are the
-    closing lines in `closing_lines`; injuries use whatever snapshots exist (usually none for
-    old days). Returns {"days": n, "games": n, "skipped_days": [...]}."""
+    Each day uses models fit on `date < day` only (refit every `refit_days` days; between refits
+    the heads are reused, which is still walk-forward because the heads only ever saw earlier
+    games while the features are rebuilt as of each day). Market lines are the closing lines in
+    `closing_lines` (or an archived snapshot); injuries use whatever snapshots exist, usually
+    none for old days, which then get the engine's leak-safe "regulars who played"
+    availability. Returns {"days": n, "games": n, "skipped_days": [...], "model": ...}."""
     start, end = _as_date(start), _as_date(end)
-    name = model or PRODUCTION_MODEL
     if not _enough_history(conn):
-        return {"days": 0, "games": 0, "skipped_days": [], "model": name}
+        return {"days": 0, "games": 0, "skipped_days": [], "model": model or PRODUCTION_MODEL}
     full = build_prediction_frame(conn, [start, end])
     played = sorted({d.date() for d in full["game_date"]
                      if pd.Timestamp(start) <= d <= pd.Timestamp(end)})
+    if _is_production(model):
+        return _production_days(conn, full, played, log_fn, refit_days)
+    name = model
     factory = model_factory(name, conn)
     n_games, skipped = 0, []
     for k, d in enumerate(played):
@@ -364,6 +408,196 @@ def predict_days(conn: sqlite3.Connection, start, end, *, model: str | None = No
         if log_fn and (k % 10 == 0 or k == len(played) - 1):
             log_fn(f"  {d} ({k + 1}/{len(played)} days, {n_games} predictions)")
     return {"days": len(played), "games": n_games, "skipped_days": skipped, "model": name}
+
+
+# ------------------------------------------------------------------ production pair
+
+def _production_day(conn, full: pd.DataFrame, day: date, created_at: str, *,
+                    refit: bool, use_cache: bool) -> list[dict]:
+    ts = pd.Timestamp(day)
+    train = full[full["game_date"] < ts]
+    test = full[full["game_date"] == ts]
+    if test.empty:
+        return []
+    if len(train) < MIN_TRAIN_GAMES:
+        log.warning("predict %s: only %d training games; skipped", day, len(train))
+        return []
+    test = _mask_results(test).reset_index(drop=True)
+    bundle = production.load_or_fit(conn, day, train, test, PRODUCTION_MODELS,
+                                    use_cache=use_cache, refit=refit)
+    e = elo_mod.run_elo(pd.concat([train, test]), elo_mod.TUNED).iloc[len(train):]
+    return price_day(conn, day, train, test, bundle, created_at, e.reset_index(drop=True))
+
+
+def _production_days(conn, full: pd.DataFrame, played: list[date], log_fn,
+                     refit_days: int) -> dict:
+    """Backfill: one engine pass + feature build over the whole frame (every later day is a
+    prefix slice of it), then per day: fit (every `refit_days` days) and price."""
+    import time
+    t0 = time.time()
+    reg, _ = production.registry(conn)
+    names = PRODUCTION_MODELS
+    fc = reg[names[0]]().fc
+    fc.prime(full)
+    elo_full = elo_mod.run_elo(full, elo_mod.TUNED)
+    if log_fn:
+        log_fn(f"  engine + features over {len(full)} games: {time.time() - t0:.0f}s")
+    scorers, fit_day, n_games, skipped, n_fits = None, None, 0, [], 0
+    for k, d in enumerate(played):
+        ts = pd.Timestamp(d)
+        upto = full[full["game_date"] <= ts]
+        train, test = upto[upto["game_date"] < ts], upto[upto["game_date"] == ts]
+        if len(train) < MIN_TRAIN_GAMES or test.empty:
+            skipped.append(d.isoformat())
+            continue
+        t1 = time.time()
+        fit_s = 0.0
+        if scorers is None or (d - fit_day).days >= refit_days:
+            models = {n: reg[n]() for n in names}
+            for m in models.values():
+                m.fit(train)
+            scorers = {n: production.Scorer.from_model(m) for n, m in models.items()}
+            fit_day, fit_s, n_fits = d, time.time() - t1, n_fits + 1
+        F = fc.get(upto, "avail_tight").iloc[len(train):].reset_index(drop=True)
+        test = _mask_results(test).reset_index(drop=True)
+        key = production.cache_key(conn, d, list(test["game_id"]), names)
+        bundle = production.Bundle(
+            key=key, day=d.isoformat(), scorers=scorers, F=F, game_ids=list(test["game_id"]),
+            state=None, train_games=int(len(train)),
+            train_through=train["game_date"].max().strftime("%Y-%m-%d"),
+            fitted_at=_iso_now(), fit_seconds=fit_s, cache="backfill",
+            timings={"fit_day": fit_day.isoformat(), "refit_days": refit_days})
+        rows = price_day(conn, d, train, test, bundle, default_created_at(d),
+                         elo_full.iloc[len(train):len(train) + len(test)].reset_index(drop=True))
+        n_games += store_predictions(conn, _flat(rows))
+        if log_fn and (k % 10 == 0 or k == len(played) - 1):
+            log_fn(f"  {d} ({k + 1}/{len(played)} days, {n_games} predictions, "
+                   f"{n_fits} fits, {time.time() - t0:.0f}s)")
+    return {"days": len(played), "games": n_games // 2, "rows": n_games,
+            "skipped_days": skipped, "model": PRODUCTION_WINPROB, "fits": n_fits,
+            "refit_days": refit_days, "seconds": round(time.time() - t0, 1)}
+
+
+def _line_arrays(lines: list[dict | None]) -> tuple[np.ndarray, np.ndarray]:
+    mm = np.array([-l["home_spread"] if l and l.get("home_spread") is not None else np.nan
+                   for l in lines], float)
+    mt = np.array([l["total"] if l and l.get("total") is not None else np.nan
+                   for l in lines], float)
+    return mm, mt
+
+
+def _played_keys(conn, day: date) -> set[tuple[str, str]]:
+    return {(r[0], r[1]) for r in conn.execute(
+        "SELECT DISTINCT game_id, team FROM player_games WHERE game_date=? AND min>0",
+        (day.isoformat(),))}
+
+
+def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
+              bundle: "production.Bundle", created_at: str, elo_pre: pd.DataFrame) -> list[dict]:
+    """Score the day's games with the fitted pair: live lines and injury lineups applied to the
+    bundle's features. `test` rows are in `bundle.game_ids` order or any subset/order of it.
+    Returns headline rows with `opinion` attached (see predict_day)."""
+    pos = {g: i for i, g in enumerate(bundle.game_ids)}
+    F = bundle.F.iloc[[pos[g] for g in test["game_id"]]].reset_index(drop=True)
+    test = test.reset_index(drop=True)
+    tips = {r["game_id"]: (r["tipoff_utc"], r["status"]) for r in conn.execute(
+        "SELECT game_id, tipoff_utc, status FROM games WHERE nba_day=?", (day.isoformat(),))}
+    lines = [market_line(conn, g, tips.get(g, (None, None))[0]) for g in test["game_id"]]
+    mm, mt = _line_arrays(lines)
+
+    # injuries -> expected lineups (only when a usable report exists)
+    at = injury_cutoff(day, created_at)
+    raw_teams = set(test["home_raw"]) | set(test["away_raw"])
+    cover = injuries.availability(conn, at, day, raw_teams)
+    lh = la = None
+    state = None
+    if cover:
+        state = production.ensure_state(conn, bundle, train)
+        lh, la = production.lineup_strengths(state, test, {t: c["avail"]
+                                                           for t, c in cover.items()})
+    G = production.apply_overrides(F, mm, mt, lh, la)
+    post = (test["season_type"].to_numpy() != "Regular Season").astype(float)
+    scorers = bundle.scorers
+    for sc in scorers.values():
+        sc.set_features(G, post)
+    effects = (production.injury_effects(scorers[PRODUCTION_OPINION], G, state, test, cover)
+               if cover else [])
+    inj = injuries.current(conn, at, set(test["home"]) | set(test["away"]))
+    played = _played_keys(conn, day) if day < config.today_nba_day() else set()
+    contrib = {n: sc.contributions(test) for n, sc in scorers.items()}
+    pred = {n: (sc.predict_proba(test), sc.predict_margin(test), sc.predict_total(test))
+            for n, sc in scorers.items()}
+    absent = {n: production.absence_effects(sc, G) for n, sc in scorers.items()}
+
+    fit_info = {"fitted_at": bundle.fitted_at, "cache": bundle.cache,
+                "fit_seconds": round(bundle.fit_seconds, 1), "timings": bundle.timings}
+    out = []
+    for i, r in test.iterrows():
+        gid = r["game_id"]
+        tip, status = tips.get(gid, (None, None))
+        mk = lines[i]
+        team_inj = {"home": inj["by_team"].get(r["home"], []),
+                    "away": inj["by_team"].get(r["away"], [])}
+        avail, absentees = {}, {}
+        for side in ("home", "away"):
+            raw = r[f"{side}_raw"]
+            c = cover.get(raw)
+            if c:
+                basis = "injury_report"
+            elif (gid, raw) in played:
+                basis = "regulars_played"
+            else:
+                basis = "full_roster"
+            listed = [p for p in (c["players"] if c else []) if p["p_play"] < 1.0]
+            eff = {e["player_id"]: e["effect_margin"] for e in effects
+                   if e["game_id"] == gid and e["team"] == r[side]}
+            listed.sort(key=lambda p: (eff.get(p["player_id"], 0.0), p["p_play"]))
+            absentees[r[side]] = [p for p in listed if p["player_id"] is not None]
+            avail[side] = {
+                "basis": basis, "source": c["source"] if c else None,
+                "captured_at": c["captured_at"] if c else None,
+                "lineup_strength": _py((lh if side == "home" else la)[i])
+                if lh is not None else None,
+                "players": [{k: _py(p[k]) for k in ("player", "status", "p_play", "player_id",
+                                                    "how")} for p in listed][:20]}
+        base_inputs = {
+            "train_games": int(bundle.train_games), "train_through": bundle.train_through,
+            "schedule": _factors(r),
+            "elo": {"home": _py(elo_pre["elo_home_pre"].iat[i]),
+                    "away": _py(elo_pre["elo_away_pre"].iat[i])},
+            "market": ({k: _py(mk[k]) for k in ("source", "provider", "captured_at", "kind",
+                                                "home_spread", "total", "home_ml", "away_ml",
+                                                "home_prob")} if mk else None),
+            "injuries": {s: [{k: x[k] for k in ("player", "status", "reason", "source")}
+                             for x in team_inj[s]] for s in team_inj},
+            "injuries_batches": inj.get("batches", {}),
+            "availability": avail, "fit": fit_info,
+            "model_effects": [e for e in effects if e["game_id"] == gid],
+        }
+        rows = {}
+        for name, sc in scorers.items():
+            expl = gbm.reasons_from_contrib(contrib[name].iloc[i], r["home"], r["away"], top=12)
+            factors = production.key_factors(
+                expl, r["home"], r["away"], absentees,
+                {r["home"]: float(absent[name][0][i]), r["away"]: float(absent[name][1][i])})
+            inputs = {"model": name, **base_inputs, "factors": factors,
+                      "explain": [{k: _py(v) for k, v in e.items()} for e in expl[:8]]}
+            p, mg, tot = pred[name]
+            rows[name] = {
+                "game_id": gid, "nba_day": day.isoformat(), "model": name,
+                "created_at": created_at, "home": r["home"], "away": r["away"],
+                "season": r["season"], "season_type": r["season_type"],
+                "tipoff_utc": tip, "status": status,
+                "home_win_prob": _py(p[i]), "home_margin": _py(mg[i]), "total": _py(tot[i]),
+                "market_home_spread": _py(mk["home_spread"]) if mk else None,
+                "market_total": _py(mk["total"]) if mk else None,
+                "market_home_prob": _py(mk["home_prob"]) if mk else None,
+                "inputs": inputs, "injuries": inputs["injuries"],
+            }
+        head = rows[PRODUCTION_WINPROB]
+        head["opinion"] = rows[PRODUCTION_OPINION]
+        out.append(head)
+    return out
 
 
 # ------------------------------------------------------------------ reading back
