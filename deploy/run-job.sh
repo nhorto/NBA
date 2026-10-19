@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Run one Courtside collection job and append timestamped output to its log.
 #
-# Usage: run-job.sh <pregame|postgame> [--dry-run]
+# Usage: run-job.sh <pregame|postgame|weekly|dfs-tick> [--dry-run]
 #
 # Log: ${COURTSIDE_DATA:-<repo>/var}/logs/<job>.log (rotated once to .log.1
 # when it exceeds ~5 MB). Exit code is the job's exit code.
+#
+# dfs-tick (`courtside dfs tick`, every 5 min): exits 0 at once outside the ET window
+# (before DFS_TICK_FIRST_HOUR, from schedule.sh; COURTSIDE_DFS_TICK_ANYTIME=1 overrides) and
+# logs nothing when no lock-relative window was hit (the tick prints nothing then).
 
 set -u
 
 usage() {
-  echo "usage: ${0##*/} <pregame|postgame|weekly> [--dry-run]" >&2
+  echo "usage: ${0##*/} <pregame|postgame|weekly|dfs-tick> [--dry-run]" >&2
   exit 64
 }
 
@@ -17,13 +21,24 @@ job="${1:-}"
 dry_run=0
 [ "${2:-}" = "--dry-run" ] && dry_run=1
 case "$job" in
-  pregame | postgame | weekly) ;;
+  pregame | postgame | weekly | dfs-tick) ;;
   *) usage ;;
 esac
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)" || exit 1
 repo_root="$(cd "$script_dir/.." && pwd -P)" || exit 1
 cd "$repo_root" || exit 1
+
+# shellcheck source=schedule.sh
+. "$script_dir/schedule.sh"
+
+# dfs-tick: a no-op outside the ET window (cheap guard, before uv is even looked up).
+if [ "$job" = "dfs-tick" ] && [ "$dry_run" -eq 0 ] && [ "${COURTSIDE_DFS_TICK_ANYTIME:-0}" != "1" ]; then
+  et_hour="$(TZ=America/New_York date +%H)"
+  if [ "$((10#$et_hour))" -lt "$DFS_TICK_FIRST_HOUR" ] || [ "$((10#$et_hour))" -gt "$DFS_TICK_LAST_HOUR" ]; then
+    exit 0
+  fi
+fi
 
 # launchd/systemd start with a minimal PATH.
 PATH="/opt/homebrew/bin:$HOME/.local/bin:${PATH:-/usr/bin:/bin}"
@@ -64,7 +79,12 @@ if [ "$dry_run" -eq 1 ]; then
   echo "data dir  : $data_dir"
   echo "log file  : $log_file (rotates to $log_file.1 above $max_bytes bytes)"
   echo "uv        : ${uv_bin:-<not found>}"
-  echo "command   : cd \"$repo_root\" && \"${uv_bin:-uv}\" run --frozen courtside collect \"$job\""
+  if [ "$job" = "dfs-tick" ]; then
+    echo "window    : ET hours $DFS_TICK_FIRST_HOUR-$DFS_TICK_LAST_HOUR (outside it the job exits 0 immediately)"
+    echo "command   : cd \"$repo_root\" && \"${uv_bin:-uv}\" run --frozen courtside dfs tick"
+  else
+    echo "command   : cd \"$repo_root\" && \"${uv_bin:-uv}\" run --frozen courtside collect \"$job\""
+  fi
   exit 0
 fi
 
@@ -85,6 +105,23 @@ log_lines() {
     printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$line"
   done >>"$log_file"
 }
+
+if [ "$job" = "dfs-tick" ]; then
+  # Quiet unless something happened: ~150 ticks a day, a handful do any work.
+  if [ -z "$uv_bin" ]; then
+    echo "[run-job] start $job (repo: $repo_root)" | log_lines
+    echo "[run-job] ERROR: uv not found (looked in \$HOME/.local/bin, /opt/homebrew/bin, PATH, mise)" | log_lines
+    exit 127
+  fi
+  out="$("$uv_bin" run --frozen courtside dfs tick 2>&1)"
+  rc=$?
+  if [ -n "$out" ] || [ "$rc" -ne 0 ]; then
+    echo "[run-job] start $job (repo: $repo_root)" | log_lines
+    [ -n "$out" ] && printf '%s\n' "$out" | log_lines
+    echo "[run-job] end $job exit=$rc" | log_lines
+  fi
+  exit "$rc"
+fi
 
 echo "[run-job] start $job (repo: $repo_root)" | log_lines
 

@@ -32,7 +32,7 @@ run_job="$deploy_dir/run-job.sh"
 . "$deploy_dir/schedule.sh"
 
 unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-jobs="pregame postgame weekly"
+jobs="pregame postgame weekly dfs-tick"
 
 run() {
   printf '+ %s\n' "$*"
@@ -56,6 +56,7 @@ times_for() {
     pregame) printf '%s' "$PREGAME_TIMES" ;;
     postgame) printf '%s' "$POSTGAME_TIMES" ;;
     weekly) printf '%s' "$WEEKLY_TIMES" ;;
+    dfs-tick) dfs_tick_times ;;
   esac
 }
 
@@ -63,7 +64,7 @@ print_service() {
   local job="$1"
   cat <<UNIT
 [Unit]
-Description=Courtside $job collection
+Description=Courtside $job job
 
 [Service]
 Type=oneshot
@@ -75,22 +76,30 @@ UNIT
 }
 
 print_timer() {
-  local job="$1" t
+  local job="$1" t persistent
   cat <<UNIT
 [Unit]
-Description=Courtside $job collection schedule (US/Eastern)
+Description=Courtside $job schedule (US/Eastern)
 
 [Timer]
 UNIT
-  for t in $(times_for "$job"); do
-    if [ "$job" = "weekly" ]; then
-      printf 'OnCalendar=%s *-*-* %s:00 America/New_York\n' "$WEEKLY_DAY" "$t"
-    else
-      printf 'OnCalendar=*-*-* %s:00 America/New_York\n' "$t"
-    fi
-  done
+  if [ "$job" = "dfs-tick" ]; then
+    # 11:00, 11:05 ... 23:55 ET: hours FIRST..LAST, minutes 00/STEP (systemd range syntax).
+    printf 'OnCalendar=*-*-* %s..%s:00/%s:00 America/New_York\n' \
+      "$DFS_TICK_FIRST_HOUR" "$DFS_TICK_LAST_HOUR" "$DFS_TICK_STEP"
+    persistent=false          # a missed tick is worthless; do not replay it after downtime
+  else
+    persistent=true
+    for t in $(times_for "$job"); do
+      if [ "$job" = "weekly" ]; then
+        printf 'OnCalendar=%s *-*-* %s:00 America/New_York\n' "$WEEKLY_DAY" "$t"
+      else
+        printf 'OnCalendar=*-*-* %s:00 America/New_York\n' "$t"
+      fi
+    done
+  fi
   cat <<UNIT
-Persistent=true
+Persistent=$persistent
 Unit=courtside-$job.service
 
 [Install]

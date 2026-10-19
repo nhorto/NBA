@@ -18,6 +18,7 @@ DFS_MODULES: tuple[str, ...] = (
     "courtside.proj.dfs.rules",
     "courtside.proj.dfs.capture_cli",
     "courtside.proj.dfs.optimizer_cli",
+    "courtside.proj.dfs.runner_cli",
 )
 
 

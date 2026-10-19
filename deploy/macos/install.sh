@@ -38,7 +38,7 @@ data_dir="${COURTSIDE_DATA:-$repo_root/var}"
 log_dir="$data_dir/logs"
 agents_dir="$HOME/Library/LaunchAgents"
 uid="$(id -u)"
-jobs="pregame postgame weekly"
+jobs="pregame postgame weekly dfs-tick"
 
 xml_escape() {
   local s="$1"
@@ -77,6 +77,7 @@ times_for() {
     pregame) printf '%s' "$PREGAME_TIMES" ;;
     postgame) printf '%s' "$POSTGAME_TIMES" ;;
     weekly) printf '%s' "$WEEKLY_TIMES" ;;
+    dfs-tick) dfs_tick_times ;;
   esac
 }
 
