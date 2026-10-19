@@ -15,6 +15,7 @@ PROJ_MODULES: tuple[str, ...] = (
     "courtside.proj.ids",
     "courtside.analytics.stints_store",
     "courtside.proj.why_v0",
+    "courtside.proj.cli_proj",
 )
 DFS_MODULES: tuple[str, ...] = (
     "courtside.proj.dfs.rules",

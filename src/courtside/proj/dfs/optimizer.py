@@ -417,14 +417,21 @@ def save_run(conn: sqlite3.Connection, *, slate_id: str | None, kind: str,
              model_version: str | None = None, seconds: float | None = None, ok: bool = True,
              detail: Any = None, path: str | None = None, run_id: str | None = None,
              created_at: str | None = None) -> str:
-    """Insert a ``dfs_runs`` row and return its run_id. `detail` may be any JSON-able value."""
+    """Insert (or complete) a ``dfs_runs`` row and return its run_id. `detail` may be any
+    JSON-able value. The projection pipeline may already have written the row for this run_id
+    (with ``sim_path``); that row is updated in place and its ``sim_path`` kept."""
     run_id = run_id or uuid.uuid4().hex[:12]
     created_at = created_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if detail is not None and not isinstance(detail, str):
         detail = json.dumps(detail, default=str, sort_keys=True)
     conn.execute(
         "INSERT INTO dfs_runs (run_id, slate_id, kind, created_at, model_version, path, "
-        "seconds, ok, detail) VALUES (?,?,?,?,?,?,?,?,?)",
+        "seconds, ok, detail) VALUES (?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(run_id) DO UPDATE SET slate_id=excluded.slate_id, kind=excluded.kind, "
+        "created_at=excluded.created_at, "
+        "model_version=COALESCE(excluded.model_version, dfs_runs.model_version), "
+        "path=COALESCE(excluded.path, dfs_runs.path), seconds=excluded.seconds, "
+        "ok=excluded.ok, detail=excluded.detail",
         (run_id, None if slate_id is None else str(slate_id), kind, created_at, model_version,
          path, seconds, 1 if ok else 0, detail))
     conn.commit()

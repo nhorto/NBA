@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+import uuid
 from datetime import datetime, timezone
 
 from . import optimizer as O
@@ -34,9 +35,11 @@ def add_commands(sub) -> dict:
     p.add_argument("--n", type=int, default=10, help="lineups for --mode topn (default 10)")
     p.add_argument("--min-diff", type=int, default=1, help="min different players d (default 1)")
     p.add_argument("--proj", default="fppg",
-                   choices=("fppg", "actual", "rotoguru-actual", "salary"),
-                   help="fppg: DK's FPPG as mu; actual: real DK points (hindsight, --date); "
+                   choices=("fppg", "model", "actual", "rotoguru-actual", "salary"),
+                   help="fppg: DK's FPPG as mu; model: Path A projections (mean + p25, "
+                        "courtside proj); actual: real DK points (hindsight, --date); "
                         "salary: 5 points per $1k")
+    p.add_argument("--sims", type=int, default=25_000, help="sims for --proj model")
     p.add_argument("--lam", type=float, default=O.DEFAULT_LAMBDA,
                    help="cash fallback lambda (needs p25; ignored while only mu exists)")
     p.add_argument("--lock", nargs="+", action="append", metavar="NAME", default=[])
@@ -127,7 +130,13 @@ def _build(conn, args) -> int:
             raise LookupError(f"no rules for slate {args.slate} (no rules_json, no archive)")
         if args.proj in ("actual", "rotoguru-actual"):
             raise ValueError("--proj actual needs a RotoGuru --date (hindsight)")
-        if args.proj == "fppg":
+        if args.proj == "model":
+            from ..pipeline import project_slate
+            at = (datetime.now(timezone.utc) if args.now in ("now", "none")
+                  else datetime.fromisoformat(args.now.replace("Z", "+00:00")))
+            projs = project_slate(conn, pool.slate_id, at, run_id=f"build-{uuid.uuid4().hex[:10]}",
+                                  n_sims=args.sims, kind="manual", store=args.save)
+        elif args.proj == "fppg":
             projs = {p.dk_player_id: O.Projection(p.fppg) for p in pool.players
                      if p.fppg is not None}
         else:
@@ -136,9 +145,9 @@ def _build(conn, args) -> int:
         label = f"slate {pool.slate_id} ({pool.game_type}) captured {pool.captured_at}"
     else:
         pool = O.hist_pool(conn, args.date, O.classic_rules())
-        if args.proj == "fppg":
-            raise ValueError("--proj fppg needs a captured --slate; use actual or salary "
-                             "with --date")
+        if args.proj in ("fppg", "model"):
+            raise ValueError(f"--proj {args.proj} needs a captured --slate; use actual or "
+                             "salary with --date")
         projs = O.hist_projections(conn, pool, args.proj)
         label = f"RotoGuru {args.date} (classic){'  HINDSIGHT-OPTIMAL' if 'actual' in args.proj else ''}"
     rules = pool.rules

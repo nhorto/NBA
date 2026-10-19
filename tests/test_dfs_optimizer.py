@@ -638,3 +638,15 @@ def test_cli_build_historical_date(conn, capsys, monkeypatch):
                          "--n", "2"])
     assert handlers["build"](args) == 0
     assert "HINDSIGHT" in capsys.readouterr().out
+
+
+def test_save_run_completes_a_row_the_pipeline_wrote():
+    from courtside import db
+    from courtside.proj.dfs import optimizer as O
+    conn = db.connect(":memory:")
+    conn.execute("INSERT INTO dfs_runs (run_id, slate_id, kind, created_at, model_version, "
+                 "sim_path, path) VALUES ('r1', '1', 'lock45', 'x', 'pathA-v0', 'sims.npz', 'A')")
+    O.save_run(conn, slate_id="1", kind="lock45", model_version=None, run_id="r1", seconds=3.0)
+    row = conn.execute("SELECT model_version, sim_path, path, seconds, ok FROM dfs_runs").fetchone()
+    assert tuple(row) == ("pathA-v0", "sims.npz", "A", 3.0, 1)
+    assert conn.execute("SELECT COUNT(*) FROM dfs_runs").fetchone()[0] == 1
