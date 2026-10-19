@@ -1,6 +1,7 @@
 """Courtside web front end: server-rendered Brief pages (FastAPI + Jinja2).
 
-Routes: `/` (latest Brief), `/brief/<day>`, `/archive`, `/game/<game_id>`, `/healthz`,
+Routes: `/` (latest Brief), `/brief/<day>`, `/archive`, `/game/<game_id>`, `/health` (model health),
+`/healthz`, `/api/health`,
 `/api/brief/<day|latest>`. Run with `courtside serve`; see docs/WEB.md.
 """
 
@@ -19,7 +20,8 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import fmt, view
+from .. import config
+from . import fmt, health, view
 from .store import BriefStore
 from .teams import identity
 
@@ -78,11 +80,36 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
             asset_v["v"] = _asset_version()
         ctx.setdefault("asset_v", asset_v["v"])
         ctx.setdefault("latest_day", store.latest_day())
+        ctx.setdefault("health_banner", None)
         html = env.get_template(name).render(**ctx)
         return HTMLResponse(html, status_code=status)
 
     def not_found(msg: str, detail: str = "") -> HTMLResponse:
         return render("404.html", status=404, message=msg, detail=detail, page="error")
+
+    def _today():
+        try:
+            return config.today_nba_day()
+        except Exception:  # noqa: BLE001 - never fail a page over the clock
+            return datetime.now(timezone.utc).date()
+
+    def health_banner():
+        """Site-wide notice on the Brief pages: only open *critical* alerts trigger it."""
+        conn = store.health_conn()
+        if conn is None:
+            return None
+        try:
+            return health.banner(conn)
+        finally:
+            conn.close()
+
+    def health_view():
+        conn = store.health_conn()
+        try:
+            return health.build(conn, _today())
+        finally:
+            if conn is not None:
+                conn.close()
 
     def brief_page(day: str, *, is_latest: bool) -> HTMLResponse:
         brief = store.get(day)
@@ -92,7 +119,7 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
         vm = store.derived(("brief-view",) + store.version(day), lambda: view.brief_view(brief))
         prev, nxt = store.neighbours(day)
         return render("brief.html", v=vm, day=day, prev_day=prev, next_day=nxt,
-                      is_latest=is_latest, page="brief")
+                      is_latest=is_latest, page="brief", health_banner=health_banner())
 
     @app.get("/", response_class=HTMLResponse)
     def index():
@@ -146,6 +173,14 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
             return render("game.html", g=vm, day=day, page="game")
         vm = store.derived(key, lambda: view.tonight_view(g))
         return render("preview.html", t=vm, day=day, page="game")
+
+    @app.get("/health", response_class=HTMLResponse)
+    def model_health():
+        return render("health.html", h=health_view(), page="health")
+
+    @app.get("/api/health")
+    def api_health():
+        return JSONResponse(health.api_summary(health_view()))
 
     @app.get("/healthz")
     def healthz():

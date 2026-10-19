@@ -35,6 +35,8 @@ uv run courtside serve --reload                 # dev: reload on .py/.html/.css/
 | `/brief/<YYYY-MM-DD>` | the Brief for a day, with prev/next navigation |
 | `/archive` | every stored Brief, grouped by month |
 | `/game/<game_id>` | deep-dive for a finished game (linescore, lead-margin chart, runs, clutch, impact table, unsung-hero candidates, notable lines, incidents); a preview page if the id is only on a "tonight" slate |
+| `/health` | Model Health: status light, per-model scoreboard vs the market, rolling log-loss/accuracy, calibration, over/under-prediction, drift, alerts, data checks and model history (reads the MLOps tables; empty states when they are empty) |
+| `/api/health` | JSON summary of the same: status, champions, alerts, models, calibration, bias, drift, checks |
 | `/healthz` | `{"ok", "status", "briefs", "latest_day", "latest_built_at", "latest_age_hours", "data_dir"}` for monitoring |
 | `/api/brief/<day>` or `/api/brief/latest` | the stored Brief JSON, unchanged |
 

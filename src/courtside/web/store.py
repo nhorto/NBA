@@ -50,6 +50,19 @@ class BriefStore:
         except sqlite3.Error:
             return None
 
+    def health_conn(self) -> sqlite3.Connection | None:
+        """Read-only connection for the Model Health page (monitoring tables, no `briefs`
+        needed). None when there is no database yet."""
+        p = self.db_path
+        if not p.exists():
+            return None
+        try:
+            conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=5)
+            conn.row_factory = sqlite3.Row
+            return conn
+        except sqlite3.Error:
+            return None
+
     # ---------------------------------------------------------------- listing
     def _file_days(self) -> dict[str, Path]:
         d = self.briefs_dir
