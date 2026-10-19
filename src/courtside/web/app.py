@@ -1,7 +1,7 @@
 """Courtside web front end: server-rendered Brief pages (FastAPI + Jinja2).
 
 Routes: `/` (latest Brief), `/brief/<day>`, `/archive`, `/game/<game_id>`, `/health` (model health),
-`/healthz`, `/api/health`,
+`/healthz`, `/api/health`, `/dfs` (DFS slates, see dfs_view.py),
 `/api/brief/<day|latest>`. Run with `courtside serve`; see docs/WEB.md.
 """
 
@@ -21,7 +21,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import config
-from . import fmt, health, view
+from . import dfs_view, fmt, health, view
 from .store import BriefStore
 from .teams import identity
 
@@ -173,6 +173,9 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
             return render("game.html", g=vm, day=day, page="game")
         vm = store.derived(key, lambda: view.tonight_view(g))
         return render("preview.html", t=vm, day=day, page="game")
+
+    dfs_view.register(app, store=store, render=render, not_found=not_found, today=_today,
+                      health_banner=health_banner)
 
     @app.get("/health", response_class=HTMLResponse)
     def model_health():

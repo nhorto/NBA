@@ -54,6 +54,19 @@
     });
   });
 
+  // ---- "Copy lineup" buttons (DFS page): shown only when the clipboard API exists
+  document.querySelectorAll("[data-copy]").forEach(function (b) {
+    var src = document.querySelector(b.getAttribute("data-copy"));
+    if (!src || !navigator.clipboard) return;
+    b.hidden = false;
+    b.addEventListener("click", function () {
+      navigator.clipboard.writeText(src.textContent).then(function () {
+        var t = b.textContent; b.textContent = "Copied";
+        setTimeout(function () { b.textContent = t; }, 1600);
+      });
+    });
+  });
+
   // ---- a link to a collapsed row (e.g. a "Decided early" game) opens it
   function openTarget() {
     var id = location.hash.slice(1);
