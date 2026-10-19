@@ -32,6 +32,11 @@ HCA_PER100 = 3.0        # a-priori home edge removed from per-game net ratings b
 WINDOWS = (5, 10, 20)
 LEAGUE_GAMES = 300      # league scoring/pace environment: last N games before the day
 LEAGUE_HCA_GAMES = 1230  # league home-margin drift: last N non-neutral games before the day
+PRIOR_STATS = ("pace", "ortg", "drtg", "tot")   # rolling stats padded with a last-season prior
+PRIOR_WINDOW = 10
+# Year-to-year persistence of a team's regular-season pace / ORtg / DRtg / game total, measured
+# on 2003-2025 (regression slope of demeaned team means on last season's: 0.63/0.54/0.56/0.59).
+PRIOR_CARRY = 0.6
 
 BOX_STATS = ("poss", "ortg", "drtg", "efg", "tov", "orb", "ftr")
 BOX_OUTCOME_COLUMNS = tuple(f"{s}_{c}" for s in ("h", "a") for c in BOX_STATS)
@@ -176,6 +181,25 @@ def _continuity(frame: pd.DataFrame, players: pd.DataFrame | None) -> np.ndarray
     return out
 
 
+def _team_priors(long: pd.DataFrame, reg: np.ndarray) -> pd.DataFrame:
+    """Per row of the long (team, season) table: last season's regular-season mean of each
+    PRIOR_STATS column for that team, regressed toward the league mean by PRIOR_CARRY
+    (`lg + carry * (team - lg)`; a team absent last season gets the league mean). NaN in the
+    first season of the frame. Uses only the previous season, which is complete."""
+    seasons = sorted(long["season"].unique())
+    prev = dict(zip(seasons[1:], seasons[:-1]))
+    key = pd.DataFrame({"team": long["team"].to_numpy(),
+                        "season": long["season"].map(prev).to_numpy()}, index=long.index)
+    lr = long[reg]
+    out = pd.DataFrame(index=long.index)
+    for c in PRIOR_STATS:
+        tm = lr.groupby(["team", "season"])[c].mean().rename("tm").reset_index()
+        lg = lr.groupby("season")[c].mean().rename("lg").reset_index()
+        m = key.merge(tm, on=["team", "season"], how="left").merge(lg, on="season", how="left")
+        out[c] = (m["lg"] + PRIOR_CARRY * (m["tm"].fillna(m["lg"]) - m["lg"])).to_numpy()
+    return out
+
+
 # --- main ------------------------------------------------------------------------------------
 
 def build_features(frame: pd.DataFrame, eng: pd.DataFrame | None, elo: pd.DataFrame,
@@ -280,10 +304,23 @@ def build_features(frame: pd.DataFrame, eng: pd.DataFrame | None, elo: pd.DataFr
     shifted = grp[list(stats)].shift(1)
     shifted[["team", "season"]] = long[["team", "season"]]
     g2 = shifted.groupby(["team", "season"], sort=False)
+    prior = _team_priors(long, st[long["g"].to_numpy()] == "Regular Season")
     for c, ws in stats.items():
         for w in ws:
-            roll[f"{c}_r{w}"] = g2[c].rolling(w, min_periods=1).mean().reset_index(
-                level=[0, 1], drop=True)
+            r = g2[c].rolling(w, min_periods=1)
+            if c in PRIOR_STATS and w == PRIOR_WINDOW:
+                # window padded with the team's prior: all prior at game 1, all current by
+                # game `w`; unknown prior (first season in the frame) keeps the plain mean
+                tot = r.sum().reset_index(level=[0, 1], drop=True)
+                cnt = r.count().reset_index(level=[0, 1], drop=True)
+                tot = tot.fillna(0.0)                 # sum of an empty window is NaN
+                pr = prior[c].reindex(tot.index)
+                with np.errstate(invalid="ignore", divide="ignore"):
+                    plain = tot / cnt.where(cnt > 0)
+                    padded = (tot + (w - cnt) * pr) / w
+                roll[f"{c}_r{w}"] = padded.where(pr.notna(), plain)
+            else:
+                roll[f"{c}_r{w}"] = r.mean().reset_index(level=[0, 1], drop=True)
     R = pd.DataFrame(roll).reindex(long.index)
     R["g"], R["side"], R["gp"] = long["g"], long["side"], long["gp"]
     Rh = R[R["side"] == 0].set_index("g").reindex(gidx)

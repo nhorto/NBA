@@ -323,3 +323,84 @@ def test_frozen_registry_skips_the_search(league):
     for t, (cfg, k) in gbm.FROZEN[gbm.PRODUCTION_OPINION].items():
         assert m.chosen()[t][1] <= k and m.chosen()[t][0].num_leaves == cfg.num_leaves
     assert np.isfinite(m.predict_total(test)).all()
+
+
+# --- season-start totals ----------------------------------------------------------------------
+
+def _paced_league(synthetic_frame, seed=3):
+    """Synthetic league whose teams differ in pace and offence (persistent across seasons), so a
+    game's total depends on who plays. Points and box columns follow from the team traits."""
+    codes = ("BOS", "NYK", "LAL", "GSW", "DEN", "MIA", "CHI", "PHX", "SEA", "UTA", "ATL", "POR")
+    f = _with_box_and_market(synthetic_frame(seasons=SEASONS, codes=codes), seed=seed,
+                             p_line=0.0)
+    rng = np.random.default_rng(seed)
+    teams = sorted(set(f["home"]) | set(f["away"]))
+    pace = dict(zip(teams, np.linspace(-10, 10, len(teams)) + rng.normal(0, 0.5, len(teams))))
+    off = dict(zip(teams, rng.permutation(np.linspace(-9, 9, len(teams)))))
+    n = len(f)
+    h, a = f["home"].to_numpy(), f["away"].to_numpy()
+    poss = 98 + (np.vectorize(pace.get)(h) + np.vectorize(pace.get)(a)) / 2 + rng.normal(0, 1.5, n)
+    ho = 112 + np.vectorize(off.get)(h) + rng.normal(0, 3, n)
+    ao = 112 + np.vectorize(off.get)(a) + rng.normal(0, 3, n)
+    f["h_poss"] = f["a_poss"] = poss
+    f["h_ortg"], f["a_ortg"], f["h_drtg"], f["a_drtg"] = ho, ao, ao, ho
+    f["home_pts"], f["away_pts"] = np.round(poss * ho / 100), np.round(poss * ao / 100)
+    f["margin"] = f["home_pts"] - f["away_pts"]
+    f["home_win"] = (f["margin"] > 0).astype(int)
+    expect = 98 + (np.vectorize(pace.get)(h) + np.vectorize(pace.get)(a)) / 2
+    f["exp_total"] = expect * (224 + np.vectorize(off.get)(h) + np.vectorize(off.get)(a)) / 100
+    return f
+
+
+def _season_opener(f, days=1):
+    s = f["season"].max()
+    cur = f[f["season"] == s]
+    d0 = cur["game_date"].min()
+    first = cur[cur["game_date"] < d0 + pd.Timedelta(days=days)]      # opening day: gp == 0
+    return f[f["game_date"] < d0], first
+
+
+def test_season_start_rolling_totals_use_last_seasons_prior(synthetic_frame):
+    f = _paced_league(synthetic_frame)
+    _, fc = _registry(_player_rows(f))
+    F = fc.get(f)
+    s = f["season"].max()
+    first = (F["gp_home"] == 0) & (F["gp_away"] == 0) & (f["season"] == s).to_numpy()
+    assert first.any()
+    for c in ("tot_r10_home", "pace_r10_sum", "ortg_r10_home", "drtg_r10_away"):
+        assert F.loc[first, c].notna().all()           # was NaN before the prior carry-over
+    assert F.loc[first, "tot_r10_home"].std() > 1.0    # priors differ by team
+    # the very first season of the frame has no last season: still unknown there
+    s0 = (f["season"] == f["season"].min()).to_numpy() & (F["gp_home"] == 0).to_numpy()
+    assert F.loc[s0, "tot_r10_home"].isna().all()
+
+
+@pytest.mark.parametrize("name", [gbm.PRODUCTION_OPINION, gbm.PRODUCTION_WINPROB])
+def test_season_opener_totals_vary_with_team_pace(synthetic_frame, name):
+    f = _paced_league(synthetic_frame)
+    train, opener = _season_opener(f)
+    reg, _ = _registry(_player_rows(f))
+    m = reg[name]()
+    m.fit(train)
+    t = m.predict_total(opener.assign(mkt_total=np.nan, mkt_margin=np.nan))
+    assert np.isfinite(t).all() and len(t) >= 6
+    assert t.std() > 2.0, f"opening-day totals collapsed to the mean (SD {t.std():.2f})"
+    exp = f.loc[opener.index, "exp_total"].to_numpy()
+    assert np.corrcoef(t, exp)[0, 1] > 0.5
+
+
+def test_season_opener_total_tracks_the_market_line(synthetic_frame):
+    f = _paced_league(synthetic_frame)
+    train, opener = _season_opener(f)
+    rng = np.random.default_rng(7)
+    # a line that moves with the teams but is not a function of our features
+    line = f.loc[train.index, "exp_total"] + rng.normal(0, 2, len(train))
+    train = train.assign(mkt_total=line.to_numpy(), mkt_margin=0.3 * train["margin"].to_numpy())
+    mkt = opener["exp_total"].to_numpy() + rng.normal(0, 4, len(opener))
+    reg, _ = _registry(_player_rows(f))
+    m = reg[gbm.PRODUCTION_WINPROB]()
+    m.fit(train)
+    t = m.predict_total(opener.assign(mkt_total=mkt, mkt_margin=0.0))
+    assert t.std() > 2.0
+    assert np.corrcoef(t, mkt)[0, 1] > 0.8
+    assert np.abs(t - mkt).mean() < 4.0

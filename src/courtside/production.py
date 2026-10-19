@@ -41,7 +41,7 @@ from .model import gbm, players as pl
 
 log = logging.getLogger("courtside.production")
 
-CACHE_VERSION = 2
+CACHE_VERSION = 3   # 3: last-season priors in the rolling pace/ortg/drtg/total features
 KEEP_DAYS = 8                    # model dirs older than this are pruned
 
 # Factors worth showing a reader. `market` is the line itself, `season_phase` and
