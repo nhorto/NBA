@@ -959,6 +959,9 @@ def _execute(conn, slate, tips, kind, now, run_id, detail, n, min_diff, refresh,
         detail["topn"] = {"requested": n, "min_diff": min_diff, "stopped": res.stopped}
     detail["late_news"] = len(news)
     detail.update(post_lineups(conn, run_id))
+    if kind != "swap":
+        from . import field as FLD   # proxy ownership + simulated field; never fails the run
+        detail["field"] = FLD.score_run_safe(conn, run_id, slate_id=sid, commit=False)
     _save_run(conn, run_id, sid, kind, now, model_version, t0, detail, news)
     return {"status": "ok", "model_version": model_version, "lineups": counts,
             "late_news": len(news), "excluded": len(excluded)}

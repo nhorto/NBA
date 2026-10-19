@@ -135,7 +135,7 @@
         <p class="dfs-lu-meta">
           <span>{{ lu.salary_text }} of $50,000</span>
           {% if lu.p10 is not none and lu.p90 is not none %}<span class="dfs-range">Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }} (10th to 90th percentile, simulated)</span>{% if lu.bar %}<span class="dfs-lu-bar">{{ lu.bar }}</span>{% endif %}{% endif %}
-          {% if lu.p_cash is not none %}<span>Simulated chance to cash {{ lu.p_cash|pct }}</span>{% endif %}
+          {% if lu.p_cash is not none %}<span>Simulated chance to cash {{ lu.p_cash|pct }} <small class="muted">(largest captured double-up, vs a modelled field: a proxy, likely optimistic)</small></span>{% endif %}
           {% if lu.late %}<span class="flag flag-neg">Late news: {{ lu.late|join(", ") }}</span>{% endif %}
         </p>
       </div>
