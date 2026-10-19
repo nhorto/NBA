@@ -90,6 +90,35 @@ This file condenses three DFS research passes (historical data, pro methodology,
   - CV falls from ~0.8 (mean ≤ 10) to ~0.24 (mean ≥ 50).
   - Stars: 30% double-double rate, 2.8% triple-double rate.
 
+### v2 (causal) correlation study, T2.7 (2026-10-19)
+
+`research/dfs_correlations_v2.py`, `src/courtside/proj/corr.py`, output in `research/dfs_correlations_v2_output.txt`. Residual = actual DK minus **our pregame projection** (`project_historical`, avail protocol, bundle fit on seasons < S, 500 sims since only the mean is used), every regular-season date 2016-17 to 2025-26: 249,746 player-games, 98% of all played player-games. Tiers are the copula's own role tiers on the projection at the date. Three residual modes: **U** (unconditional), **P** (given actual team points) and **PM** (given team points and actual minutes, the T1.4 construction and the copula's input). Correlations are of the CV-standardised residual, with game-cluster bootstrap CIs.
+
+**How v2 differs from v1.** The sign flips. v1's residual vs the in-season mean carried the pregame-known absences (minutes +0.08 across teammates), which a projection already knows.
+
+| Pair | v1 | v2 U | v2 PM | v1 opp | v2 U opp | v2 PM opp |
+|---|---|---|---|---|---|---|
+| all teammates / opponents | +0.034 | **-0.034** | -0.043 | +0.011 | 0.000 | +0.013 |
+| star-star | +0.048 | +0.068 | -0.126 | +0.053 | +0.050 | -0.002 |
+| star-role | +0.029 | -0.009 | -0.087 | +0.021 | +0.008 | +0.014 |
+| star-bench | -0.034 | -0.115 | -0.058 | -0.006 | -0.036 | +0.022 |
+| role-role | +0.034 | -0.026 | -0.045 | +0.003 | -0.001 | +0.014 |
+| role-bench | +0.022 | -0.057 | -0.027 | +0.002 | -0.008 | +0.015 |
+| bench-bench | +0.089 | +0.063 | +0.004 | +0.024 | +0.034 | +0.002 |
+
+- **Drift is gone.** U teammate r is -0.034 in every season (SD across seasons 0.004, no trend); PM is -0.043 (SD 0.002, Q p = 0.37). v1's 0.017 -> 0.059 drift was the hindsight residual. Opponent r is flat at 0.000 (U).
+- **Position pairs matter a little.** Cells differ from their tier pair (Q = 467 on 45 df), but the largest deviation is 0.03 (G-G role pairs more negative, C-C U -0.139). Out of sample (fold seasons < S) shrunk cells beat tier-pair-only by 12% in MSE (4.72 vs 5.36 x 1e-4, PM, k = 2,000, 3-season window); 3 seasons beat 1 and 2.
+- **Team-specific effects are not worth modelling.** Split-half reliability of team-season r is 0.18-0.25 (v1: 0.35); the implied SD of true team-level r is ~0.01, below the sampling SD.
+- **Blowouts** (vs projection): stars +3.2 at |m| <= 5, -4.9 at 26+; losing starters at |m| >= 16 -4.6 (winners +0.9); bench +2.2 at 26+. Minutes carry most of it (stars -4.7 min at 26+). Winner/loser shift is visible by signed margin (stars -8.2 at <= -21, +0.2 at >= 21).
+- **CV by level** (U): 1.02 / 0.56 / 0.40 / 0.32 / 0.28 / 0.25 for projection means <= 10, 10-20, ..., 50+ (v1 0.79 -> 0.24). The PM CV table (0.65 -> 0.19) matches T1.4's bundle table within 0.02.
+- **Star-absence check fails the +/-0.6 target.** With the star known out, top-6 players still land 0.8 DK below the projection (-0.83 +/- 0.13 vs star-in games; the star tier itself -1.9): the projection over-credits the bump. Separately, the projection is biased by tier: stars +0.8 DK, role -0.7, bench +0.1.
+
+**Implications for the copula (T2.10).**
+1. T1.4's construction was already right: its tier-pair rho_team match v2 PM at r = 0.99 (mean absolute difference 0.017). Do not use v1's positive numbers.
+2. **Inputs** = PM table (`corr.load(S).corr_matrix(team, tiers, pos)`, 3 seasons < S, k = 2,000). **Validation targets** = the U table: the sim, end to end, must give teammate r about -0.034 (star-star +0.07, star-bench -0.115, bench-bench +0.06) and opponent r about 0.00. Those signs come from the minutes and margin channels, not from the copula.
+3. Position cells are worth including (cheap, shrunk) but gain little; no opponent position or team effects.
+4. Fix outside the copula: the tier bias and the star-absence over-credit above.
+
 ## Fable review (plan v1): key points for the DFS-first revision
 
 Verdict: **approve with changes.**

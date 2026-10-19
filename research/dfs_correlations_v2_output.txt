@@ -1,0 +1,501 @@
+# Courtside DFS correlation study v2 (T2.7): causal residuals vs pregame projection
+seasons: 2016-17..2025-26 (10); generated 2026-10-19
+
+## 0. Data: causal residual frame
+| season | dates | every | n_sims | player-games in frame | played (all) | coverage |
+|---|---|---|---|---|---|---|
+| 2016-17 | 162 | 1 | 500 | 25711 | 26045 | 0.987 |
+| 2017-18 | 168 | 1 | 500 | 25571 | 26000 | 0.984 |
+| 2018-19 | 168 | 1 | 500 | 25598 | 26011 | 0.984 |
+| 2019-20 | 150 | 1 | 500 | 21888 | 22312 | 0.981 |
+| 2020-21 | 140 | 1 | 500 | 22559 | 22970 | 0.982 |
+| 2021-22 | 165 | 1 | 500 | 25407 | 25955 | 0.979 |
+| 2022-23 | 164 | 1 | 500 | 25383 | 25818 | 0.983 |
+| 2023-24 | 160 | 1 | 500 | 25766 | 26283 | 0.980 |
+| 2024-25 | 163 | 1 | 500 | 25728 | 26206 | 0.982 |
+| 2025-26 | 164 | 1 | 500 | 26135 | 26568 | 0.984 |
+
+rows 249,746; games 11,979; mean projected DK 22.05, mean actual 21.93. Rows: players with p_play > 0 in the projection who played and have mu > 0.5 (coverage is lower than 100% by the dates skipped, if any, and by deep-bench players the projection does not carry).
+
+Position coverage (G/F/C/unknown): {0: 0.467, 1: 0.393, 2: 0.14}
+
+Projection tier summary (copula role tiers):
+|  | n | mu | dk | min_proj | min_act | bias (act-proj) |
+|---|---|---|---|---|---|---|
+| star | 47054 | 38.28 | 39.08 | 32.51 | 32.96 | 0.80 |
+| role | 114976 | 23.79 | 23.10 | 26.65 | 26.31 | -0.70 |
+| bench | 87716 | 11.06 | 11.21 | 13.27 | 13.33 | 0.14 |
+
+Bias (mean actual DK - projection) by season x tier; RMSE of residual by tier:
+| season | star | role | bench |
+|---|---|---|---|
+| 2016-17 | +0.74 | -0.78 | -0.01 |
+| 2017-18 | +0.17 | -0.53 | +0.27 |
+| 2018-19 | +1.08 | -0.50 | +0.31 |
+| 2019-20 | +0.69 | -0.66 | +0.26 |
+| 2020-21 | +0.78 | -1.05 | +0.44 |
+| 2021-22 | +1.03 | -0.71 | +0.35 |
+| 2022-23 | +1.23 | -0.90 | -0.15 |
+| 2023-24 | +1.39 | -0.50 | -0.16 |
+| 2024-25 | +0.65 | -0.57 | +0.13 |
+| 2025-26 | +0.19 | -0.77 | +0.07 |
+RMSE: {'star': 11.6, 'role': 9.63, 'bench': 7.86}
+
+## 1. Teammate / opponent residual correlation, residual vs OUR projection
+Residual centred by (season, tier). 'raw' = DK points; 'z' = divided by CV(level) x level (what the copula sees). All seasons pooled; 95% CI = game-cluster bootstrap.
+
+Elasticity of the relative residual to (team pts / implied pts - 1), by tier (star, role, bench): [0.837, 0.742, 0.591]
+
+### Teammates: all pairs
+| residual | r | 95% CI | pairs |
+|---|---|---|---|
+| U raw | -0.034 | [-0.036,-0.032] | 1201406 |
+| U z | -0.033 | [-0.035,-0.031] | 1201406 |
+| P raw | -0.067 | [-0.068,-0.066] | 1201406 |
+| P z | -0.061 | [-0.062,-0.060] | 1201406 |
+| PM raw | -0.055 | [-0.056,-0.053] | 1201406 |
+| PM z | -0.043 | [-0.045,-0.042] | 1201406 |
+v1 (vs in-season mean): teammates 0.034, opponents 0.011
+
+### Teammates: by role pair (tier = projection tier at the date)
+|  | v1 | U raw | U z | U z CI | P z | P z CI | PM z | PM z CI | pairs |
+|---|---|---|---|---|---|---|---|---|---|
+| star|star | 0.048 | 0.064 | 0.068 | [+0.054,+0.080] | -0.004 | [-0.017,+0.008] | -0.126 | [-0.140,-0.113] | 23,210 |
+| star|role | 0.029 | -0.007 | -0.009 | [-0.013,-0.005] | -0.061 | [-0.065,-0.058] | -0.087 | [-0.091,-0.083] | 224,347 |
+| star|bench | -0.034 | -0.112 | -0.115 | [-0.121,-0.110] | -0.145 | [-0.152,-0.140] | -0.058 | [-0.062,-0.054] | 172,283 |
+| role|role | 0.034 | -0.024 | -0.026 | [-0.031,-0.022] | -0.060 | [-0.064,-0.056] | -0.045 | [-0.049,-0.041] | 228,333 |
+| role|bench | 0.022 | -0.057 | -0.057 | [-0.060,-0.054] | -0.075 | [-0.078,-0.072] | -0.027 | [-0.030,-0.023] | 403,382 |
+| bench|bench | 0.089 | 0.043 | 0.063 | [+0.056,+0.070] | 0.055 | [+0.048,+0.062] | 0.004 | [-0.002,+0.009] | 149,851 |
+
+### Opponents: all pairs
+| residual | r | 95% CI | pairs |
+|---|---|---|---|
+| U raw | 0.001 | [-0.001,+0.002] | 1311323 |
+| U z | 0.000 | [-0.001,+0.001] | 1311323 |
+| P raw | 0.010 | [+0.009,+0.011] | 1311323 |
+| P z | 0.008 | [+0.007,+0.009] | 1311323 |
+| PM raw | 0.015 | [+0.014,+0.016] | 1311323 |
+| PM z | 0.013 | [+0.012,+0.014] | 1311323 |
+v1 (vs in-season mean): teammates 0.034, opponents 0.011
+
+### Opponents: by role pair (tier = projection tier at the date)
+|  | v1 | U raw | U z | U z CI | P z | P z CI | PM z | PM z CI | pairs |
+|---|---|---|---|---|---|---|---|---|---|
+| star|star | 0.053 | 0.052 | 0.050 | [+0.041,+0.060] | 0.062 | [+0.052,+0.071] | -0.002 | [-0.011,+0.005] | 46,206 |
+| star|role | 0.021 | 0.010 | 0.008 | [+0.003,+0.011] | 0.022 | [+0.019,+0.026] | 0.014 | [+0.010,+0.017] | 225,798 |
+| star|bench | -0.006 | -0.032 | -0.036 | [-0.043,-0.030] | -0.033 | [-0.040,-0.027] | 0.022 | [+0.018,+0.026] | 172,190 |
+| role|role | 0.003 | -0.000 | -0.001 | [-0.006,+0.004] | 0.014 | [+0.011,+0.018] | 0.014 | [+0.011,+0.017] | 276,290 |
+| role|bench | 0.002 | -0.008 | -0.008 | [-0.011,-0.004] | -0.002 | [-0.005,+0.000] | 0.015 | [+0.013,+0.018] | 420,011 |
+| bench|bench | 0.024 | 0.026 | 0.034 | [+0.029,+0.040] | 0.034 | [+0.029,+0.041] | 0.002 | [-0.004,+0.006] | 170,828 |
+
+### Teammate / opponent correlation of the minutes and per-minute channels (U)
+| channel | teammates r | 95% CI | opponents r | 95% CI  |
+|---|---|---|---|---|
+| minutes (actual - projected) | -0.022 | [-0.025,-0.020] | 0.039 | [+0.037,+0.042] |
+| DK per minute residual | 0.001 | [-0.002,+0.003] | -0.012 | [-0.014,-0.010] |
+v1 minutes residual (vs own season mean): teammates +0.08. The avail protocol already conditions on who sits, so the absence-driven co-movement that v1 counted is gone from the residual.
+
+### Teammates by position pair (G/F/C, season roster position)
+|  | v1 (raw) | U z | U CI | PM z | PM CI | pairs |
+|---|---|---|---|---|---|---|
+| G|G | 0.026 | -0.053 | [-0.056,-0.050] | -0.055 | [-0.059,-0.052] | 245,199 |
+| G|F | 0.047 | -0.021 | [-0.024,-0.018] | -0.045 | [-0.047,-0.042] | 463,313 |
+| G|C | 0.043 | -0.012 | [-0.016,-0.008] | -0.041 | [-0.045,-0.037] | 170,051 |
+| F|F | 0.026 | -0.036 | [-0.040,-0.032] | -0.035 | [-0.039,-0.031] | 173,336 |
+| F|C | 0.012 | -0.046 | [-0.050,-0.041] | -0.031 | [-0.036,-0.027] | 133,781 |
+| C|C | -0.088 | -0.139 | [-0.155,-0.124] | -0.012 | [-0.026,+0.004] | 15,726 |
+
+### Opponents by position pair
+|  | U z | U CI | PM z | PM CI |
+|---|---|---|---|---|
+| G|G | 0.006 | [+0.004,+0.009] | 0.010 | [+0.007,+0.013] |
+| G|F | 0.003 | [+0.000,+0.006] | 0.011 | [+0.009,+0.013] |
+| G|C | -0.007 | [-0.010,-0.003] | 0.010 | [+0.005,+0.014] |
+| F|F | -0.003 | [-0.008,+0.001] | 0.015 | [+0.011,+0.019] |
+| F|C | -0.010 | [-0.015,-0.006] | 0.023 | [+0.018,+0.028] |
+| C|C | 0.005 | [-0.005,+0.015] | 0.038 | [+0.026,+0.050] |
+
+### Role pair x position pair (teammates; cells with >= 20,000 pairs; z, mode U and PM; z-score vs the tier-pair value)
+
+U: heterogeneity of the 45 cells around their tier-pair value: Q = 467.3 on ~45 df (p = 0.000; tier-pair value is estimated from the same data, so df is slightly over-stated)
+largest deviations:
+|  | r | tier-pair r | dev | se | z-score | pairs |
+|---|---|---|---|---|---|---|
+| role:G|bench:F | -0.036 | -0.057 | 0.021 | 0.004 | 5.698 | 82,386 |
+| role:G|role:G | -0.048 | -0.026 | -0.022 | 0.004 | -5.106 | 51,277 |
+| role:G|role:C | 0.001 | -0.026 | 0.027 | 0.006 | 4.697 | 28,509 |
+| star:G|role:G | -0.030 | -0.009 | -0.021 | 0.005 | -4.310 | 45,937 |
+| bench:G|bench:F | 0.083 | 0.063 | 0.020 | 0.005 | 4.179 | 57,458 |
+| star:G|bench:G | -0.138 | -0.115 | -0.022 | 0.006 | -3.979 | 35,695 |
+| role:G|bench:C | -0.035 | -0.057 | 0.022 | 0.005 | 3.935 | 33,117 |
+| role:G|bench:G | -0.070 | -0.057 | -0.013 | 0.004 | -3.464 | 82,397 |
+| star:G|role:F | 0.006 | -0.009 | 0.015 | 0.004 | 3.339 | 47,536 |
+| star:G|bench:F | -0.095 | -0.115 | 0.020 | 0.006 | 3.289 | 34,062 |
+| role:G|role:F | -0.018 | -0.026 | 0.008 | 0.003 | 2.520 | 91,622 |
+| role:F|bench:F | -0.065 | -0.057 | -0.008 | 0.004 | -2.100 | 62,900 |
+
+PM: heterogeneity of the 45 cells around their tier-pair value: Q = 194.8 on ~45 df (p = 0.000; tier-pair value is estimated from the same data, so df is slightly over-stated)
+largest deviations:
+|  | r | tier-pair r | dev | se | z-score | pairs |
+|---|---|---|---|---|---|---|
+| star:G|role:G | -0.113 | -0.087 | -0.026 | 0.005 | -5.751 | 45,937 |
+| star:G|bench:G | -0.077 | -0.058 | -0.018 | 0.005 | -4.040 | 35,695 |
+| role:F|role:F | -0.033 | -0.045 | 0.012 | 0.005 | 2.510 | 33,525 |
+| role:G|bench:C | -0.036 | -0.027 | -0.009 | 0.005 | -2.006 | 33,117 |
+| star:F|role:F | -0.077 | -0.087 | 0.010 | 0.006 | 1.814 | 26,905 |
+| role:G|bench:G | -0.034 | -0.027 | -0.007 | 0.004 | -1.805 | 82,397 |
+| star:F|role:G | -0.095 | -0.087 | -0.008 | 0.004 | -1.742 | 43,474 |
+| role:G|role:G | -0.051 | -0.045 | -0.006 | 0.004 | -1.558 | 51,277 |
+| star:F|bench:F | -0.049 | -0.058 | 0.010 | 0.006 | 1.532 | 24,459 |
+| role:G|role:F | -0.049 | -0.045 | -0.004 | 0.003 | -1.248 | 91,622 |
+| star:G|role:F | -0.092 | -0.087 | -0.005 | 0.004 | -1.214 | 47,536 |
+| role:F|role:C | -0.038 | -0.045 | 0.007 | 0.006 | 1.191 | 21,833 |
+
+## 2. Drift by season (residual vs projection; z; per-season CV and elasticity)
+
+Mode U:
+| season | team r | se | opp r | se_o | SS | SR | RR | RB | BB | SB | v1 team r |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2016-17 | -0.035 | 0.002 | -0.005 | 0.002 | 0.091 | -0.001 | -0.018 | -0.060 | 0.045 | -0.128 | 0.020 |
+| 2017-18 | -0.038 | 0.002 | -0.001 | 0.002 | 0.083 | -0.015 | -0.029 | -0.059 | 0.042 | -0.116 | 0.018 |
+| 2018-19 | -0.033 | 0.002 | 0.000 | 0.003 | 0.041 | 0.001 | -0.030 | -0.053 | 0.056 | -0.122 | 0.024 |
+| 2019-20 | -0.037 | 0.003 | -0.000 | 0.002 | 0.058 | -0.008 | -0.041 | -0.058 | 0.064 | -0.118 | 0.020 |
+| 2020-21 | -0.025 | 0.003 | 0.002 | 0.003 | 0.096 | -0.017 | -0.001 | -0.051 | 0.073 | -0.110 | 0.045 |
+| 2021-22 | -0.031 | 0.003 | 0.003 | 0.002 | 0.081 | -0.009 | -0.039 | -0.056 | 0.077 | -0.100 | 0.046 |
+| 2022-23 | -0.038 | 0.002 | -0.001 | 0.002 | 0.002 | -0.014 | -0.034 | -0.065 | 0.076 | -0.115 | 0.037 |
+| 2023-24 | -0.034 | 0.002 | -0.001 | 0.002 | 0.076 | -0.003 | -0.027 | -0.061 | 0.065 | -0.127 | 0.040 |
+| 2024-25 | -0.030 | 0.003 | 0.003 | 0.002 | 0.054 | -0.010 | -0.025 | -0.057 | 0.077 | -0.108 | 0.042 |
+| 2025-26 | -0.028 | 0.003 | 0.002 | 0.002 | 0.103 | -0.014 | -0.016 | -0.048 | 0.053 | -0.109 | 0.059 |
+teammate r: weighted mean -0.034, SD across seasons 0.004, mean SE 0.002, Cochran Q 28.6 on 9 df (p = 0.00075), trend +0.0006/season
+opponent r: weighted mean -0.000, SD across seasons 0.0024, Cochran Q 12.3 on 9 df (p = 0.199)
+
+Mode PM:
+| season | team r | se | opp r | se_o | SS | SR | RR | RB | BB | SB |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2016-17 | -0.042 | 0.002 | 0.009 | 0.002 | -0.109 | -0.082 | -0.042 | -0.026 | -0.005 | -0.058 |
+| 2017-18 | -0.045 | 0.002 | 0.011 | 0.002 | -0.139 | -0.085 | -0.049 | -0.027 | -0.004 | -0.055 |
+| 2018-19 | -0.045 | 0.002 | 0.015 | 0.002 | -0.158 | -0.086 | -0.044 | -0.026 | -0.008 | -0.061 |
+| 2019-20 | -0.047 | 0.002 | 0.016 | 0.002 | -0.148 | -0.079 | -0.059 | -0.030 | 0.015 | -0.069 |
+| 2020-21 | -0.042 | 0.002 | 0.013 | 0.002 | -0.088 | -0.095 | -0.030 | -0.031 | 0.005 | -0.055 |
+| 2021-22 | -0.045 | 0.002 | 0.017 | 0.002 | -0.113 | -0.093 | -0.047 | -0.028 | 0.012 | -0.063 |
+| 2022-23 | -0.042 | 0.002 | 0.012 | 0.002 | -0.165 | -0.089 | -0.039 | -0.024 | 0.003 | -0.054 |
+| 2023-24 | -0.042 | 0.002 | 0.013 | 0.002 | -0.145 | -0.084 | -0.049 | -0.027 | 0.015 | -0.060 |
+| 2024-25 | -0.042 | 0.002 | 0.013 | 0.002 | -0.114 | -0.091 | -0.049 | -0.027 | 0.006 | -0.047 |
+| 2025-26 | -0.040 | 0.002 | 0.011 | 0.002 | -0.070 | -0.086 | -0.042 | -0.026 | 0.019 | -0.068 |
+teammate r: weighted mean -0.043, SD across seasons 0.002, mean SE 0.002, Cochran Q 9.8 on 9 df (p = 0.368), trend +0.0004/season
+opponent r: weighted mean 0.013, SD across seasons 0.0022, Cochran Q 11.4 on 9 df (p = 0.249)
+
+## 3. Folds: seasons < S, window length and shrinkage chosen out of sample
+For each test season S and window w (last w seasons < S) the prediction is the fold's shrunk teammate table; the target is S's own raw cell r (same elasticity and CV as the fold). Metric: pair-weighted MSE over the 45 tier x position cells and, separately, 6 opponent tier pairs (lower is better; sampling noise is common to all rows).
+
+team U: MSE x 1e4 averaged over test seasons (rows: window, columns: k; 'cell' = cells shrunk to tier pair with k, 'tier-only' = cells replaced by the shrunk tier pair)
+|  | 0 | 500 | 2000 | 8000 | 32000 | 128000 |
+|---|---|---|---|---|---|---|
+| ('cell', 1) | 10.84 | 9.05 | 8.57 | 10.25 | 18.20 | 28.05 |
+| ('cell', 2) | 8.39 | 7.69 | 7.55 | 8.43 | 13.60 | 24.03 |
+| ('cell', 3) | 7.45 | 7.04 | 7.07 | 7.84 | 11.89 | 21.63 |
+| ('tier-only', 1) | 9.61 | 9.59 | 10.03 | 12.71 | 20.67 | 29.22 |
+| ('tier-only', 2) | 9.23 | 9.21 | 9.40 | 10.80 | 16.39 | 25.82 |
+| ('tier-only', 3) | 9.18 | 9.16 | 9.27 | 10.30 | 14.71 | 23.74 |
+best: w=3, k=500, cell (MSE 7.04)
+
+team PM: MSE x 1e4 averaged over test seasons (rows: window, columns: k; 'cell' = cells shrunk to tier pair with k, 'tier-only' = cells replaced by the shrunk tier pair)
+|  | 0 | 500 | 2000 | 8000 | 32000 | 128000 |
+|---|---|---|---|---|---|---|
+| ('cell', 1) | 7.74 | 5.89 | 5.44 | 6.07 | 8.70 | 12.08 |
+| ('cell', 2) | 5.97 | 5.28 | 5.00 | 5.32 | 7.12 | 10.57 |
+| ('cell', 3) | 5.28 | 4.85 | 4.72 | 5.06 | 6.54 | 9.71 |
+| ('tier-only', 1) | 5.62 | 5.61 | 5.87 | 6.97 | 9.60 | 12.52 |
+| ('tier-only', 2) | 5.37 | 5.37 | 5.48 | 6.15 | 8.10 | 11.22 |
+| ('tier-only', 3) | 5.36 | 5.37 | 5.46 | 5.96 | 7.54 | 10.47 |
+best: w=3, k=2000, cell (MSE 4.72)
+
+opp U: MSE x 1e4 averaged over test seasons (rows: window, columns: k; 'cell' = cells shrunk to tier pair with k, 'tier-only' = cells replaced by the shrunk tier pair)
+|  | 0 | 500 | 2000 | 8000 | 32000 | 128000 |
+|---|---|---|---|---|---|---|
+| ('cell', 1) | 1.17 | 1.16 | 1.21 | 1.70 | 3.07 | 4.51 |
+| ('cell', 2) | 1.36 | 1.35 | 1.37 | 1.59 | 2.51 | 4.02 |
+| ('cell', 3) | 1.31 | 1.31 | 1.34 | 1.52 | 2.28 | 3.73 |
+best: w=1, k=500, cell (MSE 1.16)
+
+opp PM: MSE x 1e4 averaged over test seasons (rows: window, columns: k; 'cell' = cells shrunk to tier pair with k, 'tier-only' = cells replaced by the shrunk tier pair)
+|  | 0 | 500 | 2000 | 8000 | 32000 | 128000 |
+|---|---|---|---|---|---|---|
+| ('cell', 1) | 0.84 | 0.81 | 0.74 | 0.63 | 0.60 | 0.68 |
+| ('cell', 2) | 0.69 | 0.67 | 0.63 | 0.55 | 0.51 | 0.59 |
+| ('cell', 3) | 0.63 | 0.62 | 0.58 | 0.50 | 0.46 | 0.52 |
+best: w=3, k=32000, cell (MSE 0.46)
+
+## 4. Consistency with T1.4 (copula v0 `fit_copula`, 2 prior seasons)
+T1.4 rho_team come from the bundle (conditional on actual minutes and team points, residual vs rate x minutes x environment, z = resid / (cv mu)); PM z below is the analogous v2 estimate from the 2 prior seasons.
+| S | ('T1.4 bundle', 'bench|bench') | ('T1.4 bundle', 'opp') | ('T1.4 bundle', 'role|role') | ('T1.4 bundle', 'star|role') | ('T1.4 bundle', 'star|star') | ('v2 PM z', 'bench|bench') | ('v2 PM z', 'opp') | ('v2 PM z', 'role|role') | ('v2 PM z', 'star|role') | ('v2 PM z', 'star|star') |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2018-19 | -0.025 | 0.006 | -0.062 | -0.097 | -0.143 | -0.006 | 0.010 | -0.046 | -0.084 | -0.125 |
+| 2019-20 | -0.028 | 0.006 | -0.062 | -0.100 | -0.146 | -0.006 | 0.013 | -0.047 | -0.086 | -0.149 |
+| 2020-21 | -0.023 | 0.006 | -0.068 | -0.101 | -0.156 | 0.002 | 0.015 | -0.051 | -0.082 | -0.154 |
+| 2021-22 | -0.015 | 0.005 | -0.066 | -0.105 | -0.155 | 0.009 | 0.014 | -0.045 | -0.087 | -0.119 |
+| 2022-23 | -0.015 | 0.004 | -0.064 | -0.107 | -0.138 | 0.008 | 0.015 | -0.039 | -0.094 | -0.102 |
+| 2023-24 | -0.019 | 0.005 | -0.064 | -0.107 | -0.149 | 0.005 | 0.015 | -0.043 | -0.091 | -0.139 |
+| 2024-25 | -0.019 | 0.004 | -0.060 | -0.109 | -0.148 | 0.010 | 0.012 | -0.044 | -0.086 | -0.155 |
+| 2025-26 | -0.018 | 0.003 | -0.064 | -0.106 | -0.123 | 0.010 | 0.013 | -0.049 | -0.088 | -0.130 |
+mean |difference| 0.017; correlation across rows 0.99
+
+## 5. Blowout curve: residual vs OUR projection by final margin
+
+Stars (tier at date)
+| bin | n | mean DK resid | 95% +/- | mean min resid | DK/min resid |
+|---|---|---|---|---|---|
+| 0-5 | 12301 | 3.195 | 0.204 | 2.454 | 0.001 |
+| 6-10 | 13010 | 2.314 | 0.195 | 1.783 | -0.002 |
+| 11-15 | 8616 | 0.659 | 0.238 | 0.452 | -0.003 |
+| 16-20 | 5614 | -1.348 | 0.287 | -1.400 | 0.004 |
+| 21-25 | 3410 | -2.860 | 0.372 | -2.673 | 0.006 |
+| 26+ | 4103 | -4.896 | 0.336 | -4.665 | 0.015 |
+
+Role players
+| bin | n | mean DK resid | 95% +/- | mean min resid | DK/min resid |
+|---|---|---|---|---|---|
+| 0-5 | 29817 | -0.187 | 0.111 | 0.588 | -0.041 |
+| 6-10 | 31628 | -0.372 | 0.107 | 0.220 | -0.037 |
+| 11-15 | 21022 | -0.681 | 0.128 | -0.335 | -0.029 |
+| 16-20 | 13819 | -1.171 | 0.155 | -1.144 | -0.016 |
+| 21-25 | 8406 | -1.412 | 0.198 | -1.637 | -0.007 |
+| 26+ | 10284 | -1.966 | 0.182 | -2.594 | 0.009 |
+
+Stars + role (starters)
+| bin | n | mean DK resid | 95% +/- | mean min resid | DK/min resid |
+|---|---|---|---|---|---|
+| 0-5 | 42118 | 0.801 | 0.099 | 1.133 | -0.029 |
+| 6-10 | 44638 | 0.411 | 0.096 | 0.675 | -0.026 |
+| 11-15 | 29638 | -0.291 | 0.115 | -0.107 | -0.021 |
+| 16-20 | 19433 | -1.222 | 0.138 | -1.218 | -0.010 |
+| 21-25 | 11816 | -1.829 | 0.177 | -1.936 | -0.003 |
+| 26+ | 14387 | -2.801 | 0.163 | -3.185 | 0.011 |
+
+Bench
+| bin | n | mean DK resid | 95% +/- | mean min resid | DK/min resid |
+|---|---|---|---|---|---|
+| 0-5 | 18577 | -0.222 | 0.116 | 0.028 | -0.061 |
+| 6-10 | 20686 | -0.239 | 0.109 | -0.108 | -0.054 |
+| 11-15 | 16889 | -0.400 | 0.116 | -0.482 | -0.044 |
+| 16-20 | 13002 | 0.001 | 0.130 | -0.294 | -0.005 |
+| 21-25 | 8272 | 0.656 | 0.160 | 0.267 | 0.041 |
+| 26+ | 10290 | 2.230 | 0.149 | 1.649 | 0.082 |
+
+Starters (stars + role) by game winner / loser, |margin| >= 16 and baseline:
+  winning team |m|>=16: n=22,747, DK resid +0.87 +/- 0.13, minutes resid -1.98
+  losing team |m|>=16: n=22,889, DK resid -4.61 +/- 0.12, minutes resid -2.07
+  close |m|<=5: n=42,118, DK resid +0.80 +/- 0.10, minutes resid +1.13
+
+Signed final margin (team perspective) x tier, mean DK residual [minutes residual]:
+| sb | star | role | bench | n |
+|---|---|---|---|---|
+| <=-21 | -8.16 [-3.76] | -4.34 [-2.17] | +0.81 [+1.46] | 21,825 |
+| -20..-11 | -3.02 [-0.35] | -2.44 [-0.80] | -0.28 [-0.20] | 39,258 |
+| -10..-4 | +1.40 [+1.91] | -0.92 [+0.29] | -0.39 [-0.11] | 46,039 |
+| -3..3 | +3.13 [+2.52] | -0.24 [+0.56] | -0.30 [+0.01] | 34,420 |
+| 4..10 | +3.78 [+1.99] | +0.32 [+0.38] | -0.02 [-0.01] | 45,560 |
+| 11..20 | +2.73 [-0.21] | +0.72 [-0.51] | -0.17 [-0.59] | 39,704 |
+| >=21 | +0.15 [-3.76] | +0.95 [-2.15] | +2.16 [+0.66] | 22,940 |
+
+PM-mode check: residual given actual minutes by |margin| bin (DK per projected minute channel only), stars+role:
+| bin | n | PM resid |
+|---|---|---|
+| 0-5 | 42118 | -0.758 |
+| 6-10 | 44638 | -0.513 |
+| 11-15 | 29638 | -0.185 |
+| 16-20 | 19433 | 0.039 |
+| 21-25 | 11816 | 0.170 |
+| 26+ | 14387 | 0.314 |
+
+## 6. Star-absence residual check (the bump is already in the projection)
+A 'star' is one of the team's two highest prior-DK players (prior minutes >= 28) who appeared in >= 7 of the last 10 team games or one of the last 3, using only earlier games. Residual = actual DK - projection (projection already knows who is out).
+| group | games | n | mean DK resid | 95% +/- | mean min resid | mean projection |
+|---|---|---|---|---|---|---|
+| top-6 by projected minutes | no star out | 110710 | 0.01 | 0.06 | 0.14 | 29.18 |
+| top-6 by projected minutes | star out | 33024 | -0.81 | 0.12 | -0.53 | 28.81 |
+| stars (proj tier 0) | no star out | 36262 | 1.23 | 0.12 | 0.79 | 38.57 |
+| stars (proj tier 0) | star out | 10792 | -0.64 | 0.22 | -0.70 | 37.30 |
+| role (proj tier 1) | no star out | 88535 | -0.63 | 0.06 | -0.28 | 23.75 |
+| role (proj tier 1) | star out | 26441 | -0.92 | 0.12 | -0.52 | 23.94 |
+| bench (proj tier 2) | no star out | 69266 | -0.05 | 0.06 | -0.19 | 10.88 |
+| bench (proj tier 2) | star out | 18450 | 0.88 | 0.13 | 1.00 | 11.77 |
+top-6: residual difference (star out - not) -0.83 +/- 0.13 DK (target: within +/-0.6; v1 raw bump was +3.1 for top-6)
+stars: residual difference (star out - not) -1.87 +/- 0.25 DK (target: within +/-0.6; v1 raw bump was +3.1 for top-6)
+By number of stars out (top-6 mean DK resid): {0: (110710, 0.01), 1: (29058, -0.73), 2: (3966, -1.42)}
+
+## 7. CV by level of the residual
+
+Mode U (level = projection mean):
+| band | n | mean level | RMS resid | CV | skew | resid p10 / p90 |
+|---|---|---|---|---|---|---|
+| (0, 10] | 35507 | 6.58 | 6.71 | 1.02 | 1.30 | -6.8 / +9.3 |
+| (10, 20] | 81301 | 15.16 | 8.44 | 0.56 | 0.67 | -10.2 / +11.1 |
+| (20, 30] | 75153 | 24.73 | 9.79 | 0.40 | 0.37 | -12.3 / +12.8 |
+| (30, 40] | 40827 | 34.37 | 11.12 | 0.32 | 0.16 | -14.1 / +14.2 |
+| (40, 50] | 13629 | 43.86 | 12.19 | 0.28 | -0.01 | -14.7 / +16.1 |
+| (50, 80] | 3329 | 54.57 | 13.78 | 0.25 | -0.12 | -14.8 / +18.7 |
+v1 (resid vs in-season mean): CV 0.79 (<=10) / 0.58 / 0.41 / 0.31 / 0.26 / 0.24 (50-80)
+
+Mode PM (level = conditional mean):
+| band | n | mean level | RMS resid | CV | skew | resid p10 / p90 |
+|---|---|---|---|---|---|---|
+| (0, 10] | 44691 | 5.25 | 3.40 | 0.65 | 0.85 | -4.3 / +3.9 |
+| (10, 20] | 74512 | 15.21 | 5.75 | 0.38 | 0.44 | -7.2 / +7.3 |
+| (20, 30] | 67334 | 24.71 | 7.37 | 0.30 | 0.31 | -9.0 / +9.9 |
+| (30, 40] | 39474 | 34.44 | 8.63 | 0.25 | 0.23 | -10.4 / +11.5 |
+| (40, 50] | 16945 | 44.14 | 9.41 | 0.21 | 0.14 | -11.6 / +12.5 |
+| (50, 80] | 6721 | 56.51 | 10.60 | 0.19 | 0.08 | -13.4 / +13.7 |
+
+CV at selected levels from the fold fit (previous 3 seasons): v2 U (projection residual), v2 PM (given actual minutes and team points), T1.4 bundle (given actual minutes and team points, its own rate model):
+| S | U @5 | U @12 | U @22 | U @35 | U @50 | PM @5 | PM @12 | PM @22 | PM @35 | PM @50 | T1.4 @5 | T1.4 @12 | T1.4 @22 | T1.4 @35 | T1.4 @50 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2017-18 | 1.26 | 0.65 | 0.41 | 0.31 | 0.26 | 0.70 | 0.41 | 0.31 | 0.24 | 0.20 | 0.72 | 0.41 | 0.30 | 0.24 | 0.20 |
+| 2018-19 | 1.28 | 0.65 | 0.41 | 0.32 | 0.26 | 0.70 | 0.42 | 0.31 | 0.24 | 0.20 | 0.72 | 0.42 | 0.31 | 0.24 | 0.20 |
+| 2019-20 | 1.30 | 0.66 | 0.42 | 0.32 | 0.27 | 0.71 | 0.42 | 0.32 | 0.24 | 0.20 | 0.73 | 0.42 | 0.31 | 0.24 | 0.20 |
+| 2020-21 | 1.36 | 0.67 | 0.43 | 0.32 | 0.27 | 0.72 | 0.43 | 0.32 | 0.25 | 0.20 | 0.73 | 0.43 | 0.32 | 0.24 | 0.20 |
+| 2021-22 | 1.38 | 0.68 | 0.43 | 0.32 | 0.27 | 0.74 | 0.43 | 0.32 | 0.25 | 0.20 | 0.74 | 0.43 | 0.31 | 0.25 | 0.20 |
+| 2022-23 | 1.42 | 0.69 | 0.43 | 0.32 | 0.26 | 0.77 | 0.43 | 0.32 | 0.25 | 0.20 | 0.75 | 0.43 | 0.31 | 0.25 | 0.20 |
+| 2023-24 | 1.41 | 0.69 | 0.43 | 0.32 | 0.26 | 0.77 | 0.43 | 0.31 | 0.25 | 0.20 | 0.75 | 0.42 | 0.31 | 0.25 | 0.20 |
+| 2024-25 | 1.42 | 0.68 | 0.43 | 0.32 | 0.26 | 0.77 | 0.42 | 0.32 | 0.25 | 0.20 | 0.75 | 0.42 | 0.31 | 0.25 | 0.20 |
+| 2025-26 | 1.40 | 0.68 | 0.43 | 0.32 | 0.26 | 0.75 | 0.43 | 0.32 | 0.25 | 0.20 | 0.75 | 0.43 | 0.31 | 0.25 | 0.20 |
+
+## 8. Team-specific effects
+
+Mode U: team-season teammate r (all pairs, z): mean -0.033, SD 0.017 over 300 team-seasons
+  split-half (odd/even games) correlation +0.246 +/- 0.106; covariance of halves 0.00011 -> implied SD of true team-level r 0.010 (half-sample sampling SD 0.022)
+  same team, adjacent seasons: corr +0.145 +/- 0.117 (n=270)
+  team-season mean residual SD 0.33 DK (mean n/season 832 rows)
+
+Mode PM: team-season teammate r (all pairs, z): mean -0.044, SD 0.014 over 300 team-seasons
+  split-half (odd/even games) correlation +0.180 +/- 0.110; covariance of halves 0.00006 -> implied SD of true team-level r 0.008 (half-sample sampling SD 0.018)
+  same team, adjacent seasons: corr +0.308 +/- 0.108 (n=270)
+  team-season mean residual SD 0.25 DK (mean n/season 832 rows)
+
+## 9. Robustness: tiers from prior played games (`tiers_to_date`) vs projection tiers
+agreement of tier labels: 81.9%; confusion (rows = projection tier, cols = to-date tier):
+tier_td  bench   role   star
+tier                        
+bench    75850  11752    114
+role     18109  89844   7023
+star       414   7906  38734
+
+Teammates, U z:
+|  | projection tier | projection tier CI | to-date tier | to-date tier CI |
+|---|---|---|---|---|
+| star|star | 0.068 | [+0.055,+0.079] | 0.056 | [+0.040,+0.069] |
+| star|role | -0.009 | [-0.013,-0.005] | -0.010 | [-0.014,-0.006] |
+| star|bench | -0.115 | [-0.120,-0.110] | -0.106 | [-0.111,-0.100] |
+| role|role | -0.026 | [-0.030,-0.022] | -0.029 | [-0.032,-0.025] |
+| role|bench | -0.057 | [-0.059,-0.054] | -0.056 | [-0.058,-0.053] |
+| bench|bench | 0.063 | [+0.055,+0.070] | 0.045 | [+0.037,+0.049] |
+
+## 9b. Robustness: regulars only (P(play) >= 0.9, projected minutes >= 15)
+180,298 of 249,746 player-games (72%)
+
+Mode U (z):
+|  | team all rows | opp all rows | team regulars | opp regulars |
+|---|---|---|---|---|
+| star|star | 0.068 | 0.050 | 0.067 | 0.050 |
+| star|role | -0.009 | 0.008 | -0.011 | 0.006 |
+| star|bench | -0.115 | -0.036 | -0.099 | -0.030 |
+| role|role | -0.026 | -0.001 | -0.035 | -0.008 |
+| role|bench | -0.057 | -0.008 | -0.054 | -0.018 |
+| bench|bench | 0.063 | 0.034 | 0.033 | -0.004 |
+| all | -0.033 | 0.000 | -0.029 | -0.002 |
+
+Mode PM (z):
+|  | team all rows | opp all rows | team regulars | opp regulars |
+|---|---|---|---|---|
+| star|star | -0.126 | -0.002 | -0.127 | -0.002 |
+| star|role | -0.087 | 0.014 | -0.087 | 0.013 |
+| star|bench | -0.058 | 0.022 | -0.062 | 0.030 |
+| role|role | -0.045 | 0.014 | -0.046 | 0.013 |
+| role|bench | -0.027 | 0.015 | -0.031 | 0.015 |
+| bench|bench | 0.004 | 0.002 | -0.021 | 0.001 |
+| all | -0.043 | 0.013 | -0.063 | 0.013 |
+
+## 10. Persisted parameters (window 3 seasons, k_tier 2000, k_cell 2000)
+| S | train | U team | U opp | PM team | PM opp | bytes |
+|---|---|---|---|---|---|---|
+| 2017-18 | 2016-17 | -0.035 | -0.005 | -0.042 | 0.009 | 23562 |
+| 2018-19 | 2016-17,2017-18 | -0.036 | -0.003 | -0.043 | 0.010 | 23663 |
+| 2019-20 | 2016-17,2017-18,2018-19 | -0.035 | -0.002 | -0.044 | 0.012 | 23728 |
+| 2020-21 | 2017-18,2018-19,2019-20 | -0.036 | -0.000 | -0.046 | 0.014 | 23706 |
+| 2021-22 | 2018-19,2019-20,2020-21 | -0.032 | 0.001 | -0.045 | 0.014 | 23686 |
+| 2022-23 | 2019-20,2020-21,2021-22 | -0.031 | 0.002 | -0.045 | 0.015 | 23685 |
+| 2023-24 | 2020-21,2021-22,2022-23 | -0.031 | 0.001 | -0.043 | 0.014 | 23694 |
+| 2024-25 | 2021-22,2022-23,2023-24 | -0.034 | 0.000 | -0.043 | 0.014 | 23711 |
+| 2025-26 | 2022-23,2023-24,2024-25 | -0.034 | 0.000 | -0.042 | 0.013 | 23705 |
+| 2026-27 | 2023-24,2024-25,2025-26 | -0.031 | 0.001 | -0.041 | 0.012 | 23713 |
+written to $COURTSIDE_DATA/proj (var/proj) as corr_<S>.json
+
+## 11. Fold matrices for the next season (train 2023-24..2025-26)
+
+Mode U: teammates all -0.031, opponents all +0.001
+| tier pair | teammate | opponent | teammate pairs |
+|---|---|---|---|
+| star|star | 0.039 | 0.036 | 7131 |
+| star|role | -0.010 | 0.010 | 69257 |
+| star|bench | -0.109 | -0.035 | 54072 |
+| role|role | -0.023 | -0.004 | 70873 |
+| role|bench | -0.055 | -0.005 | 128011 |
+| bench|bench | 0.058 | 0.037 | 49095 |
+
+Mode PM: teammates all -0.041, opponents all +0.012
+| tier pair | teammate | opponent | teammate pairs |
+|---|---|---|---|
+| star|star | -0.086 | -0.002 | 7131 |
+| star|role | -0.085 | 0.018 | 69257 |
+| star|bench | -0.057 | 0.021 | 54072 |
+| role|role | -0.046 | 0.016 | 70873 |
+| role|bench | -0.027 | 0.010 | 128011 |
+| bench|bench | 0.009 | 0.002 | 49095 |
+
+PM teammate cells (shrunk), 3x3 by position within each tier pair (rows = first-tier position):
+
+star|star:
+|  | G | F | C |
+|---|---|---|---|
+| G | -0.098 | -0.096 | -0.081 |
+| F | -0.096 | -0.100 | -0.087 |
+| C | -0.081 | -0.087 | -0.086 |
+
+star|role:
+|  | G | F | C |
+|---|---|---|---|
+| G | -0.107 | -0.090 | -0.076 |
+| F | -0.087 | -0.092 | -0.067 |
+| C | -0.070 | -0.068 | -0.083 |
+
+star|bench:
+|  | G | F | C |
+|---|---|---|---|
+| G | -0.071 | -0.067 | -0.038 |
+| F | -0.056 | -0.067 | -0.044 |
+| C | -0.048 | -0.050 | -0.043 |
+
+role|role:
+|  | G | F | C |
+|---|---|---|---|
+| G | -0.048 | -0.055 | -0.041 |
+| F | -0.055 | -0.040 | -0.034 |
+| C | -0.041 | -0.034 | -0.048 |
+
+role|bench:
+|  | G | F | C |
+|---|---|---|---|
+| G | -0.033 | -0.021 | -0.028 |
+| F | -0.025 | -0.031 | -0.018 |
+| C | -0.043 | -0.009 | -0.019 |
+
+bench|bench:
+|  | G | F | C |
+|---|---|---|---|
+| G | 0.011 | 0.018 | 0.010 |
+| F | 0.018 | 0.004 | 0.015 |
+| C | 0.010 | 0.015 | 0.001 |
+
+(U-objective best: w=3, k=500, cell)
+
+Total analysis time 41s
