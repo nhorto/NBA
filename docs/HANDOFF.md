@@ -46,12 +46,12 @@ Operational notes:
 
 **Phase 1: complete (2026-10-19, a week early).** T1.0 gate PASSES on every line (full runs): 2024-25 DK MAE +5.54% vs season-to-date (SE 0.47), 80% coverage 0.825, minutes MAE 4.57, RotoGuru 2019-20/2020-21 player MAE +2.3% vs best salary-implied; lineups 0.68 of hindsight vs 0.47–0.52 for salary-implied (`var/reports/evallite_20261019.txt`). Live model `pathA-v0.1`. Postgame job now also writes `rate_state` and runs the post-game why.
 
-**Phase 2 / 2F / 3 (as of 2026-10-19 ~16:50 ET):**
-- **Live model: `pathA-v0.2` = minutes v1** (fixed after a first deploy was rolled back; v0.5 over-projected opening week by ~4.5 min). Opener slates rebuilt on the Mac 16:45; team minutes 227–237; Wembanyama 53.0, Cade 48.4, SGA 47.4 DK.
-- Done: T2.1 backtest harness, T2.2 minutes v1, T2.3 usage v1 (built, not live), T2.5 sim step-0, T2.7 causal correlations, T3.0 nightly grading, T3.1 `/health/dfs` + DFS alerts, T3.2 `/dfs/results` upload (DK "Export lineups to CSV"; owner's entries by DK username).
-- Running: F0–F2 feature store + opponent availability/defense (ablation-gated).
-- Next ideas: make the opening-week live-path check (`var/tmp/t22/opener_check.py`) a permanent eval; T2.4 live-like slice; Phase 2.5 contest builder (ownership/field proxy, GPP portfolio, P(cash)); Path B sim (T2.6) using `research/sim_step0_targets.json`.
-- Use `TMPDIR=~/Documents/NBA/var/tmp` for tests: /tmp is a small tmpfs with a per-user quota. Never `git commit -a` while agents edit the tree.
+**Phase 2 / 2F / 3 (as of 2026-10-19 ~19:30 ET):**
+- **Live model: `pathA-v0.2` = minutes v1.** Opener slates rebuilt on the Mac after the season_of fix (f7a1b42); bundle refit (stale ones in `var/proj/stale_*`).
+- Done today: T2.1 backtest harness, T2.2 minutes v1 (+ live-path fix), T2.3 usage v1 (not live), T2.5 sim step-0, T2.7 causal correlations, T2.11 ownership proxy + simulated field (P(cash)/P(top1)/E[payout]/dupes stored per lineup; labelled proxy, optimistic), T3.0 grading, T3.1 `/health/dfs`, T3.2 `/dfs/results`, lineup sim ranges, `courtside proj live-path-eval`, F0–F2 feature store + context layer (P + F2 pass; F1 fails; **not wired live yet**).
+- **Next:** wire P+F2 into the pipeline after the opener (steps in `proj/context.py` docstring), with live-path-eval + the DK gate; usage v1 decision; T2.12 GPP portfolio / contest builder UI (T2.16); T2.13 cash P(score >= c_s) with real cash lines; F3 tracking, F4 shot quality, F5 matchups; Path B sim (T2.6).
+- **Mac disk is ~100% full (4.7 GB free)**, mostly outside this project (CI runners); our scratch is ~1.3 GB. Don't add big files there.
+- Use `TMPDIR=~/Documents/NBA/var/tmp` for tests. Never `git commit -a` while agents edit the tree.
 
 **Open items:** owner to test one DK CSV upload (numeric draftable ids vs "Name (ID)"); wire `why_v0.top_stories` into the Brief; weekly availability refit not yet scheduled; 17 in-progress + 5 stub cdn boxscores to re-fetch. Then Phase 2 (§8).
 
