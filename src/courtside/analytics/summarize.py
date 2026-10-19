@@ -18,6 +18,7 @@ import re
 from typing import Any
 
 from courtside.analytics import game_story as gs
+from courtside.analytics import winprob
 from courtside.analytics.pbp import (
     AWAY, HOME, REG_PERIODS, Event, final_score, fmt_clock, normalize, period_end, period_label,
 )
@@ -255,8 +256,53 @@ def _elapsed_label(t: float, start: bool = False) -> dict[str, str]:
 
 # ------------------------------------------------------------------------- facts
 
-def game_facts(box_payload: dict, pbp_payload: dict, win_prob: list[tuple[int, float]] | None = None) -> dict[str, Any]:
-    """The per-game facts document. Deterministic for a given pair of payloads."""
+WP_TIMELINE_POINTS = 100
+WP_TOP_PLAYS = 3
+_NOT_PLAYS = ("substitution", "timeout", "period", "game")
+
+
+def wp_facts(events: list[Event], points: list[dict[str, Any]], tc: dict[str, str],
+             names: dict[int, str], w: str | None, pregame_spread: float | None) -> dict[str, Any]:
+    """Win-probability keys for the facts document (all from the ``winprob.series`` points)."""
+    by_idx = {e.idx: e for e in events}
+    plays = []
+    for a, b in zip(points, points[1:]):
+        e = by_idx[b["idx"]]
+        if e.action_type in _NOT_PLAYS:
+            continue
+        plays.append((b["home_wp"] - a["home_wp"], a["home_wp"], e))
+    top = sorted(plays, key=lambda x: (-abs(x[0]), x[2].idx))[:WP_TOP_PLAYS]
+    biggest = []
+    for d, before, e in top:
+        if d == 0:
+            continue
+        biggest.append({
+            "description": e.description, "player": names.get(e.player_id or 0),
+            "team": e.team, "toward": tc[HOME] if d > 0 else tc[AWAY],
+            "wp_swing": round(abs(d), 3), "home_wp_before": round(before, 3),
+            "home_wp_after": round(before + d, 3), **(_when(tc, gs.moment(e)) or {})})
+    comeback = None
+    if w is not None:
+        mine = [(p["home_wp"] if w == HOME else 1.0 - p["home_wp"], p["idx"]) for p in points[1:]]
+        if mine:
+            lo, idx = min(mine, key=lambda m: (m[0], m[1]))
+            comeback = {"team": tc[w], "min_wp": round(lo, 3), "at": _when(tc, gs.moment(by_idx[idx]))}
+    return {
+        "wp_model": {"version": "winprob_v1", "pregame_spread": pregame_spread},
+        "wp_timeline": winprob.timeline(points, WP_TIMELINE_POINTS),
+        "biggest_wp_plays": biggest,
+        "excitement": round(sum(abs(d) for d, _, _ in plays), 2),
+        "comeback_wp": comeback,
+    }
+
+
+def game_facts(box_payload: dict, pbp_payload: dict, win_prob: list[tuple[int, float]] | None = None,
+               pregame_spread: float | None = None) -> dict[str, Any]:
+    """The per-game facts document. Deterministic for a given pair of payloads.
+
+    ``pregame_spread`` is the home spread (negative = home favoured, as in ``closing_lines``); it is
+    the prior of the win-probability model. ``win_prob`` overrides the model series used for the
+    turning point (``[(event_idx, p_home)]``)."""
     g = box_payload.get("game") or {}
     tc = _tricodes(box_payload)
     events = normalize(pbp_payload, box_payload)
@@ -269,7 +315,9 @@ def game_facts(box_payload: dict, pbp_payload: dict, win_prob: list[tuple[int, f
 
     garbage = gs.garbage_time(events, stints, starters)
     runs = gs.scoring_runs(events)
-    tp = gs.turning_point(events, runs, win_prob=win_prob, exclude=garbage)
+    wp_points = winprob.series(events, pregame_spread)
+    tp = gs.turning_point(events, runs, win_prob=win_prob or winprob.wp_pairs(wp_points),
+                          exclude=garbage)
     impact = gs.player_game_impact(box_payload, stints, events, garbage=garbage, runs=runs, tp=tp)
     by_id = {p["player_id"]: p for p in impact}
     leads = gs.lead_changes_and_ties(events)
@@ -322,7 +370,13 @@ def game_facts(box_payload: dict, pbp_payload: dict, win_prob: list[tuple[int, f
             r = tp["run"]
             tp_fact.update(run=r["label"], minutes=r["minutes"], **{"from": _when(tc, r["start"]), "to": _when(tc, r["end"])})
         if tp.get("wp_swing") is not None:
-            tp_fact.update(wp_swing=tp["wp_swing"], at=_when(tc, tp["at"]), description=tp["description"])
+            tp_fact.update(wp_swing=tp["wp_swing"], at=_when(tc, tp["at"]), description=tp["description"],
+                           wp_before=tp.get("wp_before"), wp_after=tp.get("wp_after"))
+            kp = tp.get("key_play")
+            if kp:
+                tp_fact["key_play"] = {"description": kp["description"],
+                                       "player": names.get(kp["player_id"] or 0),
+                                       "wp_swing": kp["wp_swing"], **_when(tc, kp)}
 
     # clutch
     clutch_fact: dict[str, Any] = {"seconds": cl["seconds"], "had_clutch": cl["seconds"] > 0}
@@ -387,4 +441,5 @@ def game_facts(box_payload: dict, pbp_payload: dict, win_prob: list[tuple[int, f
         "notable_lines": notable,
         "incidents": incidents(events, stints, impact, garbage, names, tc),
         "validation": report.summary(),
+        **wp_facts(events, wp_points, tc, names, w, pregame_spread),
     }

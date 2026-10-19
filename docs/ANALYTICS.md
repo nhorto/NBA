@@ -9,7 +9,9 @@ pbp.normalize(pbp, box)            -> list[Event]
 stints.build_rotation(events, box) -> Rotation(stints, starters, anomalies)
 stints.validate_stints(box, stints)-> ValidationReport          (the correctness gate)
 game_story.*                       -> runs, leads, comeback, clutch, garbage time, impact, turning point
-summarize.game_facts(box, pbp)     -> dict (JSON facts document for the Brief writer)
+winprob.series(events, spread)     -> in-game win probability per event (section 5)
+summarize.game_facts(box, pbp, win_prob=None, pregame_spread=None)
+                                   -> dict (JSON facts document for the Brief writer)
 ```
 
 ## 1. Events (`pbp.py`)
@@ -149,16 +151,21 @@ There is also a starter condition: **≤ 2 of the game's starters (both teams co
   non-garbage run otherwise.
 
 **Turning point** (`turning_point(events, runs=None, win_prob=None, exclude=garbage)`):
-- **Placeholder** (`method: "run"`). Among the winner's non-garbage runs, ranked by net margin, it takes
-  the first that does one of these:
-  - flips the lead (`flipped_lead`);
-  - creates a lead never relinquished (`created_winning_margin`);
-  - levels the game from behind (`levelled`).
-
-  Otherwise it falls back to the winner's largest run.
-- **Win-probability interface**: pass `win_prob=[(event_idx, p_home), ...]`. It returns the largest
-  swing toward the eventual winner between consecutive points (`method: "win_probability"`,
-  `wp_swing`), plus the run containing it.
+- **With a win-probability series** (`method: "win_probability"`, the default in `game_facts`): the
+  *stretch* with the largest gain in the eventual winner's win probability. A stretch is a single play
+  or any run of plays spanning at most `WP_WINDOW` = 180 s of game clock (adjacent points always qualify).
+  Ties go to the shorter, then earlier stretch. The result carries:
+  - `wp_swing` (the winner's WP gain), `wp_before`, `wp_after` (winner's WP);
+  - `at`: the moment the stretch ends;
+  - `key_play`: the single play with the biggest WP step inside the stretch, and `description` (its text);
+  - `run`: the points both teams scored during the stretch (`"9-2"`), `minutes`, `start` (the score going in);
+  - `reason`: `flipped_lead`, `levelled`, `created_winning_margin` (ahead after, never trailed again),
+    otherwise `swing`.
+- **Placeholder** (`method: "run"`, only without `win_prob`): among the winner's non-garbage runs, ranked by
+  net margin, the first that flips the lead, creates a lead never relinquished, or levels the game from
+  behind. Otherwise the winner's largest run.
+- Garbage-time exclusion is not applied to the WP method: a blowout has no meaningful WP swing late.
+- `win_prob=[(event_idx, p_home), ...]` can be passed to `turning_point` or `game_facts` to override the model.
 
 ## 4. Facts document (`summarize.game_facts`)
 
@@ -169,7 +176,8 @@ snapshot lives in `tests/fixtures/analytics/facts_0022501066.json`; regenerate i
 
 Keys: `schema, game_id, date, arena, home, away (team, name, score, periods[]), winner, margin,
 overtimes, top_performers, unsung_hero, runs, turning_point, clutch, lead_changes, times_tied,
-largest_lead, comeback, garbage_time, notable_lines, incidents, validation`.
+largest_lead, comeback, garbage_time, notable_lines, incidents, validation`, plus the win-probability
+keys from section 5: `wp_model, wp_timeline, biggest_wp_plays, excitement, comeback_wp`.
 
 - **Top performers** are the two best Game Scores per team.
 - **Unsung hero candidates** (up to 3; winning team first, then by score):
@@ -209,6 +217,96 @@ largest_lead, comeback, garbage_time, notable_lines, incidents, validation`.
 - **validation** carries the stint-gate summary, so the writer and the fact-check pass can refuse
   games that fail it.
 
+## 5. Win probability (`winprob.py`)
+
+`winprob.series(events, pregame_spread) -> [{idx, period, elapsed, margin, home_wp}]`, one point per
+event, with the state *after* the event. `pregame_spread` is the home spread in betting convention
+(negative = home favoured, as in `closing_lines`); `None` means a pick'em.
+
+**State.** Home margin `m`, seconds left `t` (to the end of the 4th in regulation, to the end of that
+period in OT; a tie at 0:00 of regulation counts as `t = 300`, the coming OT), the expected home margin
+`e = -home_spread`, the period, and the possession `poss` (+1 home ball, -1 away, 0 unknown). Possession
+is derived from the counted possession ends (the ball goes to the other team after a made basket,
+defensive rebound or turnover; jump balls follow the feed). The feed's own `possession` field is not used:
+it names the team that last acted, which is the wrong team after a made shot.
+
+**Model.** Logistic regression, no intercept, every feature odd under swapping the teams, so the model is
+exactly symmetric (tied, pick'em, tip-off = 50.0%). With `u = sqrt(t + 4)`:
+
+| feature | meaning |
+|---|---|
+| `m/u` | score margin in Brownian-motion units |
+| `e·(t/2880)/u` | the pregame spread, decaying linearly with the time left |
+| `poss/u`, `poss·exp(-t/20)`, `poss·exp(-t/120)` | value of the ball, strongest late |
+| `m/(t+20)` | discrete scoring effects in the last minutes |
+| `poss·exp(-t/30)/(1+|m|)` | the ball matters most in a close endgame |
+| `m/u · [OT]` | different scoring variance in overtime |
+
+At 0:00 with the game not tied the series is set to exactly 0 or 1 (the game is over).
+
+**Data and training.** `courtside backfill pbp --from 2019-20 --to 2025-26` archives the cdn
+play-by-play (same layout as postgame: `raw/nba_cdn/playbyplay/{nba_day}/{game_id}.json.gz`, resumable,
+cdn throttle). The cdn only has 2019-20 onward (2017-18 and 2018-19 answer 403 for every id), and has
+holes inside seasons (weeks of missing ids). `courtside winprob train` samples a state after every scoring
+event, possession end and period boundary, attaches the consensus closing spread (0 if none), fits on the
+seasons before `--test-season` (2025-26) and reports on it. Coefficients are committed in
+`src/courtside/analytics/winprob_coef.json` (production never retrains) and copied with the held-out
+metrics to `var/models/winprob_v1.json|npz`.
+
+**Data on disk.** 8,647 of 8,916 games in 2019-20..2025-26 are archived (271 MB of gzip JSON, about
+31 KB a game). The other 269 are all in 2019-20: 267 ids the cdn doesn't have (games from about
+2020-02-01 to the March shutdown; a rerun confirms they stay 403) and 2 whose payload is malformed JSON.
+The model trains on 8,635 games (1.93 M sampled states); 8,634 of them have a closing line.
+
+**Held-out result** (fit on 2019-20..2024-25 = 7,319 games, tested on 2025-26 = 1,316 games, 298,615 states):
+log-loss **0.4302**, Brier **0.1433**. Calibration by time left (regulation; "pred" and "actual" are the
+home win rate):
+
+| time left | states | pred | actual | Brier | worst decile gap |
+|---|---|---|---|---|---|
+| Q1 | 75,741 | 0.556 | 0.558 | 0.191 | 0.050 |
+| Q2 | 74,861 | 0.551 | 0.555 | 0.167 | 0.053 |
+| Q3 | 74,741 | 0.550 | 0.556 | 0.134 | 0.025 |
+| Q4, more than 5:00 | 39,147 | 0.542 | 0.555 | 0.097 | 0.045 |
+| Q4, 5:00-1:00 | 23,476 | 0.543 | 0.557 | 0.062 | 0.076 |
+| last 1:00 | 8,952 | 0.538 | 0.545 | 0.029 | 0.027 |
+| overtime | 1,697 | 0.541 | 0.582 | 0.145 | n/a |
+
+Per season the Brier ranges from 0.142 to 0.159 with the same coefficients (that is outcome variance, not
+drift). Mid-range probabilities (0.1-0.5) run 2-4 points too low and 0.7-0.9 about 2 points too high in
+2025-26: the model is slightly overconfident away from 50%. Dropping the oldest seasons from training does
+not change the result.
+
+**Sanity values** (`winprob.sanity_cases`, asserted in `tests/test_winprob.py`):
+
+| state | home WP |
+|---|---|
+| tied at tip-off, spread 0 | 0.500 |
+| tied at the start of Q4 / of OT, spread 0 | 0.500 / 0.500 |
+| home favoured by 7, tied at tip-off | 0.726 |
+| up 3, 5 s left, home has the ball | 0.996 |
+| up 3, 5 s left, away has the ball | 0.982 |
+| down 3, 5 s left, home has the ball | 0.018 |
+| up 1, 30 s left, home ball | 0.763 |
+| up 10 with 5:00 / 2:00 left | 0.930 / 0.983 |
+| up 20 at halftime | 0.914 |
+
+Weak spots: the last two seconds (a lone possession with 0.4 s left is still given ~12% when trailing by
+1; the empirical rate is about 3%), and trailing by 2-3 inside 30 seconds, where the model is a few points
+too pessimistic (it knows nothing about timeouts and fouling).
+
+**Facts keys** (`game_facts(box, pbp, win_prob=None, pregame_spread=None)`; postgame passes the consensus
+closing line, else the last pre-tip odds snapshot, else none):
+- `wp_timeline`: about 100 `{elapsed, margin, home_wp}` points, evenly spaced in elapsed seconds, for the chart;
+- `biggest_wp_plays`: the top 3 single plays by |ΔWP| (substitutions, timeouts and period markers excluded):
+  `description, player, team, toward` (the team the play helped), `wp_swing`, `home_wp_before/after`, and
+  the time/score;
+- `excitement`: the sum of |ΔWP| over all plays (the 54-point NYK blowout scores 1.8; the one-possession
+  fixtures 7.9-12.5, the 2OT game being the highest);
+- `comeback_wp`: the winner's lowest win probability, `{team, min_wp, at}`;
+- `wp_model`: `{version, pregame_spread}`;
+- `turning_point` now uses the WP method (section 3).
+
 ## Known limitations
 
 - **Injuries:** the cdn PBP has no injury event. The heuristic misses 2nd-half injuries and can flag
@@ -221,16 +319,18 @@ largest_lead, comeback, garbage_time, notable_lines, incidents, validation`.
   only, so a 30-point 3rd-quarter rout is never garbage time.
 - **On/off is noisy** in a single game. Shrinkage dampens it but doesn't fix it. Season-level
   aggregation is the real use.
-- **Turning point** is run-based until the win-probability model exists. A big early run that
+- **Turning point** (placeholder `run` method, only used without a WP series): a big early run that
   "flipped the lead" in a blowout (e.g. NYK's 20–5 in Q1) is selected even though the game was
   decided gradually.
+- **Win probability** is a logistic model on score, time, possession and the closing spread. It has no
+  lineup, foul-trouble or team-quality information beyond the spread, and the spread is 0 when no line was
+  archived. Possession is unknown (0) between a period start and the first action. Timeouts and
+  intentional fouls are not modelled, so the last 30 seconds are a little overconfident for the leader.
 - **Starters** come from the boxscore. If the feed ever omits `starter` flags, period 1 falls back to
   evidence plus residual fill.
 
 ## Next
 
-- A **win-probability model** trained on historical PBP (score margin, time, possession, pregame spread
-  prior), feeding `turning_point(win_prob=...)` and "biggest swing" plays.
 - **Season-level player impact** aggregation (rolling on/off, non-garbage +/- per 100, TS% vs baseline)
   for the Player-pulse hot/cold section.
 - **Role-change detection** from stints: new starter, minutes and closing-lineup share jumping, and

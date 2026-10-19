@@ -11,6 +11,53 @@
   "score": 114,
   "team": "LAC"
  },
+ "biggest_wp_plays": [
+  {
+   "clock": "0:01",
+   "description": "K. Leonard 7' pullup Jump Shot (28 PTS) (B. Mathurin 1 AST)",
+   "home_wp_after": 0.133,
+   "home_wp_before": 0.787,
+   "label": "Q4",
+   "player": "Kawhi Leonard",
+   "score": {
+    "IND": 113,
+    "LAC": 114
+   },
+   "team": "LAC",
+   "toward": "LAC",
+   "wp_swing": 0.654
+  },
+  {
+   "clock": "0:07.1",
+   "description": "B. Lopez REBOUND (Off:2 Def:7)",
+   "home_wp_after": 0.707,
+   "home_wp_before": 0.861,
+   "label": "Q4",
+   "player": "Brook Lopez",
+   "score": {
+    "IND": 113,
+    "LAC": 112
+   },
+   "team": "LAC",
+   "toward": "LAC",
+   "wp_swing": 0.154
+  },
+  {
+   "clock": "2:37",
+   "description": "O. Toppin 24' 3PT  (18 PTS) (A. Nembhard 10 AST)",
+   "home_wp_after": 0.77,
+   "home_wp_before": 0.63,
+   "label": "Q4",
+   "player": "Obi Toppin",
+   "score": {
+    "IND": 108,
+    "LAC": 104
+   },
+   "team": "IND",
+   "toward": "IND",
+   "wp_swing": 0.14
+  }
+ ],
  "clutch": {
   "had_clutch": true,
   "key_plays": [
@@ -136,7 +183,20 @@
   "deficit": 24,
   "team": "LAC"
  },
+ "comeback_wp": {
+  "at": {
+   "clock": "0:33.7",
+   "label": "Q4",
+   "score": {
+    "IND": 113,
+    "LAC": 110
+   }
+  },
+  "min_wp": 0.067,
+  "team": "LAC"
+ },
  "date": "2026-03-27",
+ "excitement": 7.97,
  "game_id": "0022501066",
  "garbage_time": {
   "seconds": 0.0
@@ -393,27 +453,50 @@
   }
  ],
  "turning_point": {
-  "from": {
-   "clock": "8:54",
+  "at": {
+   "clock": "0:00",
    "label": "Q4",
    "score": {
-    "IND": 97,
-    "LAC": 88
+    "IND": 113,
+    "LAC": 114
    }
   },
-  "method": "run",
-  "minutes": 2.7,
-  "reason": "levelled",
-  "run": "13-4",
-  "team": "LAC",
-  "to": {
-   "clock": "6:13",
+  "description": "K. Leonard 7' pullup Jump Shot (28 PTS) (B. Mathurin 1 AST)",
+  "from": {
+   "clock": "0:31.3",
    "label": "Q4",
    "score": {
-    "IND": 101,
-    "LAC": 101
+    "IND": 113,
+    "LAC": 110
    }
-  }
+  },
+  "key_play": {
+   "clock": "0:01",
+   "description": "K. Leonard 7' pullup Jump Shot (28 PTS) (B. Mathurin 1 AST)",
+   "label": "Q4",
+   "player": "Kawhi Leonard",
+   "score": {
+    "IND": 113,
+    "LAC": 114
+   },
+   "wp_swing": 0.654
+  },
+  "method": "win_probability",
+  "minutes": 0.5,
+  "reason": "flipped_lead",
+  "run": "4-0",
+  "team": "LAC",
+  "to": {
+   "clock": "0:00",
+   "label": "Q4",
+   "score": {
+    "IND": 113,
+    "LAC": 114
+   }
+  },
+  "wp_after": 1.0,
+  "wp_before": 0.067,
+  "wp_swing": 0.933
  },
  "unsung_hero": [
   {
@@ -432,7 +515,7 @@
     "+10 on the floor",
     "team +43.5 per 100 better with him on",
     "70% TS",
-    "+7 during the decisive run"
+    "+14 during the decisive run"
    ],
    "winner": true
   },
@@ -451,7 +534,7 @@
    "why": [
     "+2 on the floor",
     "team +5.8 per 100 better with him on",
-    "+9 during the decisive run"
+    "+8 during the decisive run"
    ],
    "winner": true
   },
@@ -484,5 +567,511 @@
   "players": 22,
   "plus_minus_mismatches": 0
  },
- "winner": "LAC"
+ "winner": "LAC",
+ "wp_model": {
+  "pregame_spread": null,
+  "version": "winprob_v1"
+ },
+ "wp_timeline": [
+  {
+   "elapsed": 0.0,
+   "home_wp": 0.5,
+   "margin": 0
+  },
+  {
+   "elapsed": 29.1,
+   "home_wp": 0.4494,
+   "margin": -3
+  },
+  {
+   "elapsed": 58.2,
+   "home_wp": 0.4878,
+   "margin": 0
+  },
+  {
+   "elapsed": 87.3,
+   "home_wp": 0.4455,
+   "margin": -2
+  },
+  {
+   "elapsed": 116.4,
+   "home_wp": 0.4876,
+   "margin": 0
+  },
+  {
+   "elapsed": 145.5,
+   "home_wp": 0.4239,
+   "margin": -3
+  },
+  {
+   "elapsed": 174.5,
+   "home_wp": 0.4875,
+   "margin": 0
+  },
+  {
+   "elapsed": 203.6,
+   "home_wp": 0.4874,
+   "margin": 0
+  },
+  {
+   "elapsed": 232.7,
+   "home_wp": 0.5524,
+   "margin": 3
+  },
+  {
+   "elapsed": 261.8,
+   "home_wp": 0.5778,
+   "margin": 3
+  },
+  {
+   "elapsed": 290.9,
+   "home_wp": 0.6171,
+   "margin": 6
+  },
+  {
+   "elapsed": 320.0,
+   "home_wp": 0.6178,
+   "margin": 6
+  },
+  {
+   "elapsed": 349.1,
+   "home_wp": 0.6823,
+   "margin": 8
+  },
+  {
+   "elapsed": 378.2,
+   "home_wp": 0.6637,
+   "margin": 7
+  },
+  {
+   "elapsed": 407.3,
+   "home_wp": 0.6812,
+   "margin": 9
+  },
+  {
+   "elapsed": 436.4,
+   "home_wp": 0.682,
+   "margin": 9
+  },
+  {
+   "elapsed": 465.5,
+   "home_wp": 0.7592,
+   "margin": 12
+  },
+  {
+   "elapsed": 494.5,
+   "home_wp": 0.7765,
+   "margin": 13
+  },
+  {
+   "elapsed": 523.6,
+   "home_wp": 0.7777,
+   "margin": 13
+  },
+  {
+   "elapsed": 552.7,
+   "home_wp": 0.8064,
+   "margin": 16
+  },
+  {
+   "elapsed": 581.8,
+   "home_wp": 0.778,
+   "margin": 14
+  },
+  {
+   "elapsed": 610.9,
+   "home_wp": 0.8238,
+   "margin": 17
+  },
+  {
+   "elapsed": 640.0,
+   "home_wp": 0.8274,
+   "margin": 16
+  },
+  {
+   "elapsed": 669.1,
+   "home_wp": 0.8523,
+   "margin": 19
+  },
+  {
+   "elapsed": 698.2,
+   "home_wp": 0.8762,
+   "margin": 21
+  },
+  {
+   "elapsed": 727.3,
+   "home_wp": 0.8836,
+   "margin": 21
+  },
+  {
+   "elapsed": 756.4,
+   "home_wp": 0.8909,
+   "margin": 21
+  },
+  {
+   "elapsed": 785.5,
+   "home_wp": 0.8808,
+   "margin": 21
+  },
+  {
+   "elapsed": 814.5,
+   "home_wp": 0.9109,
+   "margin": 23
+  },
+  {
+   "elapsed": 843.6,
+   "home_wp": 0.9122,
+   "margin": 23
+  },
+  {
+   "elapsed": 872.7,
+   "home_wp": 0.9052,
+   "margin": 22
+  },
+  {
+   "elapsed": 901.8,
+   "home_wp": 0.8883,
+   "margin": 20
+  },
+  {
+   "elapsed": 930.9,
+   "home_wp": 0.8682,
+   "margin": 18
+  },
+  {
+   "elapsed": 960.0,
+   "home_wp": 0.87,
+   "margin": 18
+  },
+  {
+   "elapsed": 989.1,
+   "home_wp": 0.8931,
+   "margin": 20
+  },
+  {
+   "elapsed": 1018.2,
+   "home_wp": 0.9025,
+   "margin": 22
+  },
+  {
+   "elapsed": 1047.3,
+   "home_wp": 0.8844,
+   "margin": 20
+  },
+  {
+   "elapsed": 1076.4,
+   "home_wp": 0.9071,
+   "margin": 21
+  },
+  {
+   "elapsed": 1105.5,
+   "home_wp": 0.8767,
+   "margin": 19
+  },
+  {
+   "elapsed": 1134.5,
+   "home_wp": 0.8271,
+   "margin": 14
+  },
+  {
+   "elapsed": 1163.6,
+   "home_wp": 0.8406,
+   "margin": 16
+  },
+  {
+   "elapsed": 1192.7,
+   "home_wp": 0.8309,
+   "margin": 14
+  },
+  {
+   "elapsed": 1221.8,
+   "home_wp": 0.7995,
+   "margin": 12
+  },
+  {
+   "elapsed": 1250.9,
+   "home_wp": 0.8491,
+   "margin": 15
+  },
+  {
+   "elapsed": 1280.0,
+   "home_wp": 0.8198,
+   "margin": 13
+  },
+  {
+   "elapsed": 1309.1,
+   "home_wp": 0.8499,
+   "margin": 16
+  },
+  {
+   "elapsed": 1338.2,
+   "home_wp": 0.8794,
+   "margin": 18
+  },
+  {
+   "elapsed": 1367.3,
+   "home_wp": 0.8706,
+   "margin": 16
+  },
+  {
+   "elapsed": 1396.4,
+   "home_wp": 0.8124,
+   "margin": 12
+  },
+  {
+   "elapsed": 1425.5,
+   "home_wp": 0.7929,
+   "margin": 12
+  },
+  {
+   "elapsed": 1454.5,
+   "home_wp": 0.7534,
+   "margin": 10
+  },
+  {
+   "elapsed": 1483.6,
+   "home_wp": 0.7123,
+   "margin": 7
+  },
+  {
+   "elapsed": 1512.7,
+   "home_wp": 0.6631,
+   "margin": 5
+  },
+  {
+   "elapsed": 1541.8,
+   "home_wp": 0.664,
+   "margin": 5
+  },
+  {
+   "elapsed": 1570.9,
+   "home_wp": 0.6378,
+   "margin": 4
+  },
+  {
+   "elapsed": 1600.0,
+   "home_wp": 0.6897,
+   "margin": 7
+  },
+  {
+   "elapsed": 1629.1,
+   "home_wp": 0.6413,
+   "margin": 4
+  },
+  {
+   "elapsed": 1658.2,
+   "home_wp": 0.608,
+   "margin": 4
+  },
+  {
+   "elapsed": 1687.3,
+   "home_wp": 0.696,
+   "margin": 7
+  },
+  {
+   "elapsed": 1716.4,
+   "home_wp": 0.6755,
+   "margin": 5
+  },
+  {
+   "elapsed": 1745.5,
+   "home_wp": 0.6167,
+   "margin": 3
+  },
+  {
+   "elapsed": 1774.5,
+   "home_wp": 0.6795,
+   "margin": 5
+  },
+  {
+   "elapsed": 1803.6,
+   "home_wp": 0.6148,
+   "margin": 4
+  },
+  {
+   "elapsed": 1832.7,
+   "home_wp": 0.6163,
+   "margin": 4
+  },
+  {
+   "elapsed": 1861.8,
+   "home_wp": 0.5892,
+   "margin": 2
+  },
+  {
+   "elapsed": 1890.9,
+   "home_wp": 0.6185,
+   "margin": 4
+  },
+  {
+   "elapsed": 1920.0,
+   "home_wp": 0.7215,
+   "margin": 6
+  },
+  {
+   "elapsed": 1949.1,
+   "home_wp": 0.7527,
+   "margin": 7
+  },
+  {
+   "elapsed": 1978.2,
+   "home_wp": 0.7777,
+   "margin": 9
+  },
+  {
+   "elapsed": 2007.3,
+   "home_wp": 0.7302,
+   "margin": 6
+  },
+  {
+   "elapsed": 2036.4,
+   "home_wp": 0.6692,
+   "margin": 4
+  },
+  {
+   "elapsed": 2065.5,
+   "home_wp": 0.6712,
+   "margin": 4
+  },
+  {
+   "elapsed": 2094.5,
+   "home_wp": 0.5168,
+   "margin": 1
+  },
+  {
+   "elapsed": 2123.6,
+   "home_wp": 0.6359,
+   "margin": 4
+  },
+  {
+   "elapsed": 2152.7,
+   "home_wp": 0.6381,
+   "margin": 4
+  },
+  {
+   "elapsed": 2181.8,
+   "home_wp": 0.6077,
+   "margin": 2
+  },
+  {
+   "elapsed": 2210.9,
+   "home_wp": 0.6432,
+   "margin": 4
+  },
+  {
+   "elapsed": 2240.0,
+   "home_wp": 0.6926,
+   "margin": 4
+  },
+  {
+   "elapsed": 2269.1,
+   "home_wp": 0.6957,
+   "margin": 4
+  },
+  {
+   "elapsed": 2298.2,
+   "home_wp": 0.7378,
+   "margin": 5
+  },
+  {
+   "elapsed": 2327.3,
+   "home_wp": 0.8071,
+   "margin": 7
+  },
+  {
+   "elapsed": 2356.4,
+   "home_wp": 0.8144,
+   "margin": 7
+  },
+  {
+   "elapsed": 2385.5,
+   "home_wp": 0.7523,
+   "margin": 5
+  },
+  {
+   "elapsed": 2414.5,
+   "home_wp": 0.7146,
+   "margin": 5
+  },
+  {
+   "elapsed": 2443.6,
+   "home_wp": 0.7199,
+   "margin": 5
+  },
+  {
+   "elapsed": 2472.7,
+   "home_wp": 0.6799,
+   "margin": 4
+  },
+  {
+   "elapsed": 2501.8,
+   "home_wp": 0.5806,
+   "margin": 2
+  },
+  {
+   "elapsed": 2530.9,
+   "home_wp": 0.465,
+   "margin": 0
+  },
+  {
+   "elapsed": 2560.0,
+   "home_wp": 0.5367,
+   "margin": 0
+  },
+  {
+   "elapsed": 2589.1,
+   "home_wp": 0.4614,
+   "margin": 0
+  },
+  {
+   "elapsed": 2618.2,
+   "home_wp": 0.4592,
+   "margin": 0
+  },
+  {
+   "elapsed": 2647.3,
+   "home_wp": 0.5999,
+   "margin": 2
+  },
+  {
+   "elapsed": 2676.4,
+   "home_wp": 0.7406,
+   "margin": 4
+  },
+  {
+   "elapsed": 2705.5,
+   "home_wp": 0.6303,
+   "margin": 1
+  },
+  {
+   "elapsed": 2734.5,
+   "home_wp": 0.77,
+   "margin": 4
+  },
+  {
+   "elapsed": 2763.6,
+   "home_wp": 0.8003,
+   "margin": 4
+  },
+  {
+   "elapsed": 2792.7,
+   "home_wp": 0.9273,
+   "margin": 6
+  },
+  {
+   "elapsed": 2821.8,
+   "home_wp": 0.924,
+   "margin": 5
+  },
+  {
+   "elapsed": 2850.9,
+   "home_wp": 0.7599,
+   "margin": 1
+  },
+  {
+   "elapsed": 2880.0,
+   "home_wp": 0.0,
+   "margin": -1
+  }
+ ]
 }

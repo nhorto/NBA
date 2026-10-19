@@ -34,7 +34,7 @@ def facts(gid):
 def test_facts_are_json_serializable_compact_and_deterministic(gid):
     f = facts(gid)
     s = json.dumps(f, sort_keys=True, allow_nan=False)
-    assert len(s) < 12_000
+    assert len(s) < 16_000
     box, pbp = load(gid)
     again = game_facts(copy.deepcopy(box), copy.deepcopy(pbp))
     assert json.dumps(again, sort_keys=True) == s
@@ -78,7 +78,10 @@ def test_specific_game_facts():
     assert f["winner"] == "LAC" and f["margin"] == 1
     assert f["comeback"] == {"team": "LAC", "deficit": 24,
                              "at": {"label": "Q2", "clock": "9:55", "score": {"IND": 45, "LAC": 21}}}
-    assert f["turning_point"]["team"] == "LAC" and f["turning_point"]["run"] == "13-4"
+    # win-probability turning point: LAC's last 31 seconds (WP 8% -> win); the old run-based
+    # placeholder picked the Q4 13-4 run (8:54-6:13) that levelled the game (still tested in test_analytics_story)
+    assert f["turning_point"]["team"] == "LAC" and f["turning_point"]["method"] == "win_probability"
+    assert f["turning_point"]["run"] == "4-0" and f["turning_point"]["reason"] == "flipped_lead"
     decisive = [k for k in f["clutch"]["key_plays"] if k.get("decisive")]
     assert decisive and decisive[0]["player"] == "Kawhi Leonard"
     assert any(n["name"] == "Darius Garland" and "30_point_game" in n["flags"] for n in f["notable_lines"])

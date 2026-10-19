@@ -479,6 +479,22 @@ def _team_games_fallback(conn: sqlite3.Connection, day: date) -> list[dict]:
     return [{"game_id": g, "espn_id": None, "status": "final", "tipoff_utc": None} for g in ids]
 
 
+def pregame_spread(conn: sqlite3.Connection, game_id: str) -> float | None:
+    """Home spread (negative = home favoured) used as the win-probability prior: the consensus
+    closing line if there is one, else the latest odds snapshot captured before tip-off, else
+    None (the model then assumes a pick'em)."""
+    from . import odds_history
+    line = odds_history.consensus_line(conn, game_id)
+    if line and line.get("home_spread") is not None:
+        return float(line["home_spread"])
+    row = conn.execute(
+        "SELECT o.home_spread FROM odds_snapshots o LEFT JOIN games g ON g.game_id = o.game_id "
+        "WHERE o.game_id = ? AND o.home_spread IS NOT NULL "
+        "AND (g.tipoff_utc IS NULL OR o.captured_at <= g.tipoff_utc) "
+        "ORDER BY o.captured_at DESC LIMIT 1", (game_id,)).fetchone()
+    return float(row[0]) if row else None
+
+
 def _facts_step(conn: sqlite3.Connection, run: _Run, day: date, *, force: bool = False) -> dict:
     """game_facts for every archived final game of `day`. A failure on one game is logged and
     recorded (never fatal, and does not mark the job failed)."""
@@ -495,7 +511,9 @@ def _facts_step(conn: sqlite3.Connection, run: _Run, day: date, *, force: bool =
         try:
             box = archive.load_raw(archive.raw_path("nba_cdn", "boxscore", day, gid))
             pbp = archive.load_raw(archive.raw_path("nba_cdn", "playbyplay", day, gid))
-            facts = summarize.game_facts(box, pbp)
+            spread = pregame_spread(conn, gid)
+            facts = (summarize.game_facts(box, pbp) if spread is None
+                     else summarize.game_facts(box, pbp, pregame_spread=spread))
             payload = json.dumps(facts, allow_nan=False, default=str)
             with conn:
                 conn.execute(

@@ -36,6 +36,18 @@ def build_parser() -> argparse.ArgumentParser:
     gl.add_argument("--no-advanced", action="store_true", help="skip advanced-stat endpoints")
     gl.add_argument("--force", action="store_true", help="re-fetch even if already archived")
 
+    pb = bf.add_parser("pbp", help="play-by-play from cdn.nba.com (win-probability training data)")
+    pb.add_argument("--from", dest="start", default="2019-20", help="first season (cdn has 2019-20+)")
+    pb.add_argument("--to", dest="end", default="2025-26", help="last season, e.g. 2025-26")
+
+    wp = sub.add_parser("winprob", help="in-game win-probability model").add_subparsers(
+        dest="wp_cmd", required=True)
+    wt = wp.add_parser("train", help="fit on seasons before --test-season, test on it, write coefs")
+    wt.add_argument("--test-season", default="2025-26")
+    wt.add_argument("--no-write", action="store_true", help="report only; keep the shipped coefficients")
+    wt.add_argument("--final", action="store_true",
+                    help="write coefficients refit on ALL seasons (after validating the split)")
+
     md = sub.add_parser("model", help="prediction model").add_subparsers(
         dest="model_cmd", required=True)
     bt = md.add_parser("backtest", help="walk-forward-by-season backtest")
@@ -58,6 +70,18 @@ def build_parser() -> argparse.ArgumentParser:
     mk = md.add_parser("market", help="compare dumped predictions with closing lines")
     mk.add_argument("preds", help="csv.gz written by backtest --dump-preds")
     mk.add_argument("--models", default=None)
+    gb = md.add_parser("gbm-backtest",
+                       help="rung 3: walk-forward GBM vs rung 2 and the market (read-only DB)")
+    gb.add_argument("--from", dest="start", default="2012-13", help="first test season")
+    gb.add_argument("--to", dest="end", default=None, help="last test season (default: latest)")
+    gb.add_argument("--models", default=None,
+                    help="comma-separated subset (default: all, incl. ablations)")
+    gb.add_argument("--no-ablations", action="store_true")
+    gb.add_argument("--out", default=None,
+                    help="report/cache dir (default: $COURTSIDE_CACHE, else <data>/reports)")
+    gb.add_argument("--threads", type=int, default=4)
+    gt = md.add_parser("gbm-timing", help="rung 3: time a production-style daily fit + predict")
+    gt.add_argument("--threads", type=int, default=4)
 
     pd_ = sub.add_parser("predict", help="predictions for a day (fit on games before it)")
     pd_.add_argument("--date", type=_parse_day, default=None, help="NBA day; default today")
@@ -67,6 +91,15 @@ def build_parser() -> argparse.ArgumentParser:
                      help="walk-forward predictions for every game day in [from, --to]")
     pd_.add_argument("--to", type=_parse_day, default=None,
                      help="last day of --backfill-from (default: --date or today)")
+    pd_.add_argument("--refit-days", type=int, default=1,
+                     help="--backfill-from: refit the production models every N days (default 1)")
+    pd_.add_argument("--refit", action="store_true",
+                     help="ignore the per-day fitted-model cache and refit")
+    ij = sub.add_parser("injuries", help="injury report tools").add_subparsers(
+        dest="inj_cmd", required=True)
+    im = ij.add_parser("match-report", help="match rate of archived injury snapshots to rosters")
+    im.add_argument("--csv", default=None,
+                    help="unmatched names (default: <data>/reports/injury_unmatched.csv)")
 
     br = sub.add_parser("brief", help="the daily Brief").add_subparsers(
         dest="brief_cmd", required=True)
@@ -85,6 +118,8 @@ def _model_cmd(args) -> int:
 
     if args.model_cmd in ("tune-players", "player-ratings", "market"):
         return _player_cmd(args)
+    if args.model_cmd in ("gbm-backtest", "gbm-timing"):
+        return _gbm_cmd(args)
     frame = backtest.build_frame(db.connect())
     if args.model_cmd == "tune-elo":
         r = elo.tune_all(frame)
@@ -147,6 +182,26 @@ def _model_cmd(args) -> int:
     return 0
 
 
+def _gbm_cmd(args) -> int:
+    """Rung-3 commands. The database is opened read-only; outputs go to --out /
+    $COURTSIDE_CACHE (else <data>/reports)."""
+    import json
+    from pathlib import Path
+    from . import config
+    from .model import gbm, rung3
+
+    conn = rung3.connect_ro(config.db_path())
+    if args.model_cmd == "gbm-timing":
+        print(json.dumps(rung3.production_timing(conn, threads=args.threads), indent=1,
+                         default=str))
+        return 0
+    out = Path(args.out) if args.out else (gbm.cache_dir() or config.data_dir() / "reports")
+    models = [m.strip() for m in args.models.split(",")] if args.models else None
+    rung3.run(conn, args.start, args.end, models=models, ablations=not args.no_ablations,
+              out_dir=out, threads=args.threads)
+    return 0
+
+
 def _player_cmd(args) -> int:
     from . import config, db
     from .model import backtest, market, player_model, players
@@ -193,12 +248,15 @@ def _predict_cmd(args) -> int:
     if args.backfill_from:
         end = args.to or args.date or config.today_nba_day()
         res = predict.predict_days(conn, args.backfill_from, end, model=args.model,
-                                   log_fn=lambda m: print(m, flush=True))
-        print(f"{res['model']}: {res['games']} predictions over {res['days']} days "
-              f"({args.backfill_from}..{end}); skipped days: {res['skipped_days']}")
+                                   log_fn=lambda m: print(m, flush=True),
+                                   refit_days=args.refit_days)
+        print(f"{res['model']}: {res['games']} games over {res['days']} days "
+              f"({args.backfill_from}..{end}); skipped days: {res['skipped_days']}"
+              + (f"; {res['fits']} fits, {res['seconds']}s" if "fits" in res else ""))
         return 0
     day = args.date or config.today_nba_day()
-    rows = predict.predict_day(conn, day, model=args.model, store=not args.no_store)
+    rows = predict.predict_day(conn, day, model=args.model, store=not args.no_store,
+                               refit=args.refit)
     if not rows:
         print(f"no predictions for {day} (no scheduled games, or not enough history)")
         return 0
@@ -207,8 +265,10 @@ def _predict_cmd(args) -> int:
               f"spread {r['market_home_spread']:+.1f}" if r["market_home_prob"] is not None
               and r["market_home_spread"] is not None else "")
         out = sum(len(v) for v in r["injuries"].values())
+        op = r.get("opinion")
+        ours = f"  ours {100 * op['home_win_prob']:.0f}% {op['home_margin']:+.1f}" if op else ""
         print(f"{r['away']} @ {r['home']}  {r['home']} {100 * r['home_win_prob']:.0f}%  "
-              f"margin {r['home_margin']:+.1f}  total {r['total']:.1f}{mk}"
+              f"margin {r['home_margin']:+.1f}  total {r['total']:.1f}{ours}{mk}"
               f"{f'  [{out} injured/questionable]' if out else ''}")
     return 0
 
@@ -237,7 +297,46 @@ def _brief_cmd(args) -> int:
     return 0
 
 
+def _serve(argv: list[str]) -> int:
+    """`courtside serve [--host H] [--port P] [--reload]`: the web front end (docs/WEB.md)."""
+    sp = argparse.ArgumentParser(prog="courtside serve", description="run the web front end")
+    sp.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
+    sp.add_argument("--port", type=int, default=8765, help="port (default 8765)")
+    sp.add_argument("--reload", action="store_true", help="reload on code/template changes")
+    a = sp.parse_args(argv)
+    import os
+
+    import uvicorn
+    if a.reload:
+        os.environ["COURTSIDE_WEB_DEV"] = "1"
+        uvicorn.run("courtside.web.app:app_factory", factory=True, host=a.host, port=a.port,
+                    reload=True, reload_includes=["*.py", "*.html", "*.css", "*.js"])
+    else:
+        from .web.app import create_app
+        uvicorn.run(create_app(), host=a.host, port=a.port, workers=1, server_header=False)
+    return 0
+
+
+def _injuries_cmd(args) -> int:
+    from . import config, db, injuries
+    conn = db.connect()
+    csv_path = args.csv or config.data_dir() / "reports" / "injury_unmatched.csv"
+    r = injuries.match_report(conn, csv_path=csv_path)
+    for b in r["batches"]:
+        print(f"{b['source']:<13} {b['captured_at']}  rows {b['rows']:>3}  matched {b['matched']:>3}"
+              f" ({100 * (b['rate'] or 0):.1f}%; {b['other_team']} via other team)  "
+              f"relevant {b['relevant_matched']}/{b['relevant_rows']}  off-roster {b['off_roster']}"
+              f"  unknown {b['unknown']}  ambiguous {b['ambiguous']}")
+    t = r["total"]
+    print(f"total: {t['matched']}/{t['rows']} matched ({100 * (t['rate'] or 0):.1f}%); "
+          f"unmatched written to {csv_path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["serve"]:
+        return _serve(argv[1:])
     args = build_parser().parse_args(argv)
     if args.cmd == "db":
         from . import config, db
@@ -259,6 +358,27 @@ def main(argv: list[str] | None = None) -> int:
         return _predict_cmd(args)
     if args.cmd == "brief":
         return _brief_cmd(args)
+    if args.cmd == "injuries":
+        return _injuries_cmd(args)
+    if args.cmd == "winprob":
+        from .analytics import winprob
+        return winprob.train_cli(args)
+    if args.cmd == "backfill" and args.what == "pbp":
+        from . import backfill, backfill_pbp
+        try:
+            backfill.seasons_range(args.start, args.end)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        summary = backfill_pbp.run(args.start, args.end)
+        print(f"fetched={summary['fetched']} cached={summary['cached']} "
+              f"missing={summary['missing']} failed={summary['failed']} "
+              f"aborted={summary['aborted']}")
+        for season, r in summary["by_season"].items():
+            print(f"  {season}: {r}")
+        for err in summary["errors"][:20]:
+            print(f"  error: {err}", file=sys.stderr)
+        return 1 if summary["failed"] or summary["aborted"] else 0
     if args.cmd == "backfill":
         from . import backfill
         try:

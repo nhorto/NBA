@@ -521,14 +521,82 @@ def clutch(events: Sequence[Event], stints: Sequence[Stint], span: Span | None =
 
 # ------------------------------------------------------------------------- turning point
 
+WP_WINDOW = 180.0     # a turning-point stretch spans at most 3 minutes of game clock
+
+
+def wp_stretch(events: Sequence[Event], pts: Sequence[tuple[int, float]], side: str,
+               window: float = WP_WINDOW) -> tuple[float, int, int] | None:
+    """Largest win-probability gain for ``side`` between two points of ``pts`` (sorted
+    ``(event_idx, p_home)``) at most ``window`` seconds of game time apart, or adjacent.
+
+    Returns ``(swing, start_pos, end_pos)`` as positions in ``pts``; ties go to the shorter
+    stretch, then the earlier one."""
+    if len(pts) < 2:
+        return None
+    pw = [p if side == HOME else 1.0 - p for _, p in pts]
+    el = [events[i].elapsed for i, _ in pts]
+    best: tuple[float, int, int] | None = None
+    for a in range(len(pts) - 1):
+        b = a + 1
+        while b < len(pts) and (b == a + 1 or el[b] - el[a] <= window):
+            gain = pw[b] - pw[a]
+            if best is None or gain > best[0] + 1e-12 or (
+                    abs(gain - best[0]) <= 1e-12 and b - a < best[2] - best[1]):
+                best = (gain, a, b)
+            b += 1
+    return best
+
+
+def _wp_turning_point(events: Sequence[Event], w: str,
+                      win_prob: Sequence[tuple[int, float]]) -> dict[str, Any] | None:
+    pts = sorted(win_prob)
+    best = wp_stretch(events, pts, w)
+    if best is None:
+        return None
+    swing, a, b = best
+    i0, i1 = pts[a][0], pts[b][0]
+    e1 = events[i1]
+    # the single play inside the stretch that moved the winner's WP the most
+    sign = 1.0 if w == HOME else -1.0
+    steps = [(sign * (pts[k + 1][1] - pts[k][1]), pts[k + 1][0]) for k in range(a, b)]
+    key_delta, key_idx = max(steps, key=lambda s: (s[0], -s[1]))
+    key = events[key_idx]
+    before = (events[i0].score_home, events[i0].score_away)   # score going into the stretch
+    after = (e1.score_home, e1.score_away)
+    lead_b, lead_a = _lead(before, w), _lead(after, w)
+    later = [_lead((e.score_home, e.score_away), w) for e in _scoring(events) if e.idx > i1]
+    if lead_b <= 0 < lead_a:
+        reason = "flipped_lead"
+    elif lead_b < 0 == lead_a:
+        reason = "levelled"
+    elif lead_a > 0 and all(x > 0 for x in later):
+        reason = "created_winning_margin"
+    else:
+        reason = "swing"
+    first = events[min(i0 + 1, i1)]
+    wp_pts = (after[0] - before[0]) if w == HOME else (after[1] - before[1])
+    op_pts = (after[1] - before[1]) if w == HOME else (after[0] - before[0])
+    p0, p1 = pts[a][1], pts[b][1]
+    run = {"side": w, "label": f"{wp_pts}-{op_pts}", "pts": wp_pts, "opp_pts": op_pts,
+           "unanswered": op_pts == 0, "minutes": round((e1.elapsed - first.elapsed) / 60.0, 1),
+           "start": {**moment(first), "score": list(before)}, "end": moment(e1)}
+    return {"method": "win_probability", "side": w, "wp_swing": round(swing, 3), "reason": reason,
+            "wp_before": round(p0 if w == HOME else 1.0 - p0, 3),
+            "wp_after": round(p1 if w == HOME else 1.0 - p1, 3),
+            "at": moment(e1), "description": key.description,
+            "key_play": {"description": key.description, "player_id": key.player_id,
+                         "side": key.side, "wp_swing": round(key_delta, 3), **moment(key)},
+            "run": run, "start_idx": i0 + 1, "end_idx": i1}
+
 def turning_point(events: Sequence[Event], runs: Sequence[Run] | None = None,
                   win_prob: Sequence[tuple[int, float]] | None = None,
                   exclude: Span | None = None) -> dict[str, Any] | None:
     """The decisive moment.
 
-    * With ``win_prob`` (a series of ``(event_idx, home_win_probability)``): the largest swing in the
-      eventual winner's favour between consecutive points (method ``"win_probability"``), plus the
-      run containing it if any.
+    * With ``win_prob`` (a series of ``(event_idx, home_win_probability)``): the *stretch* with the
+      largest gain in the eventual winner's win probability (method ``"win_probability"``): the
+      biggest rise between any two points at most ``WP_WINDOW`` seconds of game time apart (adjacent
+      points always qualify, so a single play is a stretch). See ``wp_stretch``.
     * Placeholder (no model yet, method ``"run"``): among the eventual winner's runs (excluding
       garbage time), the one with the largest net margin that either *flipped* the lead (winner not
       ahead before, ahead after), *created the winning margin* (winner ahead after and never
@@ -544,20 +612,7 @@ def turning_point(events: Sequence[Event], runs: Sequence[Run] | None = None,
     mine = [r for r in runs if r.side == w]
 
     if win_prob:
-        pts = sorted(win_prob)
-        best = None
-        for (i0, p0), (i1, p1) in zip(pts, pts[1:]):
-            swing = (p1 - p0) if w == HOME else (p0 - p1)
-            if best is None or swing > best[0]:
-                best = (swing, i0, i1)
-        if best is None:
-            return None
-        swing, i0, i1 = best
-        e = events[i1]
-        run = next((r for r in mine if r.start_idx <= i1 <= r.end_idx), None)
-        return {"method": "win_probability", "side": w, "wp_swing": round(swing, 3),
-                "at": moment(e), "description": e.description,
-                "run": run.to_dict(events) if run else None}
+        return _wp_turning_point(events, w, win_prob)
 
     scores = [(e.idx, _lead((e.score_home, e.score_away), w)) for e in _scoring(events)]
 
@@ -612,6 +667,11 @@ def decisive_runs(events: Sequence[Event], runs: Sequence[Run], tp: dict[str, An
         if tp and tp.get("method") == "run" and tp["side"] == s:
             st, lab = tp["run"]["start"]["elapsed"], tp["run"]["label"]
             pick = next((r for r in cand if r.start_elapsed == st and r.label == lab), None)
+        if pick is None and tp and tp.get("method") == "win_probability" and tp["side"] == s:
+            lo, hi = tp["start_idx"], tp["end_idx"]
+            over = [(min(r.end_idx, hi) - max(r.start_idx, lo), r) for r in cand
+                    if r.start_idx <= hi and r.end_idx >= lo]
+            pick = max(over, key=lambda o: (o[0], o[1].net, -o[1].start_idx))[1] if over else None
         out[s] = pick or (max(cand, key=lambda r: (r.net, -r.start_idx)) if cand else None)
     return out
 
