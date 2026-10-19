@@ -242,8 +242,9 @@ def test_store_round_trip(conn, hist, tmp_path):
     assert n == len(hist.players)
     ns = c.execute("SELECT COUNT(*) FROM player_projection_stats").fetchone()[0]
     assert ns == len(hist.stats)
-    # prune: files older than 8 days go
-    assert SO.prune_sims(now=time.time() + 9 * 86400) >= 1
+    # sims are kept by default; an explicit window still prunes
+    assert SO.prune_sims(now=time.time() + 9 * 86400) == 0
+    assert SO.prune_sims(8, now=time.time() + 9 * 86400) >= 1
     assert not SO.sims_dir().joinpath("999").exists()
 
 

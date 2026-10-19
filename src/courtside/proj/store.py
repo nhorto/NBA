@@ -8,7 +8,7 @@ per-sim DK FP files, and the `dfs_runs.sim_path` pointer.
   (mean, sd, q05..q95) and {pts, reb, ast, fg3m} means (rates x minutes, environment-scaled;
   sd/quantiles NULL until v1 draws components), cond in {played, all}.
 * Sims: float16 `npz` at `<data_dir>/sims/<slate>/<run_id>.npz` with `fp` (S, n), `player_id`
-  (NBA ids) and optional `dk_id`; files older than 8 days are pruned on every save.
+  (NBA ids) and optional `dk_id`; nothing is pruned by default (KEEP_DAYS = None).
 
 Writing a run replaces that (run_id, model_version)'s earlier rows, so re-running is idempotent.
 """
@@ -27,7 +27,9 @@ import pandas as pd
 
 from .. import config
 
-KEEP_DAYS = 8
+# Sims are kept indefinitely (owner decision 2026-10-19: keep everything for later grading and
+# model work; ~8 MB per slate run). Pass a number of days to prune_sims to delete old files.
+KEEP_DAYS: int | None = None
 STAT_COLS = ("mean", "sd", "q05", "q10", "q25", "q50", "q75", "q90", "q95")
 PROJ_COLS = ("game_id", "nba_day", "slate_id", "player_id", "team", "run_id", "model_version",
              "role", "p_play", "minutes_json", "inputs_json")
@@ -80,11 +82,12 @@ def load_sims(path: str | Path) -> dict[str, np.ndarray]:
         return {k: z[k] for k in z.files}
 
 
-def prune_sims(keep_days: int = KEEP_DAYS, *, now: float | None = None,
+def prune_sims(keep_days: int | None = KEEP_DAYS, *, now: float | None = None,
                root: Path | None = None) -> int:
-    """Delete sim files older than `keep_days` (mtime) and empty slate dirs; returns count."""
+    """Delete sim files older than `keep_days` (mtime) and empty slate dirs; returns count.
+    `keep_days=None` (the default) keeps everything."""
     root = root or sims_dir()
-    if not root.exists():
+    if keep_days is None or not root.exists():
         return 0
     cut = (now if now is not None else time.time()) - keep_days * 86400
     n = 0

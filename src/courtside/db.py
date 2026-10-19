@@ -836,6 +836,80 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX IF NOT EXISTS idx_player_starts_player ON player_starts(player_id, game_id);
     """,
+    # 12: DFS tracking (owner request 2026-10-19: keep everything, grade every build, real
+    # results). The owner's own entries, uploaded DK standings files, and per-lineup /
+    # per-player grades written by the nightly DFS grading job.
+    """
+    CREATE TABLE IF NOT EXISTS dfs_uploads (
+        upload_id INTEGER PRIMARY KEY,
+        kind TEXT NOT NULL,
+        contest_id TEXT,
+        filename TEXT,
+        sha256 TEXT NOT NULL UNIQUE,
+        raw_path TEXT NOT NULL,
+        rows INTEGER,
+        uploaded_at TEXT NOT NULL,
+        detail TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS dfs_entries (
+        entry_id INTEGER PRIMARY KEY,
+        contest_id TEXT,
+        slate_id TEXT,
+        dk_entry_id TEXT,
+        lineup_id INTEGER,
+        slots_json TEXT,
+        entry_fee REAL,
+        points REAL,
+        rank INTEGER,
+        field_size INTEGER,
+        payout REAL,
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        note TEXT,
+        UNIQUE (contest_id, dk_entry_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_entries_slate ON dfs_entries(slate_id);
+
+    CREATE TABLE IF NOT EXISTS dfs_lineup_grades (
+        lineup_id INTEGER PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        slate_id TEXT,
+        graded_at TEXT NOT NULL,
+        actual REAL,
+        projected REAL,
+        hindsight REAL,
+        ratio_hindsight REAL,
+        pct_random REAL,
+        cash_line REAL,
+        cash_line_source TEXT,
+        would_cash INTEGER,
+        est_rank INTEGER,
+        est_payout REAL,
+        detail_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_lineup_grades_slate ON dfs_lineup_grades(slate_id);
+
+    CREATE TABLE IF NOT EXISTS player_projection_grades (
+        projection_id INTEGER PRIMARY KEY,
+        game_id TEXT NOT NULL,
+        player_id INTEGER NOT NULL,
+        run_id TEXT,
+        graded_at TEXT NOT NULL,
+        played INTEGER,
+        actual_min REAL,
+        actual_dk REAL,
+        proj_min REAL,
+        proj_dk REAL,
+        pit REAL,
+        in80 INTEGER,
+        in50 INTEGER,
+        crps REAL,
+        dk_fppg REAL,
+        salary INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_ppg_game ON player_projection_grades(game_id);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
