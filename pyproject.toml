@@ -10,10 +10,12 @@ dependencies = [
     "lightgbm>=4.7.0",
     "mlflow>=3.17.1",
     "numpy>=2.5.4",
+    "ortools>=9.15.6755",
     "pandas>=3.0.6",
     "pdfplumber>=0.11.10",
     "pyarrow>=25.0.1",
     "scikit-learn>=1.9.1",
+    "scipy>=1.18.1",
     "uvicorn>=0.54.0",
 ]
 
@@ -26,6 +28,7 @@ pdf = []
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "pydfs-lineup-optimizer>=3.6.1",
     "pytest",
 ]
 
