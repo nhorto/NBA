@@ -49,7 +49,7 @@ Inputs: `docs/research/dfs.md` (decisions, rules, sources, correlation study, re
 | S15 stint failure → box minutes | Accepted, made central | §4.2: the box path is primary (it alone covers RotoGuru seasons) |
 | N1 books' team totals as environment | Accepted | §4.4 (`line_snapshots` team totals, from 2026-10-19) |
 | N2 preseason role evidence | Accepted (light) | T1.9 (preseason boxes aren't in the DB yet) |
-| N3 | Unknown | Not in the review text available to this revision (§9 Q8) |
+| N3 | Deferred → Phase 4 | A post-game "teammate left the game" term (from `possible_injuries`) joins the full why engine (T4.x); why v0 notes it in text only |
 | N4 coach by date | Accepted | T2.2: a `coach_changes` override on top of per-season `team_coaches` |
 | N5 PRA props | Accepted | §2.8, §7.5 |
 | N6 Showdown captain binary | Accepted | §5.7 |
@@ -658,5 +658,5 @@ If the gate fails, the `/dfs` page ships with a "beta" label.
 5. **Late-news alert channel:** page banner only (proposed), or a push notification?
 6. **Tonight cards in Phase 2** (proposed) rather than Phase 1?
 7. **FanDuel CSV import:** when?
-8. **N3** isn't in the review text this revision had. Please confirm what it was.
+8. ~~N3~~ Resolved: N3 = a post-game "teammate left the game" term (from `possible_injuries`), deferred to the Phase 4 why engine.
 9. **Stint-path features in production DFS:** allow them once the 2021-26 projection backtest shows no CRPS loss, even though the DFS backtest only validates the box path? Proposed: yes.
