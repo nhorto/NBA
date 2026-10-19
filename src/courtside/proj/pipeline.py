@@ -451,10 +451,26 @@ def report_avail(conn: sqlite3.Connection, day: date, at: datetime, games: pd.Da
     for r in av.itertuples(index=False):
         if r.status in LISTED:
             p_avail[int(r.player_id)] = float(r.p_play)
-        if r.status != "out":
+        # Force only players the report itself lists (it names their current team); its
+        # "unlisted" regulars are placed on their last box-score team, which is stale for a
+        # traded player, and are candidates through the minutes panel anyway.
+        if r.status in LISTED and r.status != "out":
             extras.setdefault((r.game_id, r.team), []).append(int(r.player_id))
     n_listed = int(av["status"].isin(list(LISTED)).sum()) if len(av) else 0
     return p_avail, extras, {"n_report_rows": int(len(av)), "n_listed": n_listed}
+
+
+def merge_extras(primary: dict | None, report: dict | None) -> dict:
+    """Forced candidates {(game_id, team): [player_id]}. `primary` (the DK pool: each player's
+    CURRENT team) wins over `report`, which places unlisted players on their last box-score
+    team (a traded player's old team); `candidate_panel` keeps a player's first occurrence."""
+    ex = {k: list(v) for k, v in (primary or {}).items()}
+    placed = {int(p) for v in ex.values() for p in v}
+    for k, v in (report or {}).items():
+        rest = [p for p in v if int(p) not in placed]
+        if rest:
+            ex.setdefault(k, []).extend(rest)
+    return ex
 
 
 def candidate_panel(ctx: Context, day: date, games: pd.DataFrame,
@@ -478,6 +494,27 @@ def candidate_panel(ctx: Context, day: date, games: pd.DataFrame,
     return panel.reset_index(drop=True)
 
 
+def current_teams(conn: sqlite3.Connection, season: str) -> dict[int, str]:
+    """{player_id: team} from the season's `team_rosters` snapshot ({} if not loaded). Only
+    for live days: historical seasons' snapshots are taken at fetch time, not on the day."""
+    rows = conn.execute("SELECT player_id, team FROM team_rosters WHERE season=?",
+                        (season,)).fetchall()
+    return {int(p): t for p, t in rows if p is not None and t}
+
+
+def drop_moved_players(panel: pd.DataFrame, current: dict[int, str],
+                       extras: dict | None = None) -> pd.DataFrame:
+    """Remove candidates whose current roster team differs from the team they are a candidate
+    for (an offseason or mid-season move: last season's box games put a traded player on his
+    old team). Players forced onto a team via `extras` (the DK pool, the report) are kept."""
+    if not current or not len(panel):
+        return panel
+    forced = {(team, int(p)) for (_, team), pids in (extras or {}).items() for p in pids}
+    keep = [(t, int(p)) in forced or current.get(int(p), t) == t
+            for p, t in zip(panel["player_id"], panel["team"])]
+    return panel[np.asarray(keep, bool)].reset_index(drop=True)
+
+
 def project_games(conn: sqlite3.Connection, day, games: pd.DataFrame, *, ctx: Context,
                   bundle: Bundle, n_sims: int, seed: int, p_avail: dict | None = None,
                   at: datetime | None = None, env_mode: str = "live",
@@ -487,6 +524,8 @@ def project_games(conn: sqlite3.Connection, day, games: pd.DataFrame, *, ctx: Co
     (default 1; 0 = out), environment per `env_mode` at `at`, simulate, summarise."""
     day = _as_date(day)
     panel = candidate_panel(ctx, day, games, extras)
+    if env_mode == "live":
+        panel = drop_moved_players(panel, current_teams(conn, season_of(day)), extras)
     pa = {(k, int(pid)): float(p_avail[int(pid)])
           for k, pid in zip(panel["key"], panel["player_id"]) if int(pid) in (p_avail or {})}
     env = {g: environment(conn, g, at, mode=env_mode) for g in games["game_id"]}
@@ -517,9 +556,7 @@ def project_day(conn: sqlite3.Connection, nba_day, at, *, n_sims: int = 25_000,
     if seed is None:
         seed = stable_seed(day.isoformat(), kind, MODEL_VERSION)
     p_avail, rep_extras, avinfo = report_avail(conn, day, at, games, starters)
-    ex = {k: list(v) for k, v in rep_extras.items()}
-    for k, v in (extras or {}).items():
-        ex.setdefault(k, []).extend(v)
+    ex = merge_extras(extras, rep_extras)
     res = project_games(conn, day, games, ctx=ctx, bundle=b, n_sims=n_sims, seed=seed,
                         p_avail=p_avail, at=at, env_mode="live", extras=ex, starters=starters,
                         log=log)

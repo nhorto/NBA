@@ -333,3 +333,22 @@ def test_home_away_keeps_neutral_site_games():
     assert df.to_dict("records") == [{"game_id": "g1", "home": "ATL", "away": "MIL"},
                                      {"game_id": "g2", "home": "BOS", "away": "NYK"}]
     assert list(pipeline._home_away(conn, date(2024, 12, 15)).columns) == ["game_id", "home", "away"]
+
+
+def test_dk_pool_team_wins_over_report_last_team():
+    from courtside.proj import pipeline
+    ex = pipeline.merge_extras({("g2", "PHI"): [1627759]},
+                               {("g1", "BOS"): [1627759, 1628369], ("g2", "PHI"): [201935]})
+    assert list(ex) == [("g2", "PHI"), ("g1", "BOS")]
+    assert ex[("g2", "PHI")] == [1627759, 201935]
+    assert ex[("g1", "BOS")] == [1628369]
+
+
+def test_drop_moved_players_uses_current_roster():
+    import pandas as pd
+    from courtside.proj import pipeline
+    panel = pd.DataFrame({"player_id": [1627759, 1628369, 201935], "team": ["BOS", "BOS", "PHI"]})
+    out = pipeline.drop_moved_players(panel, {1627759: "PHI", 1628369: "BOS"})
+    assert out["player_id"].tolist() == [1628369, 201935]   # Brown (now PHI) leaves BOS
+    forced = pipeline.drop_moved_players(panel, {1627759: "PHI"}, {("g1", "BOS"): [1627759]})
+    assert 1627759 in forced["player_id"].tolist()           # DK pool / report says BOS: keep
