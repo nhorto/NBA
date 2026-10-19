@@ -80,7 +80,7 @@ No review item is rejected outright. Three are accepted with a different option 
 | **The 240-minute reconciliation spreads the gap by each player's variance**, not proportional `allocate_minutes` | Proportional pushed the errors onto starters: MAE +0.13 |
 | The S14 "two starters Out" test is measured on the **value play** (largest projected rise, P(play) ≥ 0.8), not the top healthy bench player | Value play: +9.2/+9.6 projected vs +8.9/+8.8 realised (passes). Top bench player: +5.0 vs +3.7/+4.0 (the ≥ 8 bar doesn't describe him). |
 | Star absence: the minutes path gives +1.4 Δmin for the remaining top 6. The per-minute bump (T1.1: other star +5.6%, rotation +3.3%) supplies the rest of the DK effect | T1.2/T1.1 walk-forward 2023-24/2024-25 |
-| **Margin noise is ~13.5–14.0, not 12.4.** The closing line's margin residual sd was 12.2–12.8 in 2016-19 but 13.5–13.9 in 2020-26. Total sd is 17.6–18.3. Residual corr(margin, total) ≈ 0 (\|r\| ≤ 0.08), and corr(\|margin\|, total residual) ≈ −0.03 (T0.8, `research/game_env_residuals.py`). | Sim and expected-minutes margin sd is fit per season on seasons < S, not hard-coded |
+| **Margin noise varies by season, ~12.4–14.0.** The closing line's margin residual sd was 12.2–12.8 in 2016-20, 13.5–13.6 in 2020-22, **12.5 in 2022-23**, then 13.5–13.9 in 2023-26. Total sd is 17.6–18.3. Residual corr(margin, total) ≈ 0 (\|r\| ≤ 0.08), and corr(\|margin\|, total residual) ≈ −0.03 (T0.8, `research/game_env_residuals.py`). | Sim and expected-minutes margin sd is fit per season on seasons < S, not hard-coded |
 | P(play) uses hierarchical Beta cells (status × report age × reason × role) fit on the 151 rescued days (T1.3). Report age barely matters within a status; re-reading the latest report at lock−45/−10 is what matters. | CV log-loss on D/Q/P .463 vs .503 for the old map |
 
 ## 1. Scope and design in one paragraph
@@ -316,7 +316,7 @@ Path A takes team variance top-down from the market-calibrated game model, so M1
 - team-rebound and missed-FT-rebound rates (S7).
 
 The arithmetic behind it:
-- The market errors (sd 17.7 total, 13.7 margin in 2020-26; 12.4 was the 2016-19 level) imply Var(team) ≈ 125 and Cov ≈ 31.
+- Measured (T2.5, 2019-24 vs the closing line): Var(team | line) 125.6 and Cov(H, A | line) 38.7. Given possessions and the line, total-score variance equals iid possession noise, so there is no room for a shared game latent; the restoring force (ρ ≈ −0.07 per 6-minute segment, −0.11 in the last) is what keeps sd(margin) near 13 instead of the iid 16.
 - iid possession noise alone is ≈ 130 per team, before pace (≈ 25) and rate uncertainty.
 - So an iid sim gives sd(margin) ≈ 16.4. Real games need a restoring force and a shared latent.
 
@@ -332,7 +332,7 @@ The arithmetic behind it:
 
 **SMM (M1e, M2):**
 - σ_P, τ_g, τ_e, τ_p, ρ and β_q are fit **per test season on seasons < S**.
-- **Fit targets:** Var(H | line), Cov(H, A | line), sd(margin) and sd(total) within ±3%; b₄ within ±0.05; Q4 pace within ±1 per bin; P(OT) 5.5–6.5%; FG% dispersion.
+- **Fit targets:** Var(H | line), Cov(H, A | line), sd(margin) and sd(total) within ±3%; b₄ within ±0.05; Q4 pace within ±1 per bin; P(OT) within ±1 pp of the per-season rate (4.4–6.1% in 2019-26; the old 5.5–6.5% band fails 2023-26); FG% dispersion. Measured values: `research/sim_step0_targets.json`, write-up `docs/research/sim-step0.md` (T2.5).
 - **Validation targets (not fitted)**, from T2.7 on seasons < S:
   - role-pair and opponent correlations within ±0.02;
   - the blowout curve within ±1.0 DK per bin;
