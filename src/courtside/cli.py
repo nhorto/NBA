@@ -337,6 +337,9 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] == ["serve"]:
         return _serve(argv[1:])
+    if argv[:1] == ["mlops"]:
+        from .mlops import cli as mlops_cli
+        return mlops_cli.main(argv[1:])
     args = build_parser().parse_args(argv)
     if args.cmd == "db":
         from . import config, db
