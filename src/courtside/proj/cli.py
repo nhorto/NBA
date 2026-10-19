@@ -18,6 +18,7 @@ PROJ_MODULES: tuple[str, ...] = (
     "courtside.proj.why_v0",
     "courtside.proj.cli_proj",
     "courtside.proj.evallite",
+    "courtside.proj.backtest",
 )
 DFS_MODULES: tuple[str, ...] = (
     "courtside.proj.dfs.rules",
