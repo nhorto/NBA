@@ -65,6 +65,8 @@ KINDS = ("lock45", "lock10", "swap", "manual")
 LOCK45_WINDOW = (47 * 60, 40 * 60)
 LOCK10_WINDOW = (12 * 60, 7 * 60)
 SWAP_WINDOW = LOCK10_WINDOW
+LOCK10_MAX_LEAD = 25 * 60      # adaptive lock10: never start earlier than lock - 25 min
+LOCK10_FINISH_BY = 3 * 60      # ... and aim to finish this long before the lock
 TOLERANCE_S = 30               # launchd / systemd start a few seconds late
 SWAP_LEAD = timedelta(minutes=10)
 FALLBACK_VERSION = "fppg-fallback"
@@ -962,6 +964,29 @@ def _in_window(delta_s: float, window: tuple[int, int]) -> bool:
     return near - TOLERANCE_S <= delta_s <= far
 
 
+def lock10_window(conn: sqlite3.Connection, slate_ids: list, lock: datetime) -> tuple[int, int]:
+    """The lock10 window for the slates that share `lock`, widened when builds are slow.
+
+    The tick runs those slates one after another, so the estimate is the sum of each slate's
+    latest successful lock45 (else any non-swap) build time from the last 6 h. When
+    1.25 x that + LOCK10_FINISH_BY exceeds the default 12 min lead, the window starts that much
+    earlier (capped at LOCK10_MAX_LEAD) and stays 5 min wide. The Mac is shared with CI: on
+    2026-10-20 a lock45 build took 574 s at load ~150 (27 s unloaded), which would have
+    finished the default lock10 run at the lock."""
+    est = 0.0
+    since = iso(lock - timedelta(hours=6))
+    for sid in slate_ids:
+        r = conn.execute(
+            "SELECT seconds FROM dfs_runs WHERE slate_id=? AND ok=1 AND kind!='swap' "
+            "AND created_at>=? AND seconds IS NOT NULL "
+            "ORDER BY (kind='lock45') DESC, created_at DESC LIMIT 1", (str(sid), since)).fetchone()
+        est += float(r[0]) if r else 0.0
+    far = int(min(LOCK10_MAX_LEAD, max(LOCK10_WINDOW[0], 1.25 * est + LOCK10_FINISH_BY)))
+    if far <= LOCK10_WINDOW[0]:
+        return LOCK10_WINDOW
+    return far, far - (LOCK10_WINDOW[0] - LOCK10_WINDOW[1])
+
+
 def due_runs(conn: sqlite3.Connection, now: datetime) -> list[dict]:
     """The (slate, kind[, tip]) whose window contains `now`, with ``done`` set when an ok run
     already exists. Reads ``dfs_slates`` / ``dfs_salaries`` / ``dfs_runs`` only."""
@@ -970,15 +995,22 @@ def due_runs(conn: sqlite3.Connection, now: datetime) -> list[dict]:
                         "ORDER BY lock_utc, slate_id",
                         (iso(now - timedelta(hours=14)), iso(now + timedelta(days=1)))).fetchall()
     out = []
+    slates = []
     for r in rows:
         slate = dict(r)
+        tips = slate_tips(conn, slate["slate_id"])
+        slates.append((slate, tips, slate_lock(slate, tips)))
+    by_lock: dict = {}
+    for slate, _, lock in slates:
+        if lock is not None:
+            by_lock.setdefault(lock, []).append(slate["slate_id"])
+    l10 = {lock: lock10_window(conn, sids, lock) for lock, sids in by_lock.items()}
+    for slate, tips, lock in slates:
         sid = slate["slate_id"]
-        tips = slate_tips(conn, sid)
-        lock = slate_lock(slate, tips)
         if lock is None:
             continue
         d = (lock - now).total_seconds()
-        for kind, win in (("lock45", LOCK45_WINDOW), ("lock10", LOCK10_WINDOW)):
+        for kind, win in (("lock45", LOCK45_WINDOW), ("lock10", l10[lock])):
             if _in_window(d, win):
                 out.append({"slate_id": sid, "kind": kind, "trigger": None,
                             "event": iso(lock), "tag": slate["tag"]})

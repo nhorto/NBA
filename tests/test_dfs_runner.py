@@ -846,3 +846,21 @@ def test_backfill_lineup_ranges(conn, tmp_path):
     assert r1[1] < r1[2] < r1[3]
     assert conn.execute("SELECT p10 FROM dfs_lineups WHERE run_id='r2'").fetchone()[0] is None
     assert runner.backfill_lineup_ranges(conn) == {"runs": 0, "lineups": 0, "skipped": 0}
+
+
+def test_lock10_window_widens_when_builds_are_slow(conn):
+    lock = datetime(2026, 10, 20, 19, 0, tzinfo=timezone.utc)
+    assert runner.lock10_window(conn, ["X1", "X2"], lock) == runner.LOCK10_WINDOW   # no history
+    ins = ("INSERT INTO dfs_runs (run_id, slate_id, kind, created_at, seconds, ok) "
+           "VALUES (?,?,?,?,?,?)")
+    conn.execute(ins, ("a", "X1", "lock45", "2026-10-20T18:15:59Z", 30.0, 1))
+    assert runner.lock10_window(conn, ["X1"], lock) == runner.LOCK10_WINDOW         # fast build
+    conn.execute(ins, ("b", "X1", "lock45", "2026-10-20T18:16:00Z", 574.0, 1))     # loaded Mac
+    conn.execute(ins, ("c", "X2", "manual", "2026-10-20T18:26:54Z", 55.0, 1))
+    conn.execute(ins, ("d", "X2", "swap", "2026-10-20T18:27:00Z", 900.0, 1))       # ignored
+    far, near = runner.lock10_window(conn, ["X1", "X2"], lock)
+    assert far == int(1.25 * (574 + 55) + runner.LOCK10_FINISH_BY) and far - near == 300
+    conn.execute(ins, ("e", "X1", "lock45", "2026-10-20T18:17:00Z", 5000.0, 1))
+    assert runner.lock10_window(conn, ["X1"], lock)[0] == runner.LOCK10_MAX_LEAD   # capped
+    conn.execute(ins, ("f", "X3", "lock45", "2026-10-20T08:00:00Z", 5000.0, 1))    # > 6 h ago
+    assert runner.lock10_window(conn, ["X3"], lock) == runner.LOCK10_WINDOW
