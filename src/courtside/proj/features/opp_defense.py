@@ -261,11 +261,14 @@ def closing_totals(conn: sqlite3.Connection) -> pd.DataFrame:
 # ============================================================================== build
 
 def build(conn: sqlite3.Connection, wf: pd.DataFrame, *, params: dict | None = None,
-          t: pd.DataFrame | None = None, queries: pd.DataFrame | None = None) -> pd.DataFrame:
+          t: pd.DataFrame | None = None, queries: pd.DataFrame | None = None,
+          totals: dict | None = None) -> pd.DataFrame:
     """Team-game F2 table: one row per (game_id, team) of `queries` (default: the team-games of
     `wf`) = the team the features are FOR; every value describes its opponent, except the pace
     term. `wf` = `common.base_rows` history (only rows dated before each query day are used),
-    `t` = `common.load_team_games` history likewise; queries: game_id, team, opp, day, sidx."""
+    `t` = `common.load_team_games` history likewise; queries: game_id, team, opp, day, sidx.
+    `totals` {game_id: market total} replaces the closing totals of the pace term (the live
+    path: no closing line exists before the tip; a game missing from it gets NaN = missing)."""
     p = params or DVP_PARAMS
     first, last = wf["season"].min(), wf["season"].max()
     if t is None:
@@ -297,7 +300,12 @@ def build(conn: sqlite3.Connection, wf: pd.DataFrame, *, params: dict | None = N
     lt = league_asof(tot["day"].to_numpy(), tot["sidx"].to_numpy(),
                      np.column_stack([tot["pts2"], np.ones(len(tot))]),
                      out["day"].to_numpy(), out["sidx"].to_numpy(), LEAGUE_M0)[:, 0]
-    out = out.merge(closing_totals(conn), on="game_id", how="left")
+    if totals is None:
+        mt = closing_totals(conn)
+    else:
+        mt = pd.DataFrame({"game_id": list(totals), "mu_total": [float(v) for v in totals.values()]},
+                          columns=["game_id", "mu_total"])
+    out = out.merge(mt, on="game_id", how="left")
     with np.errstate(divide="ignore", invalid="ignore"):
         out["f2_pace_beyond"] = (0.5 * (out["_own_pace"] + out["f2_o_pace"])
                                  - np.log(out["mu_total"] / lt))

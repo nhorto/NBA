@@ -30,24 +30,26 @@ Public API
   evaluate(test, mults, ...) / two_way_se(...)        ablation metrics
   run_ablation(conn, season, ...)                       the F0-F2 ablation for one season
 
-CLI: python -m courtside.proj.context {dvp-params, ablation, fit} ...
+CLI: python -m courtside.proj.context {dvp-params, ablation, fit, bundle} ...
+  bundle --season S   the pipeline's ON bundle (`bundle_<S>_v1_cx.json`: the OFF bundle of S +
+                      this layer fit on seasons < S), whatever the switch is set to
 
-INTEGRATION (not switched on; described for pipeline/copula, which this module does not edit;
-the e2e evaluation ran exactly this as a local monkeypatch of pipeline.build_games):
-  1. Bundle: add `context: ContextModel | None` (to_json / from_json carry `context.to_json()`),
-     fit in load_bundle on seasons < S: `CX.fit(FX.build_frame(conn, S, sp), season < S,
-     ("P", "F2"))` (~20 s features + ~20 s fit); bump MODEL_VERSION.
-  2. Context.__init__ (once per season): `self.cx_wf = FXC.base_rows(conn, [S-2, S-1, S],
-     b.state, games=self.games, pos=self.pos)`, `self.cx_t = FXC.load_team_games(conn, S-2, S)`
-     (FXC = features.common; every later use is strictly before the day).
+INTEGRATION (wired in `pipeline`, behind `pipeline.CONTEXT_ON`, default OFF; env
+COURTSIDE_CONTEXT=1 turns it on):
+  1. Bundle: `Bundle.context` (JSON key "context", only present when set, so an OFF bundle is
+     byte-identical to the pre-context format), fit in `load_bundle` on seasons < S by
+     `fit_season(conn, S, bundle.state)` = `fit(FX.build_frame(conn, S, sp), season < S,
+     ("P", "F2"))`. An ON bundle is the OFF bundle of the same season plus the layer, cached as
+     `bundle_<S>_v1_cx.json`; ON runs are versioned `pathA-v0.3` (OFF: `pathA-v0.2`).
+  2. Context (once per season): `cx_t = FXC.load_team_games(conn, S-2, S)` at init and the
+     `FXC.base_rows(conn, [S-2, S-1, S], state)` history on first use with the bundle's state
+     params (`pipeline.Context.context_inputs`; every later use is strictly before the day).
   3. pipeline.build_games, right after `panel["_star"] = _stars(panel, rates)` (stars stay on
-     the EB rates):
-         if CONTEXT_ON and b.context is not None:
-             tf = FX.day_features(conn, ctx.cx_wf, ctx.cx_t, day, games)
-             key = panel["key"].str.split("|", n=1, expand=True)
-             rates = CX.apply_rates(b.context, rates, tf, key[0], key[1])
-     i.e. r_<s> *= m_s for the 7 DK stats and r_dk is recomputed, before the bump/usage grids
-     and the reconciliation (which still scales team points to the implied total).
+     the EB rates): F2 day features with the environment's market total in the pace term
+     (`FX.day_features(..., totals=)`; the closing total in backtests, the live books total on
+     the live path), then `apply_rates`: r_<s> *= m_s for the 7 DK stats and r_dk recomputed,
+     before the bump/usage grids and the reconciliation (which still scales team points to the
+     implied total).
   F1 (not shipped) would need the opponent's availability scenario: compute
   `features.opp_avail.scenario_features(opp_players, kept_masks)` for the opponent's kept
   scenarios (<= 16), predict m_s per (opponent scenario, player), and in copula.simulate_game
@@ -217,6 +219,30 @@ def fit(frame: pd.DataFrame, train_mask: np.ndarray, groups: Sequence[str], *,
         r = np.array([[ref[c] for c in cols]], float)
         m.offset[s] = float(b.predict(r, raw_score=True)[0]) if center else 0.0
         say(f"context {season} {'+'.join(groups)} {s}: {n_best} rounds ({time.time() - t0:.0f}s)")
+    return m
+
+
+LIVE_GROUPS = ("P", "F2")
+LIVE_N_TRAIN = 6
+
+
+def fit_season(conn: sqlite3.Connection, season: str, sp: dict, *,
+               groups: Sequence[str] = LIVE_GROUPS, n_train: int = LIVE_N_TRAIN,
+               params: dict | None = None, frame: pd.DataFrame | None = None,
+               log: Callable[[str], None] | None = None) -> ContextModel:
+    """The layer the pipeline uses for season S: `fit` on the regular-season rows of the
+    n_train seasons < S of `FX.build_frame(conn, S, sp)` (sp = the bundle's rate-state params,
+    so the P features and the E_ offsets match the live rates). Walk-forward: rows of S (and
+    later) never enter the fit."""
+    say = log or (lambda m: None)
+    t0 = time.time()
+    fr = frame if frame is not None else FX.build_frame(conn, season, sp, n_train=n_train,
+                                                         log=say)
+    train = (fr["season"] < season).to_numpy()
+    m = fit(fr, train, groups, season=season, params=params, log=say)
+    m.meta["n_train_seasons"] = n_train
+    say(f"context {season} {'+'.join(groups)} fitted on {m.train_seasons} "
+        f"({time.time() - t0:.0f}s)")
     return m
 
 
@@ -566,6 +592,9 @@ def main(argv: list[str] | None = None) -> int:
     a3.add_argument("--season", required=True)
     a3.add_argument("--groups", nargs="+", default=["P", "F2"])
     a3.add_argument("--n-train", type=int, default=6)
+    a4 = sub.add_parser("bundle", help="fit / load the pipeline's context-ON bundle of season S")
+    a4.add_argument("--season", required=True)
+    a4.add_argument("--refit", action="store_true", help="refit everything (minutes included)")
     a = ap.parse_args(argv)
     conn = _conn(a.db)
     if a.cmd == "dvp-params":
@@ -575,6 +604,20 @@ def main(argv: list[str] | None = None) -> int:
         wf = base_rows(conn, ["2009-10", "2010-11", "2011-12", "2012-13", "2013-14"], sp)
         p = fit_dvp_params(wf, ["2010-11", "2011-12", "2012-13", "2013-14"], log=print)
         print(json.dumps(p, indent=1, sort_keys=True))
+        return 0
+    if a.cmd == "bundle":
+        from . import pipeline as P
+        was = P.CONTEXT_ON
+        P.set_context(True)
+        try:
+            t0 = time.time()
+            b = P.load_bundle(conn, a.season, refit=a.refit, log=print)
+            path = P.cache_dir() / f"bundle_{a.season}{P._VS}.json"
+            print(f"{P.MODEL_VERSION} bundle {path} ({time.time() - t0:.0f}s): context "
+                  f"{'+'.join(b.context.groups)} fit on {b.context.train_seasons}, rounds "
+                  f"{b.context.n_rounds}")
+        finally:
+            P.set_context(was)
         return 0
     if a.cmd == "fit":
         sp = state_params_for(conn, a.season)

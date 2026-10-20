@@ -86,6 +86,7 @@ No review item is rejected outright. Three are accepted with a different option 
 | **T2.3 diagnosis: the −0.83 DK star-absence gap is composition, not usage.** Top-6 players on star-out nights run −0.85 DK in their own healthy games (the role-tier bias); per player the residual is +0.05 ± 0.06 (minutes −0.22, per-minute +0.27). Usage v1 (log-additive with/without factors, capped ±0.4) passes §4.3 (+4.9 / +7.1 SE over the tier bump) but moves DK MAE only −0.006. | Committed behind a switch, **not live**; ships with minutes v1 as one model bump after the T2.1 harness. Real fixes: role-tier bias and minutes over-promotion (T2.2) |
 | **Minutes v1 (T2.2) held back from live** after one deploy (2026-10-19): walk-forward it wins (MAE 4.49 / 4.40 vs 4.63 / 4.58; DK gate 8.049 vs 8.181), but on the live opener slate projected team minutes summed to ~205–213 vs ~224–236 for v0.5, and points reconciliation then inflated stars by up to +7 DK. The eval used the oracle panel, not the live candidate path. | Live = v0.5 (`pathA-v0.1`) until v1 is fixed and passes a live-path team-minutes test |
 | **Phase 2F, first ablation (F0–F2):** a per-player descriptor model **P** fixes the role-tier bias (end-to-end DK MAE −0.022 to −0.025, 6–8 SE, every season). **F2 opponent defense** (league-relative allowed-vs-expected index by position + 15 team box rates) clears the bar in 2023-24 / 2024-25 (per-minute NB LL +12 SE, CRPS 3–5 SE; harness CRPS 3.9 / 1.45 SE); it helps rebounds, blocks, assists, steals, turnovers and 3PM, not points (the market total covers points). **F1 opponent availability does not ship** (CRPS < 1 SE in 2024-25, negative in 2019-20). | P+F2 committed, wired into the live pipeline only after the opener with live-path checks |
+| **P + F2 wired into the pipeline behind a switch (2026-10-20), default OFF.** `pipeline.CONTEXT_ON` (`CONTEXT_DEFAULT = False`, env `COURTSIDE_CONTEXT=1/0` overrides). ON = `pathA-v0.3`, bundle `bundle_<S>_v1_cx.json` (the OFF bundle + the layer fit on seasons < S, 1 LightGBM thread so refits are byte-identical); seeds stay on `pathA-v0.2` so ON/OFF share draws. The F2 pace term uses the environment's market total (live books total on the live path; there is no closing line before the tip). With the switch OFF, projections are bit-identical to HEAD (bdb8a56) on a historical day and on the live opener slate. | Walk-forward ON vs OFF, every season better at 5.5–9.5 SE (DK MAE −0.026…−0.038, CRPS −0.011…−0.018); star bias −1.1…−1.4 → −0.6…−0.9; coverage unchanged; gate lines all PASS in both arms; lineups +1.3 / +1.9 pts (< 1.2 SE). Opener: team minutes/points unchanged, team DK −3%…+1%, max player move 2.1 DK. Table under Phase 2F |
 | P(play) uses hierarchical Beta cells (status × report age × reason × role) fit on the 151 rescued days (T1.3). Report age barely matters within a status; re-reading the latest report at lock−45/−10 is what matters. | CV log-loss on D/Q/P .463 vs .503 for the old map |
 | **Late swap (T2.14, `proj/dfs/swap.py`)**: a slot is fixed when its game has tipped or DK's file says so (`(LOCKED)` cell, "In Progress"/"Final" in the file's player list); fixed players are pinned and every result re-checked, failures are left unchanged. Open players may move between open slots; a second solve keeps everyone else in his old seat. An entry changes only when a ruled-out player must go or the objective gains ≥ 0.5 pts. Objective: cash for our cash lineup and double-up / 50-50 / H2H contest names, else mean. Same-contest entries stay ≥ 1 player apart (identical entries solve once); optional overlap / exposure caps count the locked parts and are relaxed, with a note, only when locks force it. Unchanged and locked cells are written back exactly as DK wrote them; new cells use the ID from DK's own player list in the upload. Read-only: stored projections, not a fresh pipeline run. The runner's swap loop moved to `swap.resolve_targets` unchanged. | 150 real-slate entries in 0.9 s (budget 30 s); 20 tests, including 40 random lock/shock trials and a byte-for-byte equivalence test of the runner's loop |
 | **Showdown (T2.15, `proj/dfs/showdown.py`)**: verified against pydfs Captain Mode. Slates are 30 RotoGuru single games (CPT = 1.5 × DK salary; actual points plus a noisy quarter-point variant) and the 3 captured DK Showdown slates (FPPG). pydfs hard-codes `max_from_one_team = 5`, which in a 2-team game is the same rule as our `teamCount.min = 2`. DK's CPT salary is exactly 1.5 × UTIL on all 250 captured rows: UTIL prices are in $200 steps, so no rounding rule is ever needed. | `courtside dfs showdown-check`: 33/33 slates, 63/63 comparisons with an equal objective, 0 ties |
@@ -623,6 +624,36 @@ v0 projects per-minute rates from the player's own history plus a position × ti
 | F7 | referees: crew foul / FTA tendencies | referee assignments (live), sportsdataverse officials (history) | |
 | F8 | player vs this opponent / coach history | box | expected noise; tested and reported |
 | F9 | player prop lines (market) as features / blend | `prop_snapshots` (live since 2026-10-19) | after ≥ 3 weeks of data |
+
+**P + F2 live wiring, ON (`pathA-v0.3`) vs OFF (`pathA-v0.2`), 2026-10-20.** Walk-forward (every season's bundle and layer are fit on seasons < S). Avail protocol, closing lines, 4,000 sims, every date. ON and OFF use the same base bundle and common random numbers, so the rows are identical and the differences are paired. SEs are clustered by date. Gain > 0 means ON is better. Source: Mac scratch `courtside-compute/cx`; reports copied to `var/reports/context_live/`.
+
+| Run | n rows / dates | DK MAE OFF → ON (gain, SE) | DK CRPS OFF → ON (gain, SE) | 80% cov OFF → ON | star bias OFF → ON |
+|---|---|---|---|---|---|
+| T2.1 harness 2023-24 | 21,767 / 160 | 8.058 → 8.025 (+0.033, 0.0038) | 5.670 → 5.652 (+0.0175, 0.0021) | 0.819 → 0.820 | −1.38 → −0.90 |
+| T2.1 harness 2024-25 | 21,865 / 162 | 8.023 → 7.995 (+0.028, 0.0043) | 5.659 → 5.646 (+0.0130, 0.0023) | 0.823 → 0.824 | −1.13 → −0.60 |
+| T2.1 harness 2019-20 (RotoGuru) | 18,681 / 149 | 7.891 → 7.865 (+0.026, 0.0040) | 5.567 → 5.555 (+0.0125, 0.0023) | 0.820 → 0.821 | −1.27 → −0.81 |
+| T2.1 harness 2020-21 (RotoGuru) | 19,079 / 139 | 7.836 → 7.798 (+0.038, 0.0040) | 5.533 → 5.515 (+0.0181, 0.0024) | 0.825 → 0.827 | −1.35 → −0.85 |
+| eval-lite 2024-25 (T1.0 part 1) | 21,882 / 162 | 8.021 → 7.995 (+0.026, 0.0044) | 5.661 → 5.650 (+0.0110, 0.0026) | 0.823 → 0.824 | −1.13 → −0.60 |
+
+| Gate line | OFF | ON |
+|---|---|---|
+| G1 2024-25 DK MAE gain vs season-to-date (≥ 3%) | 7.36% (SE 0.52) PASS | 7.68% (SE 0.52) PASS |
+| G3 2024-25 80% coverage (0.76–0.84) | 0.823 PASS | 0.824 PASS |
+| G4 2024-25 minutes MAE (≤ 4.8) | 4.422 PASS | 4.422 PASS (minutes untouched) |
+| G2 2019-20 / 2020-21 player MAE gain vs best salary-implied | 3.36% / 3.58% PASS | 3.68% / 4.05% PASS |
+| G2b cash lineup minus salary-implied lineup, 2019-20 / 2020-21 | +67.2 / +90.0 pts | +68.5 / +91.9 pts |
+| T2.1 cash lineup ON − OFF (paired), 2019-20 / 2020-21 | | +1.32 (SE 1.61) / +1.85 (SE 1.62); wins 32% / 33%, ties 36% / 35% |
+| T2.1 cash lineup − FPPG-optimizer lineup, 2019-20 / 2020-21 | +18.9 (SE 3.1) / +27.9 (SE 3.5) | +20.2 (SE 3.2) / +29.8 (SE 3.2) |
+| T2.1 Top-N mean ON − OFF, 2019-20 / 2020-21 | | +0.50 (SE 0.61) / +0.61 (SE 0.68) |
+| Hindsight ratio (cash), 2019-20 / 2020-21 | 0.693 / 0.687 | 0.696 / 0.692 |
+
+**Live path (opener, slate 154575 at 2026-10-20 12:00Z).**
+- Team minutes and team points are identical ON and OFF, because the layer touches only per-minute rates and points are still reconciled to the implied total.
+- Team DK changes: BOS −2.0, DET −3.4, NYK +1.4, PHI −6.9, OKC −0.8, SAS +0.2 (−3%…+1%).
+- Top-12 moves stay within ±2.1 DK (SGA +2.1, Wembanyama +1.2, Maxey −1.0, LeBron −1.1).
+- Multipliers stay within [0.8, 1.25]. Only fg3m (5.7%) and tov (4.7%) touch the clip. The DK-rate multiplier ranges 0.93–1.04.
+- `live-path-eval` with the switch ON passes (minutes only, identical by construction).
+- Verdict: ship after the opener is graded.
 
 ### Phase 2.5: contest builder, GPP, late swap, Showdown (Nov 15 – 21)
 

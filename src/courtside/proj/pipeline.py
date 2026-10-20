@@ -18,8 +18,14 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   games or in one of the last 3).
 * **Parameters** (`Bundle`): minutes params, rate-state params and copula params, all fit on
   seasons < S (S = the season of the day), cached as `<data_dir>/proj/bundle_<S>.json`.
+* **Context layer** (Phase 2F P + F2, `context.py`), behind `CONTEXT_ON` (default OFF; env
+  ``COURTSIDE_CONTEXT=1``): the bundle carries a LightGBM per-minute rate multiplier per DK stat
+  (fit on seasons < S, clipped to [0.8, 1.25]) applied to the EB rates right after the stars are
+  picked. ON runs use their own bundle file (`bundle_<S>_v1_cx.json`) and MODEL_VERSION
+  (`pathA-v0.3`); with the switch OFF nothing of it runs and projections are bit-identical.
 
-Seeds (common random numbers): `stable_seed(slate_or_day, kind, MODEL_VERSION)`; every game
+Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
+MODEL_VERSION without the context layer, so ON and OFF share draws); every game
 draws from SeedSequence([seed, crc32(game_id)]), so a game's sims do not depend on which other
 games are on the slate.
 
@@ -36,6 +42,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import resource
 import sqlite3
 import time
@@ -50,6 +57,7 @@ import pandas as pd
 
 from .. import config
 from . import availability as AV
+from . import context as CX
 from . import copula as C
 from . import minutes as M
 from . import reconcile as RC
@@ -60,8 +68,53 @@ from .dfs.optimizer import Projection
 # Minutes engine used by the live/backtest pipeline (T2.2: v1 = LightGBM base with learned
 # promotion; walk-forward MAE 4.49 / 4.40 vs v0.5 4.63 / 4.58, DK gate 8.049 vs 8.181).
 MINUTES_VERSION = "v1"                 # "v0.5" | "v1"
-_VS = "" if MINUTES_VERSION == "v0.5" else f"_{MINUTES_VERSION}"
-MODEL_VERSION = C.MODEL_VERSION if MINUTES_VERSION == "v0.5" else "pathA-v0.2"
+_VS_BASE = "" if MINUTES_VERSION == "v0.5" else f"_{MINUTES_VERSION}"
+MODEL_VERSION_BASE = C.MODEL_VERSION if MINUTES_VERSION == "v0.5" else "pathA-v0.2"
+
+# Learned context layer (Phase 2F P + F2). OFF by default: the live model stays MODEL_VERSION_BASE
+# until the owner ships it. COURTSIDE_CONTEXT=1 (read at import; `set_context` at run time) turns
+# it on with its own bundle file suffix and model version, so ON and OFF runs never share a
+# bundle, a backtest cache or a dfs_runs / player_projections model_version (they do share
+# seeds, see SEED_VERSION).
+CONTEXT_DEFAULT = False                # shipping the layer = True here (env still overrides)
+CONTEXT_ENV = "COURTSIDE_CONTEXT"      # "1"/"true"/"on" forces ON, "0"/"false"/"off" forces OFF
+CONTEXT_SUFFIX = "_cx"
+CONTEXT_MODEL_VERSION = "pathA-v0.3"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name, "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def _versions(on: bool) -> tuple[str, str]:
+    """(bundle file suffix, MODEL_VERSION) for the context switch."""
+    if not on:
+        return _VS_BASE, MODEL_VERSION_BASE
+    mv = CONTEXT_MODEL_VERSION if MINUTES_VERSION == "v1" else f"{MODEL_VERSION_BASE}+cx"
+    return _VS_BASE + CONTEXT_SUFFIX, mv
+
+
+CONTEXT_ON = _env_flag(CONTEXT_ENV, CONTEXT_DEFAULT)
+_VS, MODEL_VERSION = _versions(CONTEXT_ON)
+# Seeds use the base version in both states: ON and OFF runs of the same slate/day draw common
+# random numbers, so their difference is the layer, not Monte Carlo noise (OFF is unchanged).
+SEED_VERSION = MODEL_VERSION_BASE
+
+
+def set_context(on: bool) -> None:
+    """Flip the context switch at run time (evaluation scripts, tests): updates CONTEXT_ON, the
+    bundle suffix and MODEL_VERSION together. Modules that copied MODEL_VERSION at import keep
+    their copy; `pipeline.MODEL_VERSION` is read at call time everywhere in proj/."""
+    global CONTEXT_ON, _VS, MODEL_VERSION
+    CONTEXT_ON = bool(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON)
+
+
 HISTORY_SEASONS = 7            # box seasons loaded for the minutes engine (window 5 + warm-up)
 MINUTES_WINDOW = 5
 LISTED = set(AV.LISTED) | {"removed", "daytoday"}
@@ -81,6 +134,11 @@ def season_of(day: date) -> str:
 
 def _prev_season(season: str) -> str:
     y = int(season[:4]) - 1
+    return f"{y}-{(y + 1) % 100:02d}"
+
+
+def _season_minus(season: str, k: int) -> str:
+    y = int(season[:4]) - k
     return f"{y}-{(y + 1) % 100:02d}"
 
 
@@ -148,7 +206,31 @@ class Context:
         self._shares: M.PairShares | None = None
         self.train_seasons = sorted(x for x in self.h.tg["season"].unique()
                                     if x < season)[-MINUTES_WINDOW:]
+        # context layer inputs (only when the switch is on): team-game box history of S-2..S
+        # now, the EB base rows on first use (they need the bundle's rate-state params)
+        self.cx_t: pd.DataFrame | None = None
+        self._cx_wf: dict = {}
+        if CONTEXT_ON:
+            from .features.common import load_team_games
+            self.cx_t = load_team_games(conn, _season_minus(season, 2), season)
         self.seconds_load = time.time() - t0
+
+    def context_inputs(self, conn: sqlite3.Connection, sp: dict
+                       ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """(base rows of seasons S-2..S under the rate-state params `sp`, team games S-2..S) for
+        `features.day_features`; built once per (season, sp). Rows on or after a projected day
+        are ignored by construction (as-of sums strictly before the day)."""
+        from .features.common import base_rows, load_team_games
+        if self.cx_t is None:
+            self.cx_t = load_team_games(conn, _season_minus(self.season, 2), self.season)
+        key = hashlib.sha1(json.dumps(sp, sort_keys=True, default=str).encode()).hexdigest()
+        if key not in self._cx_wf:
+            t0 = time.time()
+            seasons = [_season_minus(self.season, k) for k in (2, 1, 0)]
+            self._cx_wf = {key: base_rows(conn, seasons, sp, games=self.games, pos=self.pos)}
+            self.log(f"context base rows {seasons[0]}..{seasons[-1]}: {len(self._cx_wf[key])} "
+                     f"({time.time() - t0:.0f}s)")
+        return self._cx_wf[key], self.cx_t
 
     def train_panel(self) -> pd.DataFrame:
         return M.oracle_panel(self.h, M.eval_targets(self.h, self.train_seasons))
@@ -172,17 +254,23 @@ class Bundle:
     minutes: M.MinutesParams
     state: dict
     copula: C.CopulaParams
+    context: CX.ContextModel | None = None      # Phase 2F layer (used only when CONTEXT_ON)
 
     def to_json(self) -> str:
-        return json.dumps({"season": self.season, "minutes": json.loads(self.minutes.to_json()),
-                           "state": self.state, "copula": json.loads(self.copula.to_json()),
-                           "model_version": MODEL_VERSION})
+        d = {"season": self.season, "minutes": json.loads(self.minutes.to_json()),
+             "state": self.state, "copula": json.loads(self.copula.to_json()),
+             "model_version": MODEL_VERSION}
+        if self.context is not None:          # absent key: the pre-context format, byte for byte
+            d["context"] = json.loads(self.context.to_json())
+        return json.dumps(d)
 
     @classmethod
     def from_json(cls, s: str) -> "Bundle":
         d = json.loads(s)
+        cx = d.get("context")
         return cls(season=d["season"], minutes=M.MinutesParams(**d["minutes"]),
-                   state=d["state"], copula=C.CopulaParams(**d["copula"]))
+                   state=d["state"], copula=C.CopulaParams(**d["copula"]),
+                   context=CX.ContextModel(**cx) if cx else None)
 
 
 def fit_state_params(conn: sqlite3.Connection, season: str, log=None) -> dict:
@@ -202,16 +290,41 @@ def fit_state_params(conn: sqlite3.Connection, season: str, log=None) -> dict:
     return p
 
 
+# One LightGBM thread for the live layer's fit: with 3 threads the early-stopping round can
+# differ between two fits of the same frame; with 1 a refit is byte-identical on any machine.
+CONTEXT_FIT_PARAMS = {"num_threads": 1}
+
+
+def _fit_context(conn: sqlite3.Connection, season: str, sp: dict, say) -> CX.ContextModel:
+    return CX.fit_season(conn, season, sp, params=CONTEXT_FIT_PARAMS, log=say)
+
+
 def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = None, *,
                 refit: bool = False, log=None) -> Bundle:
-    """The fitted Bundle for season S (everything fit on seasons < S), cached on disk."""
+    """The fitted Bundle for season S (everything fit on seasons < S), cached on disk. With the
+    context switch on: `bundle_<S>_v1_cx.json` = the OFF bundle of S (reused from disk when
+    present, so ON and OFF differ only by the layer) plus the context layer fit on seasons < S."""
     say = log or (lambda m: None)
     path = cache_dir() / f"bundle_{season}{_VS}.json"
     if path.exists() and not refit:
-        return Bundle.from_json(path.read_text())
+        b = Bundle.from_json(path.read_text())
+        if CONTEXT_ON and b.context is None:
+            b.context = _fit_context(conn, season, b.state, say)
+            path.write_text(b.to_json())
+        return b
+    if CONTEXT_ON and not refit:
+        base = cache_dir() / f"bundle_{season}{_VS_BASE}.json"
+        if base.exists():
+            t0 = time.time()
+            b = Bundle.from_json(base.read_text())
+            b.context = _fit_context(conn, season, b.state, say)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(b.to_json())
+            say(f"bundle {season} + context fitted in {time.time() - t0:.0f}s -> {path}")
+            return b
     t0 = time.time()
     sp = fit_state_params(conn, season, log=say)
-    mpath = cache_dir() / f"minutes_params_{season}{_VS}.json"
+    mpath = cache_dir() / f"minutes_params_{season}{_VS_BASE}.json"
     if mpath.exists() and not refit:
         mp = M.MinutesParams.from_json(mpath.read_text())
     else:
@@ -221,6 +334,8 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
                    shares=M.PairShares(M.pair_events(panel)), version=MINUTES_VERSION)
     cp = C.fit_copula(conn, season, sp, log=say)
     b = Bundle(season=season, minutes=mp, state=sp, copula=cp)
+    if CONTEXT_ON:
+        b.context = _fit_context(conn, season, sp, say)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(b.to_json())
     say(f"bundle {season} fitted in {time.time() - t0:.0f}s -> {path}")
@@ -314,6 +429,8 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
                       "game_date": day.isoformat()})
     rates = ST.rate_frame(conn, q, b.state, games=ctx.games, pos=ctx.pos)
     panel["_star"] = _stars(panel, rates)
+    if CONTEXT_ON and b.context is not None and len(panel):
+        rates = apply_context(ctx, b, conn, day, games, panel, rates, env)
     shares = ctx.shares
     out = []
     by_key = panel.groupby("key", sort=False).indices
@@ -347,6 +464,21 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
                               mu_margin=e["mu_margin"], mu_total=e["mu_total"],
                               env_source=e.get("source", "")))
     return out
+
+
+def apply_context(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
+                  games: pd.DataFrame, panel: pd.DataFrame, rates: pd.DataFrame,
+                  env: dict) -> pd.DataFrame:
+    """The context layer on the EB rates of the panel rows (`context.apply_rates`): F2 features
+    of the day's games (as of strictly before `day`; the pace term uses the environment's market
+    total, none for a league-default environment) and P from the rates themselves."""
+    from . import features as FX
+    wf, t = ctx.context_inputs(conn, b.state)
+    totals = {g: float(e["mu_total"]) for g, e in env.items()
+              if e.get("source") != "default" and e.get("mu_total") is not None}
+    tf = FX.day_features(conn, wf, t, day, games[["game_id", "home", "away"]], totals=totals)
+    key = panel["key"].str.split("|", n=1, expand=True)
+    return CX.apply_rates(b.context, rates, tf, key[0].to_numpy(), key[1].to_numpy())
 
 
 def _team_starters(starters: set | None, p: pd.DataFrame):
@@ -560,7 +692,7 @@ def project_day(conn: sqlite3.Connection, nba_day, at, *, n_sims: int = 25_000,
     b = bundle or load_bundle(conn, season, ctx, log=log)
     games = _day_games(conn, day, game_ids)
     if seed is None:
-        seed = stable_seed(day.isoformat(), kind, MODEL_VERSION)
+        seed = stable_seed(day.isoformat(), kind, SEED_VERSION)
     p_avail, rep_extras, avinfo = report_avail(conn, day, at, games, starters)
     ex = merge_extras(extras, rep_extras)
     res = project_games(conn, day, games, ctx=ctx, bundle=b, n_sims=n_sims, seed=seed,
@@ -605,7 +737,7 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
         if p.starter:
             starters.add(nid)
     if seed is None:
-        seed = stable_seed(sid, kind, MODEL_VERSION)
+        seed = stable_seed(sid, kind, SEED_VERSION)
     res = project_day(conn, day, at, n_sims=n_sims, seed=seed, kind=kind, game_ids=game_ids,
                       ctx=ctx, bundle=bundle, extras=extras, starters=starters or None, log=log)
     nba2dk = {}
@@ -719,7 +851,7 @@ def project_historical(conn: sqlite3.Connection, game_date, *, protocol: str = "
     ctx = ctx or Context(conn, season, log=log)
     b = bundle or load_bundle(conn, season, ctx, log=log)
     if seed is None:
-        seed = stable_seed(day.isoformat(), f"hist-{protocol}", MODEL_VERSION)
+        seed = stable_seed(day.isoformat(), f"hist-{protocol}", SEED_VERSION)
     if protocol == "reports":
         games = _home_away(conn, day)
         if at is None:

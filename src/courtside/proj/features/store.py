@@ -49,10 +49,13 @@ def team_game_features(conn: sqlite3.Connection, wf: pd.DataFrame, sp: dict, *,
 
 
 def day_features(conn: sqlite3.Connection, wf: pd.DataFrame, t: pd.DataFrame, day,
-                 games: pd.DataFrame, *, dvp_params: dict | None = None) -> pd.DataFrame:
+                 games: pd.DataFrame, *, dvp_params: dict | None = None,
+                 totals: dict | None = None) -> pd.DataFrame:
     """F2 team-game rows for the games of one day (the pipeline / live path): `games` has
     game_id, home, away; `wf` = `common.base_rows` and `t` = `common.load_team_games` history
-    (anything on or after `day` is ignored by construction). F1 is per availability scenario
+    (anything on or after `day` is ignored by construction). `totals` {game_id: market total}
+    (the pipeline's environment) replaces the closing totals of the pace term (default: the
+    closing lines, as in training). F1 is per availability scenario
     (`opp_avail.scenario_features`) and is not part of the shipped layer."""
     d = pd.Timestamp(day).date()
     dn = int(ST._day_of(d))
@@ -62,7 +65,7 @@ def day_features(conn: sqlite3.Connection, wf: pd.DataFrame, t: pd.DataFrame, da
                    pd.DataFrame({"game_id": games["game_id"], "team": games["away"],
                                  "opp": games["home"]})], ignore_index=True)
     q["day"], q["sidx"] = dn, sidx
-    return opp_defense.build(conn, wf, params=dvp_params, t=t, queries=q)
+    return opp_defense.build(conn, wf, params=dvp_params, t=t, queries=q, totals=totals)
 
 
 def attach(rows: pd.DataFrame, tg: pd.DataFrame) -> pd.DataFrame:
