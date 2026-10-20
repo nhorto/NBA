@@ -376,6 +376,23 @@ def test_l1_outcomes_of_the_day_itself_never_reach_projections_or_baseline_lineu
 
 # --------------------------------------------------------------------------- L2 fit < S
 
+def _no_timing(j):
+    """A bundle JSON without its fit durations (`seconds*` keys, also inside nested JSON strings),
+    which differ run to run; everything else must match exactly."""
+    def strip(x):
+        if isinstance(x, dict):
+            return {k: strip(v) for k, v in x.items() if not str(k).startswith("seconds")}
+        if isinstance(x, list):
+            return [strip(v) for v in x]
+        if isinstance(x, str) and x[:1] in "{[":
+            try:
+                return strip(json.loads(x))
+            except ValueError:
+                return x
+        return x
+    return strip(json.loads(j))
+
+
 def test_l2_bundle_and_salary_line_ignore_season_S_and_later(conn, days, tmp_path):
     S = "2021-22"
     ctx = P.Context(conn, S)
@@ -385,7 +402,7 @@ def test_l2_bundle_and_salary_line_ignore_season_S_and_later(conn, days, tmp_pat
     shutil.rmtree(config.data_dir() / "proj", ignore_errors=True)    # drop the cached fits
     ctx2 = P.Context(c2, S)
     b2 = REAL_LOAD_BUNDLE(c2, S, ctx2, refit=True).to_json()
-    assert b1 == b2
+    assert _no_timing(b1) == _no_timing(b2)
     # the control: scrambling a TRAINING season changes the fit
     c3 = _clone(conn)
     _sql_scramble(c3, "2020-09-01")
