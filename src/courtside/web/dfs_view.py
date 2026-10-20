@@ -42,6 +42,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse,
 from markupsafe import Markup, escape
 
 from ..proj.dfs import export as dfs_export
+from ..proj.dfs import portfolio as dfs_portfolio
 from ..proj.dfs import why as dfs_why
 from . import fmt
 
@@ -730,6 +731,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
     # ---- contests and export links
     cnt = _rows(conn, "SELECT COUNT(*) FROM dfs_contests WHERE slate_id=?", (sid,))
     v["contests"] = int(cnt[0][0]) if cnt else 0
+    v["payout_calibrated"] = dfs_portfolio.payout_calibrated(conn)   # P(cash) headline gate
     v["export"] = {"topn": f"{base}/export.csv?mode=topn&n={n}",
                    "cash": f"{base}/export.csv?mode=cash", "base": base}
     v["empty_msg"] = (

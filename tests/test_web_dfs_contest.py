@@ -125,7 +125,29 @@ def test_slate_page_links_the_builder(client):
     r = client.get(f"/dfs/{DAY}/{SLATE}")
     assert f'href="{URL}"' in r.text
     t = text_of(r.text)
-    assert "Simulated chance to cash ~50–65%" in t and "55%" not in t     # p_cash 0.55, banded
+    # P(cash) is not a headline before 10 uploaded slates: only in the collapsed details toggle
+    assert "Simulated chance to cash" not in t
+    det = r.text.split('class="dfs-simdet"')
+    assert len(det) == 2                                           # cash card (topn rows: no p_cash)
+    body = text_of(det[1].split("</details>")[0])
+    assert "Details (simulated vs a modelled field, uncalibrated)" in body
+    assert "~52–58%" in body and "field-sampling error" in body     # p_cash 0.55 ± 3 pp
+    assert " 55%" not in t
+    assert "Range 270–330" in t                                    # p10-p90 range unchanged
+
+
+def test_slate_page_cash_headline_returns_after_ten_uploaded_slates(client):
+    conn = db.connect(client.app_.state.store.db_path)
+    for k in range(10):
+        conn.execute("INSERT INTO dfs_contests (contest_id, slate_id, name, captured_at) "
+                     "VALUES (?,?,?,?)", (f"u{k}", f"s{k}", "x", "2026-10-01T00:00:00Z"))
+        conn.execute("INSERT INTO dfs_contest_results (contest_id, rank, entry_hash, "
+                     "uploaded_at) VALUES (?,1,'h','2026-10-02T00:00:00Z')", (f"u{k}",))
+    conn.commit()
+    conn.close()
+    r = client.get(f"/dfs/{DAY}/{SLATE}")
+    t = text_of(r.text)
+    assert "Simulated chance to cash ~52–58%" in t and 'class="dfs-simdet"' not in r.text
 
 
 def test_dollar_headline_only_after_ten_uploaded_slates(client):

@@ -1327,3 +1327,6 @@ textarea.dfs-input { resize: vertical; min-height: 4.5rem; }
 .dfc-details { padding: 0; margin-top: 10px; }
 .dfc-details > summary { padding: 10px var(--pad); font-weight: 600; cursor: pointer; font-size: .92rem; }
 .dfc-details-body { padding: 0 var(--pad) var(--pad); font-size: .9rem; }
+.dfs-simdet { margin-top: 10px; font-size: .86rem; color: var(--ink-2); }
+.dfs-simdet > summary { cursor: pointer; font-weight: 600; color: var(--ink-2); padding: 4px 0; }
+.dfs-simdet p { margin-top: 4px; max-width: 80ch; }

@@ -502,6 +502,13 @@ def prob_band(p: float | None) -> str:
     return "n/a"
 
 
+def payout_calibrated(conn: sqlite3.Connection | None) -> bool:
+    """The one display gate for simulated payout numbers (contest builder: dollar E[payout] /
+    ROI; slate page: P(cash)): headline only once >= MIN_CAL_SLATES slates of real standings are
+    uploaded. Until then they live in "details (simulated, uncalibrated)" toggles."""
+    return conn is not None and calibration_slates(conn) >= MIN_CAL_SLATES
+
+
 def calibration_slates(conn: sqlite3.Connection) -> int:
     """Slates with uploaded DK standings (the payout model's calibration data)."""
     try:

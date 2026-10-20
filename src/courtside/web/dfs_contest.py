@@ -316,7 +316,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str, *, now:
             v["state"] = "no_such_portfolio"
             return v
         pv = _portfolio_view(d, by_cid, now, builds,
-                             calibrated=PF.calibration_slates(conn) >= PF.MIN_CAL_SLATES)
+                             calibrated=PF.payout_calibrated(conn))
         pv["csv"] = f"{v['action']}/{portfolio_id}.csv"
         pv["json"] = f"{v['action']}/{portfolio_id}.json"
         v["portfolio"] = pv

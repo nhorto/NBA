@@ -1355,7 +1355,8 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
               cash_contest: str | None = None, gpp_contest: str | None = None,
               n_field: int | None = 10_000, n_sims: int | None = None, mix=None,
               n_solves: int = N_SOLVES, seed: int = 0, write: bool = True,
-              commit: bool = True, modes: Sequence[str] = ("cash", "topn")) -> dict:
+              commit: bool = True, modes: Sequence[str] = ("cash", "topn"),
+              truth: bool = True) -> dict:
     """Ownership proxy + field proxies + lineup metrics for one projection run (runner hook).
 
     Writes `dfs_ownership_proxy` (large-GPP archetype, the slate-level "popularity (proxy)") and,
@@ -1366,6 +1367,9 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
     Returns the basis (contest ids, field summaries, cash-line quantiles, timings), suitable for
     `dfs_runs.detail["field"]`. Every number is against a modelled field (label "proxy").
     `commit=False` leaves the transaction to the caller (the runner commits with its run row).
+    `truth=True` scores on the calibrated truth of the contest builder (`portfolio.truth_sims`:
+    our sims shifted toward the public number and widened by model error), not on our
+    projection as if it were exact (which put good cash lineups at ~80-90 %).
     A run without stored sims (the FPPG fallback) still gets the ownership proxy."""
     t0 = time.perf_counter()
     sid = slate_id
@@ -1396,6 +1400,11 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
     for tag, contest in (("cash", cc), ("gpp", gc)):
         f = field_for(ctx, contest, n=n_field, mix=mix, n_solves=n_solves, seed=seed)
         fp, ainfo = align_sims(ctx["sims"], f.pids, n_sims, seed)
+        tinfo = None
+        if truth:
+            from . import portfolio as PF
+            fp, tinfo = PF.truth_sims(fp, f.pids, ctx["inputs"], PF.TRUTH_BETA, PF.TRUTH_TAU,
+                                      np.random.default_rng(seed + 7))
         ev = evaluate(f, fp, contest, [x["slots_json"] for x in rows], seed=seed, tiers=False)
         evals[tag] = ev
         out[tag] = {"contest_id": contest.contest_id, "name": contest.name,
@@ -1403,7 +1412,7 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
                     "archetype": contest.archetype, "source": contest.source,
                     "field": f.summary(), "cash_line": ev.cash_line_summary(),
                     "n_sims": ainfo["n_sims"], "missing_sim_players": len(ainfo["missing"]),
-                    "seconds_eval": ev.info["seconds"]}
+                    "seconds_eval": ev.info["seconds"], "truth": tinfo}
     if write and rows:
         for i, x in enumerate(rows):
             c, g = evals["cash"].lineups[i], evals["gpp"].lineups[i]

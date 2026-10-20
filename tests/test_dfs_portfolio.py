@@ -284,3 +284,33 @@ def test_relative_score_and_strengths_by_information(slate):
     ours = inp.set_index("pid").loc[soft.ownership.pids, "proj"].to_numpy(float)
     assert np.abs(b - ours).mean() < np.abs(a - ours).mean()      # sharper = closer to ours
     assert soft.mix == sharp.mix
+
+
+# ============================================================================== runner hook
+
+def _fake_prepare(slate):
+    pool, inp, sims = slate
+
+    def prepare(conn, slate_id, run_id=None, *, n_sims=None, seed=0):
+        return {"pool": pool, "inputs": inp, "info": {"run_id": run_id}, "sims": sims,
+                "n_sims": n_sims, "seed": seed}
+    return prepare
+
+
+def test_score_run_uses_calibrated_truth_and_stays_safe(slate, tmp_path, monkeypatch):
+    conn = db.connect(tmp_path / "c.db")
+    monkeypatch.setattr(F, "prepare", _fake_prepare(slate))
+    monkeypatch.setattr(F, "default_contests", lambda c, s: (
+        F.preset_contest("double_up", 300, 5.0), F.preset_contest("gpp", 2000, 3.0)))
+    kw = dict(slate_id="synth", n_field=2000, n_solves=20, write=False)
+    on = F.score_run(conn, "r1", **kw)
+    assert on["cash"]["truth"]["beta"] == PF.TRUTH_BETA
+    assert on["gpp"]["truth"]["tau"] == PF.TRUTH_TAU
+    off = F.score_run(conn, "r1", truth=False, **kw)
+    assert off["cash"]["truth"] is None
+
+    def boom(*a, **k):
+        raise RuntimeError("truth failed")
+    monkeypatch.setattr(PF, "truth_sims", boom)
+    r = F.score_run_safe(conn, "r1", **kw)
+    assert r["status"].startswith("error") and "truth failed" in r["status"]

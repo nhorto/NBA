@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
 {% set s = v.slate %}
-{# a probability as a range until payouts are calibrated on uploads (same edges as portfolio.prob_band) #}
+{# a probability as a range: the estimate +/- 3 pp of field-sampling error, rounded outward #}
 {% macro pband(p) -%}
-{%- if p < 0.01 %}below 1%{% elif p >= 0.97 %}above 97%{% else %}{% for lo, hi in [(0, 1), (1, 3), (3, 5), (5, 10), (10, 15), (15, 25), (25, 35), (35, 50), (50, 65), (65, 80), (80, 90), (90, 97)] %}{% if p >= lo / 100 and p < hi / 100 %}~{{ lo }}{{ DASH }}{{ hi }}%{% endif %}{% endfor %}{% endif -%}
+{%- set pm = (p * 1000)|round -%}
+{%- if p < 0.01 %}below 1%{% elif p > 0.99 %}above 99%{% else %}~{{ "%d"|format([(pm - 30) // 10, 0]|max) }}{{ DASH }}{{ "%d"|format([-((-(pm + 30)) // 10), 100]|min) }}%{% endif -%}
 {%- endmacro %}
 {% macro pill(label, cls) -%}<span class="pill pill-{{ cls }}">{{ label }}</span>{%- endmacro %}
 
@@ -42,6 +43,16 @@
   {% if w.summary %}<p class="dfs-sum">{{ w.summary }}.</p>{% endif %}
   {% if w.flags %}<ul class="dfs-flags" aria-label="Availability notes">{% for t in w.flags %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
 </div>
+{% endif %}
+{%- endmacro %}
+
+{# P(cash) stays out of the headline until real standings calibrate it (portfolio.payout_calibrated) #}
+{% macro simdet(lu) -%}
+{% if lu.p_cash is not none and not v.payout_calibrated %}
+<details class="dfs-simdet">
+  <summary>Details <span class="muted">(simulated vs a modelled field, uncalibrated)</span></summary>
+  <p>Chance to cash in the slate&rsquo;s largest captured double-up: <b>{{ pband(lu.p_cash) }}</b>. This is simulated against a modelled field built from public information (a proxy), and the range includes &plusmn;3 points of field-sampling error. Real double-up fields are tougher, so it runs high until uploaded standings calibrate it.</p>
+</details>
 {% endif %}
 {%- endmacro %}
 
@@ -141,12 +152,13 @@
         <p class="dfs-lu-meta">
           <span>{{ lu.salary_text }} of $50,000</span>
           {% if lu.p10 is not none and lu.p90 is not none %}<span class="dfs-range">Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }} (10th to 90th percentile, simulated)</span>{% if lu.bar %}<span class="dfs-lu-bar">{{ lu.bar }}</span>{% endif %}{% endif %}
-          {% if lu.p_cash is not none %}<span>Simulated chance to cash {{ pband(lu.p_cash) }} <small class="muted">(largest captured double-up, vs a modelled field: a proxy, likely optimistic)</small></span>{% endif %}
+          {% if lu.p_cash is not none and v.payout_calibrated %}<span>Simulated chance to cash {{ pband(lu.p_cash) }} <small class="muted">(largest captured double-up, vs a modelled field: a proxy; the range includes &plusmn;3 points of field-sampling error)</small></span>{% endif %}
           {% if lu.late %}<span class="flag flag-neg">Late news: {{ lu.late|join(", ") }}</span>{% endif %}
         </p>
       </div>
       {{ lineup_table(lu, "Cash lineup, eight roster slots") }}
       {{ why_block(lu, "cash") }}
+      {{ simdet(lu) }}
       <div class="dfs-actions">
         <a class="btn" href="{{ v.export.cash }}" download>Download DK CSV</a>
         {{ copy_block(lu, "cash", v.export.base ~ "/lineup.txt?mode=cash") }}
@@ -191,6 +203,7 @@
           <div class="dfs-card-body">
             {{ lineup_table(lu, "Top N lineup " ~ lu.rank ~ ", eight roster slots", bars=False) }}
             {{ why_block(lu, "t" ~ lu.rank) }}
+            {{ simdet(lu) }}
             <div class="dfs-actions">
               {{ copy_block(lu, "t" ~ lu.rank, v.export.base ~ "/lineup.txt?mode=topn&rank=" ~ lu.rank) }}
             </div>
