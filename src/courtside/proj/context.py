@@ -37,7 +37,9 @@ CLI: python -m courtside.proj.context {dvp-params, ablation, fit, bundle} ...
 INTEGRATION (wired in `pipeline`, behind `pipeline.CONTEXT_ON`, default OFF; env
 COURTSIDE_CONTEXT=1 turns it on; the extended layer P+F2+F3+F6 additionally needs
 `pipeline.CONTEXT_EXT`, env COURTSIDE_CONTEXT_EXT=1: bundle `bundle_<S>_v1_cx2.json`,
-`pathA-v0.4`, F3 per player and F6 per team-game from `features.LiveExtras`):
+`pathA-v0.4`, F3 per player and F6 per team-game from `features.LiveExtras`; F4 shot quality /
+luck was ablated on top and dropped (PLAYERS.md, third ablation): not wired; a layer with F4 keeps
+its xFG model in `ContextModel.meta["xfg"]` for `features.LiveExtras(..., xfg=)`):
   1. Bundle: `Bundle.context` (JSON key "context", only present when set, so an OFF bundle is
      byte-identical to the pre-context format), fit in `load_bundle` on seasons < S by
      `fit_season(conn, S, bundle.state)` = `fit(FX.build_frame(conn, S, sp), season < S,
@@ -89,10 +91,14 @@ VARIANTS = {"base": (), "P": ("P",), "P+F1": ("P", "F1"), "P+F2": ("P", "F2"),
             # second ablation (F3 / F5 / F6 on top of the shipped P+F2)
             "P+F2+F3": ("P", "F2", "F3"), "P+F2+F5": ("P", "F2", "F5"),
             "P+F2+F6": ("P", "F2", "F6"), "P+F2+F3+F5+F6": ("P", "F2", "F3", "F5", "F6"),
-            "P+F2+F3+F5": ("P", "F2", "F3", "F5"), "P+F2+F3+F6": ("P", "F2", "F3", "F6")}
+            "P+F2+F3+F5": ("P", "F2", "F3", "F5"), "P+F2+F3+F6": ("P", "F2", "F3", "F6"),
+            # third ablation (F4 shot quality / luck on top of the opt-in P+F2+F3+F6)
+            "P+F2+F4": ("P", "F2", "F4"), "P+F2+F3+F6+F4": ("P", "F2", "F3", "F6", "F4")}
 VARIANTS_2 = ("P+F2", "P+F2+F3", "P+F2+F5", "P+F2+F6", "P+F2+F3+F5+F6")
 # staged: F5 / F6 on top of P+F2+F3 (F3 passes alone by a wide margin)
 VARIANTS_3 = ("P+F2", "P+F2+F3", "P+F2+F3+F5", "P+F2+F3+F6", "P+F2+F3+F5+F6")
+# F4 on top of P+F2+F3+F6 (and alone on P+F2: how much of it F3's FG% conversions already carry)
+VARIANTS_4 = ("P+F2", "P+F2+F4", "P+F2+F3+F6", "P+F2+F3+F6+F4")
 
 
 # ============================================================================== model
@@ -255,6 +261,9 @@ def fit_season(conn: sqlite3.Connection, season: str, sp: dict, *,
     train = (fr["season"] < season).to_numpy()
     m = fit(fr, train, groups, season=season, params=params, log=say)
     m.meta["n_train_seasons"] = n_train
+    if "F4" in groups:              # the xFG model behind the F4 columns (seasons < S), for live
+        from .features import shots as F4
+        m.meta["xfg"] = json.loads(F4.xfg_for_season(conn, season, log=say).to_json())
     say(f"context {season} {'+'.join(groups)} fitted on {m.train_seasons} "
         f"({time.time() - t0:.0f}s)")
     return m
@@ -401,7 +410,8 @@ PAIRS = (("P", "base"), ("P+F1", "P"), ("P+F2", "P"), ("P+F1+F2", "P+F2"),
          ("P+F2+F3+F5+F6", "P+F2"),
          ("P+F2+F3+F5", "P+F2+F3"), ("P+F2+F3+F6", "P+F2+F3"),
          ("P+F2+F3+F5+F6", "P+F2+F3"), ("P+F2+F3+F5+F6", "P+F2+F3+F6"),
-         ("P+F2+F3+F5+F6", "P+F2+F3+F5"))
+         ("P+F2+F3+F5+F6", "P+F2+F3+F5"),
+         ("P+F2+F4", "P+F2"), ("P+F2+F3+F6+F4", "P+F2+F3+F6"), ("P+F2+F3+F6+F4", "P+F2"))
 
 
 def state_params_for(conn: sqlite3.Connection, season: str) -> dict:

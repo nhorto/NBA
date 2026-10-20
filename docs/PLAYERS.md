@@ -88,6 +88,7 @@ No review item is rejected outright. Three are accepted with a different option 
 | **Phase 2F, first ablation (F0–F2):** a per-player descriptor model **P** fixes the role-tier bias (end-to-end DK MAE −0.022 to −0.025, 6–8 SE, every season). **F2 opponent defense** (league-relative allowed-vs-expected index by position + 15 team box rates) clears the bar in 2023-24 / 2024-25 (per-minute NB LL +12 SE, CRPS 3–5 SE; harness CRPS 3.9 / 1.45 SE); it helps rebounds, blocks, assists, steals, turnovers and 3PM, not points (the market total covers points). **F1 opponent availability does not ship** (CRPS < 1 SE in 2024-25, negative in 2019-20). | P+F2 committed, wired into the live pipeline only after the opener with live-path checks |
 | **P + F2 wired into the pipeline behind a switch (2026-10-20), default OFF.** `pipeline.CONTEXT_ON` (`CONTEXT_DEFAULT = False`, env `COURTSIDE_CONTEXT=1/0` overrides). ON = `pathA-v0.3`, bundle `bundle_<S>_v1_cx.json` (the OFF bundle + the layer fit on seasons < S, 1 LightGBM thread so refits are byte-identical); seeds stay on `pathA-v0.2` so ON/OFF share draws. The F2 pace term uses the environment's market total (live books total on the live path; there is no closing line before the tip). With the switch OFF, projections are bit-identical to HEAD (bdb8a56) on a historical day and on the live opener slate. | Walk-forward ON vs OFF, every season better at 5.5–9.5 SE (DK MAE −0.026…−0.038, CRPS −0.011…−0.018); star bias −1.1…−1.4 → −0.6…−0.9; coverage unchanged; gate lines all PASS in both arms; lineups +1.3 / +1.9 pts (< 1.2 SE). Opener: team minutes/points unchanged, team DK −3%…+1%, max player move 2.1 DK. Table under Phase 2F |
 | **Phase 2F, second ablation (F3 / F5 / F6 on top of P+F2, 2026-10-20):** **F3 tracking** (rebound chances, passes, touches, deflections, contested shots, box-outs: shrunk per-minute rates, opportunity conversions, tracking-implied rate vs the EB rate) clears the per-minute bar by a wide margin in every season 2022-23…2025-26 (NB LL +7.7…+10.3 SE, CRPS +2.7…+4.2 SE). **F6 schedule** (home, rest, density, travel, time zones, altitude, season stage) adds on top of F3 (LL +1.0…+3.1 SE, CRPS +1.2…+2.8 SE). End to end (T2.1 harness) **F3 + F6** beats P+F2 by CRPS +0.0017 (1.3 SE) / +0.0041 (3.0 SE) and MAE +0.0042 (1.9 SE) / +0.0052 (2.3 SE) in 2023-24 / 2024-25; F3 alone is only 0.6 SE in 2023-24. **F5 matchups** (likely defenders from 2.2M matchup rows x shrunk defender quality) is real but tiny per minute (LL +1.4…+5.6 SE on top of F3+F6) and **adds nothing end to end** (CRPS +0.0000 / −0.0002): dropped. | **P+F2+F3+F6 kept, F5 dropped.** Wired opt-in as `pathA-v0.4` (`COURTSIDE_CONTEXT=1 COURTSIDE_CONTEXT_EXT=1`, bundle `bundle_<S>_v1_cx2.json`); default OFF; with the extension off ON stays bit-identical to `pathA-v0.3`. Star bias moves −0.06…−0.10 DK further negative (star-tier MAE within 1 SE). Table under Phase 2F |
+| **Phase 2F, third ablation (F4 shot quality / luck on top of P+F2+F3+F6, 2026-10-20):** an xFG model from 1.92M play-by-play shots (log-loss −0.016 vs distance-only, all of it on 2s; 3s are near-unmodellable without defender distance) and per-player shot quality / diet / long-memory skill / **the share of the EB rate that is shooting luck**. The luck premise holds: 3PT over-expected keeps only 0.39 of itself in the EB window, and actual / expected fg3m runs 1.16 → 0.93 across luck deciles. Per minute F4 adds LL +2.5…+4.7 SE and CRPS +1.9…+4.0 SE on top of F3+F6 (mostly 3PM). **End to end it adds nothing**: CRPS −0.0004 (−0.5 SE) / −0.0003 (−0.4 SE), MAE −0.0008 / +0.0001 in 2023-24 / 2024-25. Market reconciliation cancels the points part; the 3PM part is too small in DK. | **F4 dropped**, not wired (`pipeline.py` untouched; the code stays as group F4 for research). Table under Phase 2F |
 | P(play) uses hierarchical Beta cells (status × report age × reason × role) fit on the 151 rescued days (T1.3). Report age barely matters within a status; re-reading the latest report at lock−45/−10 is what matters. | CV log-loss on D/Q/P .463 vs .503 for the old map |
 | **Late swap (T2.14, `proj/dfs/swap.py`)**: a slot is fixed when its game has tipped or DK's file says so (`(LOCKED)` cell, "In Progress"/"Final" in the file's player list); fixed players are pinned and every result re-checked, failures are left unchanged. Open players may move between open slots; a second solve keeps everyone else in his old seat. An entry changes only when a ruled-out player must go or the objective gains ≥ 0.5 pts. Objective: cash for our cash lineup and double-up / 50-50 / H2H contest names, else mean. Same-contest entries stay ≥ 1 player apart (identical entries solve once); optional overlap / exposure caps count the locked parts and are relaxed, with a note, only when locks force it. Unchanged and locked cells are written back exactly as DK wrote them; new cells use the ID from DK's own player list in the upload. Read-only: stored projections, not a fresh pipeline run. The runner's swap loop moved to `swap.resolve_targets` unchanged. | 150 real-slate entries in 0.9 s (budget 30 s); 20 tests, including 40 random lock/shock trials and a byte-for-byte equivalence test of the runner's loop |
 | **Showdown (T2.15, `proj/dfs/showdown.py`)**: verified against pydfs Captain Mode. Slates are 30 RotoGuru single games (CPT = 1.5 × DK salary; actual points plus a noisy quarter-point variant) and the 3 captured DK Showdown slates (FPPG). pydfs hard-codes `max_from_one_team = 5`, which in a 2-team game is the same rule as our `teamCount.min = 2`. DK's CPT salary is exactly 1.5 × UTIL on all 250 captured rows: UTIL prices are in $200 steps, so no rounding rule is ever needed. | `courtside dfs showdown-check`: 33/33 slates, 63/63 comparisons with an equal objective, 0 ties |
@@ -711,6 +712,91 @@ Not done / caveats:
 - The F3 / F5 / F6 shrinkage constants were set by hand, not tuned.
 - F3 adds 0.06–0.10 DK to the star tier's under-projection.
 - The RotoGuru lineup seasons (2019-20 / 2020-21) were not rerun: they have no tracking history to train on.
+
+**Phase 2F, third ablation: F4 shot quality and shooting luck (xFG) on top of P+F2+F3+F6 (2026-10-20). Verdict: dropped.** Real per minute, nothing end to end.
+
+Code:
+- `proj/features/shots.py` (shot store, xFG model, F4 features), registered as group F4 (`features.EXTENSION_GROUPS`, `extend_frame`, `LiveExtras(..., xfg=)`).
+- `context.VARIANTS_4`; `research/xfg_quality.py`, `research/f4_luck_diag.py`.
+- Not wired into the pipeline: `pipeline.py` is unchanged.
+
+Reports are in `var/reports/f4/` (Mac scratch `courtside-compute/f4`).
+
+*Shot store.* Every FGA and FT of the archived cdn play-by-play, 2019-20 … 2025-26: 8,647 games and 1.92M shots. 2019-20 has only 874 games archived. The store records:
+- shooter, made, legacy x / y, distance, shot type, 14 descriptor flags (driving, pull-up, step-back, …), second-chance / fast-break / off-turnover, period, seconds left, score before the shot;
+- assisted / blocked, which are outcome-dependent and kept out of the xFG model.
+
+It is cached per season as parquet under `<data>/proj/features/shots/`. Updates are incremental: only new archive files are parsed.
+
+*xFG model.* LightGBM binary on the pre-shot features, fit on the shots of seasons < S, with per-kind Platt scaling on the held-out last training season. It is scored on every FGA of S against a distance-only baseline (make rate per 2 / 3 × 1-ft bin, same training seasons):
+
+| Test season (fit on) | FGA | Log-loss xFG vs distance (gain) | 2PT gain | 3PT gain | Brier | ECE | Calibration slope all / 3PT |
+|---|---|---|---|---|---|---|---|
+| 2022-23 (2019-20…2021-22) | 232,918 | 0.6345 vs 0.6521 (+0.0175) | +0.0282 | +0.0007 | 0.2232 vs 0.2301 | 0.009 vs 0.013 | 1.00 / 0.88 |
+| 2023-24 (…2022-23) | 233,597 | 0.6357 vs 0.6527 (+0.0171) | +0.0275 | +0.0010 | 0.2237 vs 0.2305 | 0.008 vs 0.009 | 0.98 / 1.16 |
+| 2024-25 (…2023-24) | 234,975 | 0.6361 vs 0.6523 (+0.0162) | +0.0276 | +0.0005 | 0.2238 vs 0.2303 | 0.005 vs 0.008 | 0.99 / 0.95 |
+| 2025-26 (…2024-25) | 234,671 | 0.6361 vs 0.6520 (+0.0159) | +0.0263 | +0.0011 | 0.2237 vs 0.2299 | 0.005 vs 0.009 | 1.02 / 0.95 |
+
+Distance and shot type carry 81% of the split gain; seconds left, location and the cutting / tip / finger-roll flags carry the rest. **3s are almost unmodellable** without defender distance: the gain over distance-only is 0.001. Before Platt scaling, the 3PT calibration slope was 0.79–0.90.
+
+*Features* (pts and fg3m only; strictly pre-tip, `common.ew_asof`). Unless noted, they are shrunk to the position-group prior with a 180-day half-life.
+- Shot quality: xFG% on 2s / 3s and expected points per FGA vs the league.
+- Shot diet: rim / short / mid / corner-3 / above-the-break-3 shares, 3PA rate, FT rate, FT%, and the assisted share of made 2s / 3s.
+- Long-memory shooting over expected (365-day half-life, net of the league drift).
+- Opponent xFG and luck allowed.
+- **The share of the EB rate that is luck**, `f4_lk_pts` / `f4_lk_fg3m`: made-minus-xFG points / 3PM accumulated with the EB state's own decay, divided by (n_s + κ_s) and r_s. These are monotone −1.
+
+*The luck premise holds.* Two checks support it:
+- **Per player-game.** In 2024-25, 3PT shooting-over-expected in a 120-day window (the fg3m EB window) carries only **0.39** of itself into the next game. At a 365-day memory it carries 0.56; for 2s, 0.67 and 0.76. So about 60% of a hot 3PT stretch is luck.
+- **On the EB base.** Actual / expected fg3m falls monotonically across deciles of `f4_lk_fg3m`: from 1.16 (cold) to 0.93 (hot) in 2024-25, and from 1.13 to 0.95 in 2023-24. For points the range is 1.02 → 0.98 and 1.04 → 0.97.
+  - The P+F2+F3+F6 layer already removes about half of this. F3's uncontested / contested FG% conversions are a luck regression too: fg3m runs 1.08 → 0.96.
+  - Adding F4 removes most of the rest: 1.02 → 0.98 in 2024-25, but 1.02 → 1.02 in 2023-24, where the top decile is slightly over-corrected.
+
+*Per minute* (frame protocol as in the second ablation; SE = the larger of the two-way and date-clustered SEs):
+
+| Comparison | Season | NB LL/row gain (SE, z) | DK CRPS gain (SE, z) | DK MAE gain (SE, z) | LL by stat ×10⁻⁴: pts / fg3m (z) |
+|---|---|---|---|---|---|
+| **+F4 vs P+F2+F3+F6** | 2022-23 | +0.00126 (0.00034, 3.7) | +0.0017 (0.0007, 2.4) | +0.0031 (0.0012, 2.6) | +6 (3.0) / +7 (3.5) |
+| | 2023-24 | +0.00093 (0.00037, 2.5) | +0.0019 (0.0008, 2.5) | +0.0039 (0.0014, 2.8) | −1 (−0.3) / +11 (5.5) |
+| | 2024-25 | +0.00121 (0.00041, 3.0) | +0.0015 (0.0008, 1.9) | +0.0025 (0.0013, 1.9) | +2 (0.7) / +10 (3.3) |
+| | 2025-26 | +0.00178 (0.00038, 4.7) | +0.0030 (0.0008, 4.0) | +0.0047 (0.0012, 3.9) | +10 (5.0) / +8 (2.7) |
+| +F4 vs P+F2 (alone) | 2022-23 … 2025-26 | +0.0029 / +0.0025 / +0.0034 / +0.0038 (4.7…5.8) | +0.0020 / +0.0041 / +0.0030 / +0.0046 (2.1…4.2) | +0.0037 / +0.0054 / +0.0045 / +0.0075 (2.2…3.8) | pts +4…+16, fg3m +21…+24 |
+| +F4 vs P+F2+F3+F6, multipliers **reconciled per team-game** (points rescaled to the team's expected points, others by c^0.5, as the pipeline does) | 2023-24 / 2024-25 | +0.00089 (2.4) / +0.00108 (2.6) | +0.0016 (2.1) / +0.0005 (0.7) | +0.0030 (2.3) / +0.0010 (0.8) | pts −1 / +2, fg3m +10 / +9 |
+
+Alone on P+F2, F4 is about 2.5× its gain on top of F3. The overlap is F3's FG% conversions.
+
+*End to end* (T2.1 harness: avail protocol, closing lines, 4,000 sims, every date). The bundle is the OFF bundle + the P+F2+F3+F6+F4 layer fit on seasons < S, with the xFG model fit on seasons < S. Runs are paired with common random numbers against the P+F2+F3+F6 runs: the rows are identical and so are the expected minutes. SE is clustered by date.
+
+| Arm | Season | DK MAE (gain, SE, z) | DK CRPS (gain, SE, z) | 80% cov | bias (all / star tier) | Verdict |
+|---|---|---|---|---|---|---|
+| +F4 vs P+F2+F3+F6 (`pathA-v0.4`) | 2023-24 | 8.0207 → 8.0215 (−0.0008, 0.0013, −0.6) | 5.6503 → 5.6507 (−0.0004, 0.0008, −0.5) | 0.820 → 0.820 | −0.110 → −0.107 / −0.96 → −0.94 | **dropped** |
+| | 2024-25 | 7.9897 → 7.9896 (+0.0001, 0.0013, +0.1) | 5.6423 → 5.6426 (−0.0003, 0.0008, −0.4) | 0.824 → 0.824 | +0.030 → +0.036 / −0.72 → −0.72 | |
+| (P+F2+F3+F6+F4 vs P+F2) | 2023-24 / 2024-25 | +0.0034 (1.3) / +0.0054 (2.1) | +0.0013 (0.9) / +0.0038 (2.6) | | | below +F3+F6 alone (1.9 / 2.3, 1.3 / 3.0) |
+
+Tiers vs P+F2+F3+F6: the bench MAE is −0.0032 (SE 0.0017) in 2023-24. Role and star are within 1 SE both seasons.
+
+**Wiring check.** On 2025-01-15 the pipeline's F4 columns (bundle layer + `LiveExtras` with the bundle's xFG model) equal the frame's for every played player-game (max |diff| 2.6e-13, no NaN mismatch). So the null end-to-end result is not a wiring artefact.
+
+**Existing arms unchanged.** OFF `pathA-v0.2`, P+F2 `pathA-v0.3` and P+F2+F3+F6 `pathA-v0.4` were run with HEAD (93f7a5b+) and with this code on 2025-01-15: 11 games, 4,000 sims, same seed. Each arm is bit-identical: players, stats and 1.31M sim values. ON and ext still differ from each other.
+
+**Why it doesn't carry.**
+- **Points.** The pipeline rescales team points to the market's implied total, so a within-team luck regression mostly cancels. Reconciled, the points LL gain is about 0, and in 2024-25 the CRPS gain falls from 1.9 to 0.7 SE.
+- **3PM.** The 3PM gain survives reconciliation, but 3PM carries only +0.5 DK per make. Per player the multiplier moves are about 1–3% of one stat, below what the projected-minutes and simulation noise of the harness can resolve.
+
+**Leak tests** (`tests/test_proj_shots.py`):
+- L1 scramble: every shot (location, type, result) and box stat on or after the cut is re-randomised; F4 up to the cut is identical and later rows change.
+- L5 truncation: games after the cut are deleted, so their shots drop out through the team_games join; F4 up to the cut is identical.
+- The xFG model is walk-forward (seasons < S).
+- `LiveExtras.day` reproduces the frame's F4 columns and the row-level luck shares exactly.
+- Before the shot era the features are NaN; players without shots sit at the prior; a planted hot shooter carries positive luck.
+- Parser dialects: "Jump Shot" / "jumpshot", "step back" / "stepback", ": Made", legacy coordinates, score before the shot.
+- The store is incremental.
+
+**Not done / caveats:**
+- No defender distance (stats.nba.com shot dashboards are season-level only), so 3PT xFG is close to league average for everyone. Tracking's contested / uncontested split (F3) is the better 3PT-quality signal we have.
+- The shrinkage constants and half-lives were set by hand (the skill K was checked against next-game persistence), not tuned.
+- 2019-20 is missing about 210 archived games.
+- If F4 is revisited, the open lever is **3PM-only** (its gain survives reconciliation), judged end to end in a season where DK 3PM exposure matters (Showdown / GPP), not more per-minute work on points.
 
 ### Phase 2.5: contest builder, GPP, late swap, Showdown (Nov 15 – 21)
 

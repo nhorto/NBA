@@ -13,8 +13,10 @@ before the game date (season-to-date + recency-weighted + shrunk, `common.ew_aso
       shrunk per-minute rates, conversions, tracking-implied rate vs the EB rate)  tracking.py
   F5  matchups (likely defenders x shrunk defender quality; whom he guards)        matchups.py
   F6  schedule context (home, rest, density, travel, time zones, altitude, stage) schedule.py
+  F4  shot quality / shooting luck (xFG from the cdn PBP: quality, diet, skill,
+      luck inside the EB rates, opponent quality / luck allowed)                  shots.py
 
-F3 / F5 / F6 are not in the cached base frame: `extend_frame(conn, frame, groups)` adds them
+F3 / F4 / F5 / F6 are not in the cached base frame: `extend_frame(conn, frame, groups)` adds them
 (cached per season and group).
 
 Public API
@@ -32,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
-from . import matchups, opp_avail, opp_defense, player, schedule, tracking
+from . import matchups, opp_avail, opp_defense, player, schedule, shots, tracking
 
 
 @dataclass(frozen=True)
@@ -59,8 +61,10 @@ GROUPS: dict[str, Group] = {
                 matchups.monotone, neutral=dict(matchups.NEUTRAL)),
     "F6": Group("F6", "schedule context", schedule.columns, schedule.monotone,
                 neutral=dict(schedule.NEUTRAL)),
+    "F4": Group("F4", "shot quality and shooting luck (xFG)", shots.columns, shots.monotone,
+                neutral=dict(shots.NEUTRAL)),
 }
-EXTENSION_GROUPS = ("F3", "F5", "F6")
+EXTENSION_GROUPS = ("F3", "F5", "F6", "F4")
 
 
 def model_columns(stat: str, groups: Sequence[str]) -> list[str]:
@@ -89,4 +93,4 @@ from .store import (LiveExtras, attach, build_frame, day_features,  # noqa: E402
 __all__ = ["GROUPS", "Group", "model_columns", "monotone_for", "categorical_for", "build_frame",
            "team_game_features", "day_features", "attach", "extend_frame", "LiveExtras",
            "EXTENSION_GROUPS",
-           "opp_avail", "opp_defense", "player", "tracking", "matchups", "schedule"]
+           "opp_avail", "opp_defense", "player", "tracking", "matchups", "schedule", "shots"]

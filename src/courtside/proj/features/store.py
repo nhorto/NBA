@@ -7,8 +7,8 @@
   build_frame(conn, season, sp, ...)     every player-game of seasons S-n_train .. S with
                                          y_/E_/d_<s> and all feature groups; cached as parquet
                                          under <data>/proj/features/
-  extend_frame(conn, frame, groups, ...) adds F3 / F5 / F6 (not in the base frame) to a frame,
-                                         cached per (frame, group)
+  extend_frame(conn, frame, groups, ...) adds F3 / F4 / F5 / F6 (not in the base frame) to a
+                                         frame, cached per (frame, group)
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import pandas as pd
 
 from ... import config
 from .. import state as ST
-from . import matchups, opp_avail, opp_defense, player, schedule, tracking
+from . import matchups, opp_avail, opp_defense, player, schedule, shots, tracking
 from .common import ALL_STATS, base_rows, load_team_games, season_label
 
 FRAME_VERSION = 4
@@ -87,6 +87,8 @@ def attach(rows: pd.DataFrame, tg: pd.DataFrame, pf: pd.DataFrame | None = None
         extra.append(opp_defense.row_features(out))
     if "t3_impl_reb" in out:
         extra.append(tracking.row_features(out))
+    if "f4_lpts_s" in out:
+        extra.append(shots.row_features(out))
     return pd.concat([out] + extra, axis=1)
 
 
@@ -154,9 +156,10 @@ def _ext_path(season: str, group: str, frame: pd.DataFrame) -> Path:
 
 
 def group_table(conn: sqlite3.Connection, frame: pd.DataFrame, group: str, *,
-                log: Callable[[str], None] | None = None) -> pd.DataFrame:
+                season: str = "", log: Callable[[str], None] | None = None) -> pd.DataFrame:
     """The raw feature table of an extension group for the rows of `frame`: (game_id, team) for
-    F6, (game_id, player_id) for F3 / F5."""
+    F6, (game_id, player_id) for F3 / F4 / F5 (F4 with the xFG model of `season`, fit on the
+    shots of seasons < S)."""
     say = log or (lambda m: None)
     t0 = time.time()
     pos = ST.load_positions(conn)
@@ -166,6 +169,8 @@ def group_table(conn: sqlite3.Connection, frame: pd.DataFrame, group: str, *,
         out = tracking.build(conn, frame, pos=pos)
     elif group == "F5":
         out = matchups.build(conn, frame, pos=pos, log=say)
+    elif group == "F4":
+        out = shots.build(conn, frame, season=season or None, pos=pos, log=say)
     else:
         raise ValueError(group)
     say(f"features: {group} {len(out)} rows ({time.time() - t0:.0f}s)")
@@ -174,21 +179,21 @@ def group_table(conn: sqlite3.Connection, frame: pd.DataFrame, group: str, *,
 
 def extend_frame(conn: sqlite3.Connection, frame: pd.DataFrame, groups, *, season: str = "",
                  cache: bool = True, log: Callable[[str], None] | None = None) -> pd.DataFrame:
-    """`frame` (build_frame) + the columns of the extension groups in `groups` (F3 / F5 / F6;
-    others are ignored) and their row-level columns. Row order is kept."""
+    """`frame` (build_frame) + the columns of the extension groups in `groups` (F3 / F4 / F5 /
+    F6; others are ignored) and their row-level columns. Row order is kept."""
     out = frame
     for g in groups:
-        if g not in ("F3", "F5", "F6"):
+        if g not in ("F3", "F4", "F5", "F6"):
             continue
         cols = {"F3": tracking.TEAM_COLS, "F5": matchups.TEAM_COLS,
-                "F6": schedule.TEAM_COLS}[g]
+                "F6": schedule.TEAM_COLS, "F4": shots.TEAM_COLS}[g]
         if all(c in out.columns for c in cols):
             continue
         path = _ext_path(season, g, frame)
         if cache and path.exists():
             tab = pd.read_parquet(path)
         else:
-            tab = group_table(conn, frame, g, log=log)
+            tab = group_table(conn, frame, g, season=season, log=log)
             if cache:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 tab.to_parquet(path)
@@ -199,6 +204,8 @@ def extend_frame(conn: sqlite3.Connection, frame: pd.DataFrame, groups, *, seaso
         assert len(out) == n
         if g == "F3":
             out = pd.concat([out, tracking.row_features(out)], axis=1)
+        if g == "F4":
+            out = pd.concat([out, shots.row_features(out)], axis=1)
     return out
 
 
@@ -207,17 +214,23 @@ def extend_frame(conn: sqlite3.Connection, frame: pd.DataFrame, groups, *, seaso
 class LiveExtras:
     """Per-season inputs of the extension groups for the pipeline / live path, loaded once per
     process (seasons S-3..S; every use is strictly before the projected day by construction,
-    and older history carries < 1% weight under the groups' half-lives)."""
+    and older history carries < 1% weight under the groups' half-lives). F4 reads the whole shot
+    era (its skill memory is long) with the layer's own xFG model (`xfg`: the
+    `ContextModel.meta["xfg"]` JSON; default the xFG model of S fit on seasons < S)."""
 
     def __init__(self, conn: sqlite3.Connection, season: str, groups, *, pos=None,
-                 log: Callable[[str], None] | None = None):
+                 xfg=None, log: Callable[[str], None] | None = None):
         say = log or (lambda m: None)
         t0 = time.time()
-        self.groups = tuple(g for g in groups if g in ("F3", "F5", "F6"))
+        self.groups = tuple(g for g in groups if g in ("F3", "F4", "F5", "F6"))
         self.season = season
         pos = pos if pos is not None else ST.load_positions(conn)
         first = season_label(int(season[:4]) - 3)
-        self.trk = self.mh = self.ph = self.dq = self.sch = None
+        self.trk = self.mh = self.ph = self.dq = self.sch = self.shots = None
+        if "F4" in self.groups:
+            m = (shots.XFGModel.from_json(xfg) if xfg is not None
+                 else shots.xfg_for_season(conn, season, log=say))
+            self.shots = shots.load_history(conn, m, last=season, pos=pos, log=say)
         if "F3" in self.groups:
             self.trk = tracking.load_history(conn, first=first, last=season, pos=pos)
         if "F5" in self.groups:
@@ -249,4 +262,13 @@ class LiveExtras:
         if self.mh is not None:
             f5 = matchups.features(self.mh, r, ph=self.ph, dq=self.dq)
             pf = pd.concat([pf, f5.drop(columns=["game_id", "player_id"])], axis=1)
+        if self.shots is not None:
+            opp = {**dict(zip(games["game_id"].astype(str) + "|" + games["home"].astype(str),
+                              games["away"])),
+                   **dict(zip(games["game_id"].astype(str) + "|" + games["away"].astype(str),
+                              games["home"]))}
+            q = r[["player_id", "day", "sidx", "grp"]].copy()
+            q["opp"] = (r["game_id"].astype(str) + "|" + r["team"].astype(str)).map(opp)
+            f4 = shots.player_features(self.shots, q)
+            pf = pd.concat([pf, f4], axis=1)
         return tf, pf.drop_duplicates(["game_id", "player_id"])
