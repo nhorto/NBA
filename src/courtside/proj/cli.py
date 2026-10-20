@@ -29,6 +29,8 @@ DFS_MODULES: tuple[str, ...] = (
     "courtside.proj.dfs.grade",
     "courtside.proj.dfs.standings",
     "courtside.proj.dfs.field",
+    "courtside.proj.dfs.swap",
+    "courtside.proj.dfs.showdown",
     "courtside.mlops.dfs_monitor",
 )
 

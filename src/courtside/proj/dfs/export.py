@@ -71,6 +71,33 @@ def to_csv(lineups: Iterable[Sequence[Mapping]], *, style: str = "id",
     return buf.getvalue()
 
 
+EDIT_HEADER = ("Entry ID", "Contest Name", "Contest ID", "Entry Fee")
+
+
+def to_edit_csv(entries: Iterable[Mapping], *, header: Sequence[str] | None = None,
+                style: str = "name_id", showdown: bool = False) -> str:
+    """DK's edit-entries upload (late swap, PLAYERS.md §2.5): ``Entry ID, Contest Name,
+    Contest ID, Entry Fee`` then the slot columns, one row per entry. Each entry is
+    ``{entry_id, contest_name, contest_id, entry_fee, slots}``; a slot is a lineup slot dict
+    (written with `dk_cell` in `style`) or ``{"cell": text}`` to write DK's own cell back as it
+    was (locked and unchanged slots). Same caveat as `to_csv`: the owner uploads it by hand."""
+    entries = [dict(e) for e in entries]
+    cols = list(header) if header else (
+        header_for([s for s in entries[0]["slots"]]) if entries else default_header(showdown))
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    w.writerow(list(EDIT_HEADER) + cols)
+    for e in entries:
+        slots = list(e.get("slots") or [])
+        if len(slots) != len(cols):
+            raise ExportError(f"entry {e.get('entry_id')} has {len(slots)} slots, the header "
+                              f"{len(cols)}")
+        cells = [s["cell"] if "cell" in s else dk_cell(s, style) for s in slots]
+        w.writerow([str(e.get(k) or "") for k in ("entry_id", "contest_name", "contest_id",
+                                                  "entry_fee")] + cells)
+    return buf.getvalue()
+
+
 def copy_text(lineup: Sequence[Mapping], *, salary: int | None = None,
               mean: float | None = None, title: str | None = None) -> str:
     """Plain text for pasting into a note or chat, one slot per line::

@@ -624,40 +624,11 @@ def _build(O, T, pool, projs, rules, bans, now, n, min_diff, avail):
 
 
 def _resolve_swaps(O, pool, projs, rules, targets, bans, now, min_diff):
-    """Re-solve each target saved lineup with the started players of its game fixed
-    (``existing=`` + ``now=``) under the objective it was built with. Earlier results are cut
-    off (min_diff) so Top N lineups do not collapse into one; dropped if that is infeasible."""
-    by_id = pool.by_id()
-    started = pool.locked_ids(now)
-    free_bans = set(bans) - started
-    produced: dict[str, list] = {"cash": [], "topn": []}
-    out = []
-    for t in targets:
-        pairs = [(s, pid) for s, pid in t["pairs"] if pid in by_id]
-        for s, pid in pairs:
-            if pid in started and pid not in projs:        # fixed players need a number
-                p = by_id[pid]
-                projs[pid] = O.Projection(p.fppg if p.fppg is not None else 0.0)
-        mode = "cash" if t["mode"] == "cash" else "mean"
-        lu = None
-        for cuts in (True, False):
-            model = O.model_for(pool, projs, rules, mode=mode, lam=CASH_LAMBDA, bans=free_bans,
-                                now=now, existing=pairs, time_limit_s=SOLVE_LIMIT_S)
-            if cuts:
-                for prev in produced[t["mode"]]:
-                    model.add_no_good(prev, min_diff)
-            lu = model.solve()
-            if lu is not None:
-                break
-        if lu is None:
-            out.append({"target": t, "lineup": None})
-            continue
-        produced[t["mode"]].append(lu)
-        before = set(t["player_ids"])
-        out.append({"target": t, "lineup": lu,
-                    "in": [_name_of(by_id, i) for i in sorted(lu.player_ids - before)],
-                    "out": [_name_of(by_id, i) for i in sorted(before - lu.player_ids)]})
-    return out
+    """Re-solve each target saved lineup with the started players of its game fixed, under the
+    objective it was built with (the loop lives in `swap.resolve_targets`, shared with the
+    owner-facing late-swap re-solver `swap.plan`). `O` is kept for the call signature."""
+    from . import swap
+    return swap.resolve_targets(pool, projs, rules, targets, bans, now, min_diff)
 
 
 def _insert_lineup(conn, run_id: str, mode: str, rank: int, lu, why: dict | None) -> None:

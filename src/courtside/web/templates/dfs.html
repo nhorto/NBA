@@ -99,6 +99,7 @@
       {% if s.last_run %}<span>{{ s.last_run.text }}</span>{% else %}<span>No run yet</span>{% endif %}
       {% if s.captured_text %}<span>{{ s.captured_text }}</span>{% endif %}
     </p>
+    {% if not s.is_showdown %}<p class="dfs-swap-act"><a class="btn btn-sm btn-ghost" href="/dfs/{{ v.day }}/{{ s.id }}/swap">Late swap</a><span class="muted">Re-solve the open slots once games have started; upload your DK entries file for your own lineups.</span></p>{% endif %}
     {% if s.failed_note %}<p class="caveat dfs-note">{{ s.failed_note }}</p>{% endif %}
     {% if s.stale_note %}<p class="caveat dfs-note">{{ s.stale_note }}</p>{% endif %}
   </section>
@@ -109,6 +110,7 @@
     <ul class="dfs-late-list">
       {% for p in v.late.players %}<li><b>{{ p.name }}</b>{% if p.team %} <span class="team-tag">{{ p.team }}</span>{% endif %}{% if p.reason %}: {{ p.reason }}{% endif %}</li>{% endfor %}
     </ul>
+    {% if v.late.k and not s.is_showdown %}<p class="dfs-late-act"><a href="/dfs/{{ v.day }}/{{ s.id }}/swap?scope=news">Re-optimize unlocked slots</a></p>{% endif %}
   </section>
   {% endif %}
 </div>

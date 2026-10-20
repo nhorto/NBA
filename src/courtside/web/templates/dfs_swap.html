@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% block title %}Late swap &middot; {{ v.slate_label or "DFS" }} &middot; {{ v.day|medium_date }} &middot; Courtside{% endblock %}
+{% block description %}Re-solve the open slots of DraftKings lineups after some games have started, and download the edit file to upload yourself.{% endblock %}
+
+{% block content %}
+<section class="wrap dfs-hero" aria-labelledby="sw-title">
+  <div class="mast-kicker">
+    <span class="kicker">DFS</span>
+    <time datetime="{{ v.day }}">{{ v.day|medium_date }}</time>
+  </div>
+  <h1 class="dfs-h1" id="sw-title">Late swap{% if v.slate_label %}: {{ v.slate_label }}{% endif %}</h1>
+  <nav class="rs-links" aria-label="DFS">
+    <a href="{{ v.base }}">Back to the slate</a><a href="/dfs/results">Real results</a>
+  </nav>
+  <p class="hm-sub sw-lede">Players whose game has started stay where they are. The open slots are re-solved with the latest projections, leaving out anyone who has been ruled out. You get a DraftKings edit file to upload yourself.</p>
+</section>
+
+<div class="wrap dfs-body">
+{% if v.error %}
+  <div class="rs-flash is-error" role="alert"><p class="rs-flash-title">Could not build a late swap</p><p>{{ v.error }}</p></div>
+{% elif v.is_showdown %}
+  {{ m.empty("Showdown has no late swap", "DraftKings locks every Showdown lineup at the first tip, so nothing can be swapped.") }}
+{% else %}
+
+  <section class="card dfs-head" aria-label="Where the slate stands">
+    <div class="dfs-head-top">
+      <p class="dfs-lock">As of <time datetime="{{ v.as_of_iso }}">{{ v.as_of }}</time></p>
+      <p class="dfs-badges">{% if v.fallback %}<span class="tag tag-beta">Beta</span>{% endif %}<span class="dfs-proj">{{ v.proj }}</span></p>
+    </div>
+    <ul class="chips dfs-games" aria-label="Games">
+      {% for g in v.games %}<li class="chip{% if g.started %} sw-started{% endif %}">{{ g.label }}<span class="chip-sub">{% if g.started %}Started, locked{% else %}Open{% if g.time %} &middot; {{ g.time|replace(" ET", "") }}{% endif %}{% endif %}</span></li>{% endfor %}
+    </ul>
+    {% if v.all_open %}<p class="caveat dfs-note">No game has started yet, so every slot is open: this is a normal rebuild of each lineup.</p>{% endif %}
+    {% if v.all_started %}<p class="caveat dfs-note">Every game has started. Nothing can be swapped.</p>{% endif %}
+    {% if v.ruled_out %}
+    <div class="sw-out" role="status">
+      <p class="sw-out-head"><strong>Ruled out for open slots</strong></p>
+      <ul>{% for p in v.ruled_out %}<li><b>{{ p.name }}</b>: {{ p.why }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="section" id="swaps" aria-labelledby="swaps-title">
+    {% set meta %}{{ v.n_swapped }} of {{ v.n_entries }} {{ "lineup" if v.n_entries == 1 else "lineups" }} with a swap &middot; {{ v.scope_label|lower }}{% endset %}
+    {{ m.sec_head("swaps", "1", "Your uploaded entries" if v.source == "upload" else "Our saved lineups", meta) }}
+    {% if v.source == "upload" and v.filename %}<p class="footnote dfs-srcnote">From {{ v.filename }}. {{ v.fmt_note or "" }}</p>{% endif %}
+    {% if v.entries %}
+    <div class="dfs-actions sw-dl">
+      <a class="btn" href="{{ v.csv }}" download>Download DK edit CSV</a>
+      <a class="btn btn-sm btn-ghost" href="{{ v.csv_id }}" download>Same file, IDs only</a>
+      {% if v.source == "saved" %}
+      <a class="btn btn-sm btn-ghost" href="{{ v.base }}/swap?scope={{ 'all' if v.scope == 'news' else 'news' }}{% if v.at %}&amp;at={{ v.at|urlencode }}{% endif %}">{{ "Show every lineup" if v.scope == "news" else "Only lineups with late news" }}</a>
+      {% endif %}
+    </div>
+    {% if v.source == "saved" %}<p class="footnote">Our saved lineups carry no DraftKings entry IDs, so the Entry ID column is blank. To edit your real entries, upload your entries file below and download the file it returns.</p>{% endif %}
+    {% for w in v.warnings %}<p class="caveat">{{ w }}</p>{% endfor %}
+
+    <ol class="sw-list">
+    {% for e in v.entries %}
+      <li>
+      <article class="card sw-card is-{{ e.status }}" aria-labelledby="sw-{{ loop.index }}">
+        <div class="sw-top">
+          <h3 class="sw-title" id="sw-{{ loop.index }}">{{ e.title }}{% if e.sub %} <span class="muted sw-sub">{{ e.sub }}</span>{% endif %}</h3>
+          <span class="pill pill-{{ e.status_class }}">{{ e.status_label }}</span>
+        </div>
+        <p class="dfs-lu-meta">
+          {% if e.status == "swapped" %}
+          <span>Projection <b>{{ e.before_mean }}</b> &rarr; <b>{{ e.after_mean }}</b> <span class="sw-delta{% if e.delta_raw and e.delta_raw > 0 %} is-up{% elif e.delta_raw and e.delta_raw < 0 %} is-down{% endif %}">({{ e.delta }})</span></span>
+          <span>{{ e.n_changed }} {{ "slot" if e.n_changed == 1 else "slots" }} changed</span>
+          {% elif e.before_mean != DASH %}<span>Projection <b>{{ e.before_mean }}</b></span>{% endif %}
+          <span>{{ e.n_fixed }} locked</span>
+          <span>{{ e.salary }}</span>
+          <span class="muted">{{ e.objective }}</span>
+        </p>
+        <div class="table-scroll dfs-scroll">
+        <table class="table dfs-lu sw-table">
+          <caption class="sr">{{ e.title }}: each slot now and the proposed change</caption>
+          <thead><tr><th scope="col">Slot</th><th scope="col">Now</th><th scope="col">Proposed</th><th scope="col" class="num">Proj</th></tr></thead>
+          <tbody>
+          {% for r in e.rows %}
+            <tr class="{% if r.fixed %}sw-locked{% elif r.changed %}sw-changed{% endif %}">
+              <th scope="row" class="dfs-slot">{{ r.slot }}</th>
+              <td class="dfs-who"><span class="dfs-name{% if r.changed %} sw-old{% endif %}">{{ r.before }}</span>{% if r.before_team %} <span class="team-tag">{{ r.before_team }}</span>{% endif %}{% if r.before_out %} <span class="pill pill-out">Out</span>{% endif %}</td>
+              <td class="dfs-who">
+                {% if r.fixed %}<span class="sw-lock">Locked<span class="sr">: {{ r.fixed_why }}</span></span><span class="muted sw-why">{{ r.fixed_why }}</span>
+                {% elif r.changed %}<span class="dfs-name">{{ r.after }}</span>{% if r.after_team %} <span class="team-tag">{{ r.after_team }}</span>{% endif %}{% if r.reason %}<span class="sw-why">{{ r.reason }}</span>{% endif %}
+                {% else %}<span class="muted">Keep</span>{% endif %}
+              </td>
+              <td class="num">{% if r.changed %}{{ r.after_proj|num(1) }}{% if r.delta is not none %}<span class="sw-d">{{ r.delta|signed(1) }}</span>{% endif %}{% elif r.before_proj is not none %}{{ r.before_proj|num(1) }}{% else %}{{ DASH }}{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% if e.notes %}<ul class="sw-notes">{% for n in e.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+      </article>
+      </li>
+    {% endfor %}
+    </ol>
+    {% else %}
+    {{ m.empty("No lineups to swap", "This slate has no saved lineups yet. Upload your DraftKings entries file below to swap your own.") }}
+    {% endif %}
+  </section>
+
+  {% if v.exposure or v.groups %}
+  <section class="section" id="portfolio" aria-labelledby="portfolio-title">
+    {{ m.sec_head("portfolio", "2", "Across the lineups", "Exposure and overlap, before and after") }}
+    <div class="card">
+      {% if v.groups %}
+      <ul class="sw-groups">{% for g in v.groups %}<li><b>{{ g.label }}</b> ({{ g.entries }} lineups): most shared players {{ g.max_shared_before }} &rarr; {{ g.max_shared_after }}{% if g.identical_after %}; {{ g.identical_after }} identical {{ "pair" if g.identical_after == 1 else "pairs" }}{% endif %}</li>{% endfor %}</ul>
+      {% endif %}
+      {% if v.exposure %}
+      <div class="table-scroll dfs-scroll">
+      <table class="table sw-exp">
+        <caption class="sr">Share of lineups each player is in, before and after the swap</caption>
+        <thead><tr><th scope="col">Player</th><th scope="col" class="num">Before</th><th scope="col" class="num">After</th><th scope="col" class="num">Locked in</th></tr></thead>
+        <tbody>{% for x in v.exposure %}<tr><th scope="row">{{ x.name }}</th><td class="num">{{ x.before }}</td><td class="num">{% if x.moved %}<b>{{ x.after }}</b>{% else %}{{ x.after }}{% endif %}</td><td class="num">{{ x.fixed }}</td></tr>{% endfor %}</tbody>
+      </table>
+      </div>
+      {% endif %}
+      <p class="footnote">Lineups in the same contest stay at least one player apart. Locked players count toward exposure and cannot be moved.</p>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="section" id="upload" aria-labelledby="upload-title">
+    {{ m.sec_head("upload", "3" if (v.exposure or v.groups) else "2", "Swap your own entries") }}
+    <div class="card rs-card">
+      <ol class="rs-steps">
+        <li>On DraftKings open <b>Lineups</b>, then <b>Edit Entries</b> for this slate, and download the CSV.</li>
+        <li>Choose that file here. It is read on this machine and not saved.</li>
+        <li>Download the edit file and upload it on the same DraftKings page yourself. Courtside never signs in to DraftKings or changes entries.</li>
+      </ol>
+      <form class="rs-form" method="post" action="{{ v.base }}/swap" enctype="multipart/form-data">
+        {% if v.at %}<input type="hidden" name="at" value="{{ v.at }}">{% endif %}
+        <label class="rs-field rs-wide"><span>DraftKings entries CSV</span>
+          <input class="dfs-input" type="file" name="file" accept=".csv,text/csv" required></label>
+        <label class="rs-field"><span>Which lineups</span>
+          <select class="dfs-input" name="scope">
+            <option value="all"{% if v.scope == "all" %} selected{% endif %}>Every lineup</option>
+            <option value="news"{% if v.scope == "news" %} selected{% endif %}>Only lineups with late news</option>
+          </select></label>
+        <div class="rs-actions"><button class="btn" type="submit">Find swaps</button></div>
+      </form>
+      <p class="card-sub">Cells are read as &ldquo;Name (ID)&rdquo;, DraftKings&rsquo; own format, or as bare numeric IDs. Which ID DraftKings expects for a new player has not been confirmed with a real upload yet: new cells use the ID from your own file&rsquo;s player list, and locked or unchanged cells are written back exactly as DraftKings wrote them. If DraftKings rejects the file, try <b>Same file, IDs only</b>.</p>
+    </div>
+  </section>
+
+  <p class="footnote dfs-foot">Projections are simulated, not results. A swap is only proposed when a ruled-out player has to go or the projection gains at least half a point. Downloads are plain CSV files you upload to DraftKings yourself.{% if v.seconds %} Solved in {{ v.seconds }} s.{% endif %}</p>
+{% endif %}
+</div>
+{% endblock %}

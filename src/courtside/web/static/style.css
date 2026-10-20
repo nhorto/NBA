@@ -1259,3 +1259,29 @@ textarea.dfs-input { resize: vertical; min-height: 4.5rem; }
 .rs-kv5 { grid-template-columns: repeat(auto-fit, minmax(5.2rem, 1fr)); }
 .rs-kv .psub { display: block; font-size: .72rem; font-weight: 450; color: var(--ink-3); }
 .rs-kv dd .rs-inline { margin-top: 2px; }
+
+/* ------------------------------------------------------------------ DFS late swap (dfs_swap.html) */
+.dfs-swap-act { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: .84rem; }
+.dfs-late-act { margin-top: 8px; font-weight: 600; }
+.sw-lede { max-width: 70ch; }
+.chip.sw-started { background: var(--surface-3); color: var(--ink-3); }
+.sw-out { border: 1px solid color-mix(in srgb, var(--neg) 30%, var(--line)); background: var(--neg-wash); border-radius: var(--r-md); padding: 10px 14px; font-size: .88rem; }
+.sw-out ul { margin-top: 4px; display: grid; gap: 2px; color: var(--ink-2); }
+.sw-dl { margin: 4px 0 6px; }
+.sw-list { display: grid; gap: var(--gap); margin-top: 14px; list-style: none; padding: 0; }
+.sw-card { padding-top: 14px; }
+.sw-card.is-swapped { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.sw-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; margin-bottom: 6px; }
+.sw-title { font-size: 1rem; font-weight: 700; }
+.sw-sub { font-size: .8rem; font-weight: 500; }
+.sw-table tr.sw-locked td, .sw-table tr.sw-locked th { color: var(--ink-3); background: var(--surface-2); }
+.sw-table tr.sw-changed td, .sw-table tr.sw-changed th { background: var(--warn-wash); }
+.sw-old { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--neg) 70%, transparent); }
+.sw-lock { display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); border: 1px solid var(--line-2); border-radius: 6px; padding: 1px 6px; margin-right: 6px; }
+.sw-why { display: block; font-size: .78rem; color: var(--ink-3); margin-top: 2px; }
+.sw-d { display: block; font-size: .74rem; color: var(--ink-3); }
+.sw-delta.is-up { color: var(--pos); }
+.sw-delta.is-down { color: var(--neg); }
+.sw-notes { margin-top: 8px; font-size: .82rem; color: var(--ink-2); display: grid; gap: 2px; }
+.sw-groups { display: grid; gap: 4px; font-size: .88rem; margin-bottom: 10px; }
+.sw-exp th, .sw-exp td { padding: 7px 6px; }
