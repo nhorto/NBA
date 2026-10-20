@@ -9,6 +9,13 @@ before the game date (season-to-date + recency-weighted + shrunk, `common.ew_aso
       perimeter defender, vacated minutes by position group)                       opp_avail.py
   F2  opponent defense per stat x position group (residual DvP, team box rates,
       pace beyond the market total)                                                opp_defense.py
+  F3  tracking role signals (rebound chances, passes, touches, deflections, ...:
+      shrunk per-minute rates, conversions, tracking-implied rate vs the EB rate)  tracking.py
+  F5  matchups (likely defenders x shrunk defender quality; whom he guards)        matchups.py
+  F6  schedule context (home, rest, density, travel, time zones, altitude, stage) schedule.py
+
+F3 / F5 / F6 are not in the cached base frame: `extend_frame(conn, frame, groups)` adds them
+(cached per season and group).
 
 Public API
   GROUPS / Group                       registry (columns(stat), monotone(stat), categorical)
@@ -25,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
-from . import opp_avail, opp_defense, player
+from . import matchups, opp_avail, opp_defense, player, schedule, tracking
 
 
 @dataclass(frozen=True)
@@ -46,7 +53,14 @@ GROUPS: dict[str, Group] = {
     "F2": Group("F2", "opponent defense per stat x position group", opp_defense.columns,
                 opp_defense.monotone,
                 neutral={c: 0.0 for c in opp_defense.TEAM_COLS + opp_defense.ROW_COLS}),
+    "F3": Group("F3", "tracking role signals", tracking.columns, tracking.monotone,
+                neutral=dict(tracking.NEUTRAL)),
+    "F5": Group("F5", "matchups: likely defenders x defender quality", matchups.columns,
+                matchups.monotone, neutral=dict(matchups.NEUTRAL)),
+    "F6": Group("F6", "schedule context", schedule.columns, schedule.monotone,
+                neutral=dict(schedule.NEUTRAL)),
 }
+EXTENSION_GROUPS = ("F3", "F5", "F6")
 
 
 def model_columns(stat: str, groups: Sequence[str]) -> list[str]:
@@ -69,7 +83,10 @@ def categorical_for(groups: Sequence[str]) -> list[str]:
     return [c for g in groups for c in GROUPS[g].categorical]
 
 
-from .store import attach, build_frame, day_features, team_game_features  # noqa: E402
+from .store import (LiveExtras, attach, build_frame, day_features,  # noqa: E402
+                    extend_frame, team_game_features)
 
 __all__ = ["GROUPS", "Group", "model_columns", "monotone_for", "categorical_for", "build_frame",
-           "team_game_features", "day_features", "attach", "opp_avail", "opp_defense", "player"]
+           "team_game_features", "day_features", "attach", "extend_frame", "LiveExtras",
+           "EXTENSION_GROUPS",
+           "opp_avail", "opp_defense", "player", "tracking", "matchups", "schedule"]

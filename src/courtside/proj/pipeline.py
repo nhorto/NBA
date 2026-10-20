@@ -23,6 +23,10 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   (fit on seasons < S, clipped to [0.8, 1.25]) applied to the EB rates right after the stars are
   picked. ON runs use their own bundle file (`bundle_<S>_v1_cx.json`) and MODEL_VERSION
   (`pathA-v0.3`); with the switch OFF nothing of it runs and projections are bit-identical.
+  The extended layer P + F2 + F3 (tracking) + F6 (schedule) is a second opt-in on top,
+  `CONTEXT_EXT` (default OFF; env ``COURTSIDE_CONTEXT_EXT=1`` together with
+  ``COURTSIDE_CONTEXT=1``): `bundle_<S>_v1_cx2.json`, `pathA-v0.4`, its per-day inputs from
+  `Context.context_extras`. With CONTEXT_EXT off, ON is exactly `pathA-v0.3`.
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -80,6 +84,13 @@ CONTEXT_DEFAULT = False                # shipping the layer = True here (env sti
 CONTEXT_ENV = "COURTSIDE_CONTEXT"      # "1"/"true"/"on" forces ON, "0"/"false"/"off" forces OFF
 CONTEXT_SUFFIX = "_cx"
 CONTEXT_MODEL_VERSION = "pathA-v0.3"
+# Extended layer (Phase 2F second ablation: P + F2 + the groups in `context.LIVE_GROUPS_EXT`).
+# Opt-in on top of CONTEXT_ON: COURTSIDE_CONTEXT=1 COURTSIDE_CONTEXT_EXT=1. Own bundle suffix and
+# model version; with CONTEXT_EXT off, ON behaves exactly as P + F2 (pathA-v0.3).
+CONTEXT_EXT_DEFAULT = False
+CONTEXT_EXT_ENV = "COURTSIDE_CONTEXT_EXT"
+CONTEXT_EXT_SUFFIX = "_cx2"
+CONTEXT_EXT_MODEL_VERSION = "pathA-v0.4"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -91,28 +102,41 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return default
 
 
-def _versions(on: bool) -> tuple[str, str]:
-    """(bundle file suffix, MODEL_VERSION) for the context switch."""
+def _versions(on: bool, ext: bool = False) -> tuple[str, str]:
+    """(bundle file suffix, MODEL_VERSION) for the context switch (+ the extended layer)."""
     if not on:
         return _VS_BASE, MODEL_VERSION_BASE
+    if ext:
+        mv = (CONTEXT_EXT_MODEL_VERSION if MINUTES_VERSION == "v1"
+              else f"{MODEL_VERSION_BASE}+cx2")
+        return _VS_BASE + CONTEXT_EXT_SUFFIX, mv
     mv = CONTEXT_MODEL_VERSION if MINUTES_VERSION == "v1" else f"{MODEL_VERSION_BASE}+cx"
     return _VS_BASE + CONTEXT_SUFFIX, mv
 
 
 CONTEXT_ON = _env_flag(CONTEXT_ENV, CONTEXT_DEFAULT)
-_VS, MODEL_VERSION = _versions(CONTEXT_ON)
+CONTEXT_EXT = _env_flag(CONTEXT_EXT_ENV, CONTEXT_EXT_DEFAULT)
+_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT)
 # Seeds use the base version in both states: ON and OFF runs of the same slate/day draw common
 # random numbers, so their difference is the layer, not Monte Carlo noise (OFF is unchanged).
 SEED_VERSION = MODEL_VERSION_BASE
 
 
-def set_context(on: bool) -> None:
-    """Flip the context switch at run time (evaluation scripts, tests): updates CONTEXT_ON, the
-    bundle suffix and MODEL_VERSION together. Modules that copied MODEL_VERSION at import keep
-    their copy; `pipeline.MODEL_VERSION` is read at call time everywhere in proj/."""
-    global CONTEXT_ON, _VS, MODEL_VERSION
+def set_context(on: bool, ext: bool | None = None) -> None:
+    """Flip the context switch at run time (evaluation scripts, tests): updates CONTEXT_ON (and
+    CONTEXT_EXT when `ext` is given), the bundle suffix and MODEL_VERSION together. Modules that
+    copied MODEL_VERSION at import keep their copy; `pipeline.MODEL_VERSION` is read at call
+    time everywhere in proj/."""
+    global CONTEXT_ON, CONTEXT_EXT, _VS, MODEL_VERSION
     CONTEXT_ON = bool(on)
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON)
+    if ext is not None:
+        CONTEXT_EXT = bool(ext)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT)
+
+
+def context_groups() -> tuple:
+    """Feature groups of the layer the current switch fits (P + F2, or the extended set)."""
+    return tuple(CX.LIVE_GROUPS_EXT if CONTEXT_EXT else CX.LIVE_GROUPS)
 
 
 HISTORY_SEASONS = 7            # box seasons loaded for the minutes engine (window 5 + warm-up)
@@ -210,6 +234,7 @@ class Context:
         # now, the EB base rows on first use (they need the bundle's rate-state params)
         self.cx_t: pd.DataFrame | None = None
         self._cx_wf: dict = {}
+        self._cx_ext: dict = {}
         if CONTEXT_ON:
             from .features.common import load_team_games
             self.cx_t = load_team_games(conn, _season_minus(season, 2), season)
@@ -231,6 +256,15 @@ class Context:
             self.log(f"context base rows {seasons[0]}..{seasons[-1]}: {len(self._cx_wf[key])} "
                      f"({time.time() - t0:.0f}s)")
         return self._cx_wf[key], self.cx_t
+
+    def context_extras(self, conn: sqlite3.Connection, groups: tuple):
+        """Per-season inputs of the extension groups (F3 / F5 / F6) of the layer, built once
+        (`features.LiveExtras`; every use strictly before the projected day)."""
+        from .features import LiveExtras
+        key = tuple(groups)
+        if key not in self._cx_ext:
+            self._cx_ext[key] = LiveExtras(conn, self.season, key, pos=self.pos, log=self.log)
+        return self._cx_ext[key]
 
     def train_panel(self) -> pd.DataFrame:
         return M.oracle_panel(self.h, M.eval_targets(self.h, self.train_seasons))
@@ -296,7 +330,8 @@ CONTEXT_FIT_PARAMS = {"num_threads": 1}
 
 
 def _fit_context(conn: sqlite3.Connection, season: str, sp: dict, say) -> CX.ContextModel:
-    return CX.fit_season(conn, season, sp, params=CONTEXT_FIT_PARAMS, log=say)
+    return CX.fit_season(conn, season, sp, groups=context_groups(), params=CONTEXT_FIT_PARAMS,
+                         log=say)
 
 
 def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = None, *,
@@ -430,7 +465,7 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
     rates = ST.rate_frame(conn, q, b.state, games=ctx.games, pos=ctx.pos)
     panel["_star"] = _stars(panel, rates)
     if CONTEXT_ON and b.context is not None and len(panel):
-        rates = apply_context(ctx, b, conn, day, games, panel, rates, env)
+        rates = apply_context(ctx, b, conn, day, games, panel, rates, env, p_avail=p_avail)
     shares = ctx.shares
     out = []
     by_key = panel.groupby("key", sort=False).indices
@@ -468,17 +503,38 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
 
 def apply_context(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
                   games: pd.DataFrame, panel: pd.DataFrame, rates: pd.DataFrame,
-                  env: dict) -> pd.DataFrame:
+                  env: dict, p_avail: dict | None = None) -> pd.DataFrame:
     """The context layer on the EB rates of the panel rows (`context.apply_rates`): F2 features
     of the day's games (as of strictly before `day`; the pace term uses the environment's market
-    total, none for a league-default environment) and P from the rates themselves."""
+    total, none for a league-default environment) and P from the rates themselves. A layer with
+    extension groups (the CONTEXT_EXT bundle) also gets their per-day features
+    (`Context.context_extras`): F3 per player, F5 over each opponent's candidates weighted by
+    minutes state x P(available), F6 per team-game."""
     from . import features as FX
     wf, t = ctx.context_inputs(conn, b.state)
     totals = {g: float(e["mu_total"]) for g, e in env.items()
               if e.get("source") != "default" and e.get("mu_total") is not None}
-    tf = FX.day_features(conn, wf, t, day, games[["game_id", "home", "away"]], totals=totals)
+    gm = games[["game_id", "home", "away"]]
+    tf = FX.day_features(conn, wf, t, day, gm, totals=totals)
     key = panel["key"].str.split("|", n=1, expand=True)
-    return CX.apply_rates(b.context, rates, tf, key[0].to_numpy(), key[1].to_numpy())
+    pf = None
+    ext = tuple(g for g in b.context.groups if g in FX.EXTENSION_GROUPS)
+    if ext:
+        if "absent" in panel:
+            pa = np.where(panel["absent"].to_numpy(bool), 0.0, 1.0)
+        else:
+            pa = np.ones(len(panel))
+        pa = np.array([(p_avail or {}).get((k, int(pid)), v)
+                       for k, pid, v in zip(panel["key"], panel["player_id"], pa)], float)
+        rows = pd.DataFrame({"game_id": key[0].to_numpy(), "team": key[1].to_numpy(),
+                             "player_id": panel["player_id"].astype(np.int64).to_numpy(),
+                             "grp": rates["grp"].to_numpy(int),
+                             "w": np.maximum(rates["mpg"].to_numpy(float), 1.0) * pa})
+        tfx, pf = ctx.context_extras(conn, ext).day(conn, day, gm, rows)
+        if "F6" in ext:
+            tf = tf.merge(tfx, on=["game_id", "team"], how="left")
+    return CX.apply_rates(b.context, rates, tf, key[0].to_numpy(), key[1].to_numpy(),
+                          player_feats=pf)
 
 
 def _team_starters(starters: set | None, p: pd.DataFrame):

@@ -319,7 +319,7 @@ def test_deterministic(league, frame):
 
 def test_registry_columns_exist(frame):
     for s in CM.DK_STATS:
-        for g in FX.GROUPS:
+        for g in ("P", "F1", "F2"):          # F3 / F5 / F6: extend_frame (test_proj_features2)
             for c in FX.model_columns(s, [g]):
                 assert c in frame.columns, (s, g, c)
         mono = FX.monotone_for(s, ["P", "F1", "F2"])

@@ -7,6 +7,8 @@
   build_frame(conn, season, sp, ...)     every player-game of seasons S-n_train .. S with
                                          y_/E_/d_<s> and all feature groups; cached as parquet
                                          under <data>/proj/features/
+  extend_frame(conn, frame, groups, ...) adds F3 / F5 / F6 (not in the base frame) to a frame,
+                                         cached per (frame, group)
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ import pandas as pd
 
 from ... import config
 from .. import state as ST
-from . import opp_avail, opp_defense, player
+from . import matchups, opp_avail, opp_defense, player, schedule, tracking
 from .common import ALL_STATS, base_rows, load_team_games, season_label
 
 FRAME_VERSION = 4
@@ -68,9 +70,13 @@ def day_features(conn: sqlite3.Connection, wf: pd.DataFrame, t: pd.DataFrame, da
     return opp_defense.build(conn, wf, params=dvp_params, t=t, queries=q, totals=totals)
 
 
-def attach(rows: pd.DataFrame, tg: pd.DataFrame) -> pd.DataFrame:
-    """rows (game_id, team, EB state columns) + team-game features + row-level columns."""
+def attach(rows: pd.DataFrame, tg: pd.DataFrame, pf: pd.DataFrame | None = None
+           ) -> pd.DataFrame:
+    """rows (game_id, team, EB state columns) + team-game features (+ per player-game features
+    `pf` keyed game_id, player_id: F3 / F5) + row-level columns."""
     out = rows.merge(tg, on=["game_id", "team"], how="left")
+    if pf is not None and len(pf.columns) > 2:
+        out = out.merge(pf, on=["game_id", "player_id"], how="left")
     for c in opp_avail.TEAM_COLS:
         if c in out:
             out[c] = out[c].fillna(0.0)
@@ -79,6 +85,8 @@ def attach(rows: pd.DataFrame, tg: pd.DataFrame) -> pd.DataFrame:
         extra.append(opp_avail.row_features(out))
     if "f2_dvp_pts_G" in out:
         extra.append(opp_defense.row_features(out))
+    if "t3_impl_reb" in out:
+        extra.append(tracking.row_features(out))
     return pd.concat([out] + extra, axis=1)
 
 
@@ -129,3 +137,116 @@ def build_frame(conn: sqlite3.Connection, season: str, sp: dict, *, n_train: int
     say(f"features: frame {season} {len(out)} rows x {out.shape[1]} cols "
         f"({time.time() - t0:.0f}s)")
     return out
+
+
+EXT_VERSION = 1
+
+
+def _ext_path(season: str, group: str, frame: pd.DataFrame) -> Path:
+    blob = json.dumps({"v": EXT_VERSION, "g": group, "n": int(len(frame)),
+                       "first": str(frame["game_date"].min()),
+                       "last": str(frame["game_date"].max()),
+                       "ids": int(pd.util.hash_pandas_object(
+                           frame[["game_id", "player_id"]], index=False).sum() % (2 ** 61))},
+                      sort_keys=True)
+    return cache_dir() / f"ext_{season}_{group}_{hashlib.sha1(blob.encode()).hexdigest()[:10]}" \
+        ".parquet"
+
+
+def group_table(conn: sqlite3.Connection, frame: pd.DataFrame, group: str, *,
+                log: Callable[[str], None] | None = None) -> pd.DataFrame:
+    """The raw feature table of an extension group for the rows of `frame`: (game_id, team) for
+    F6, (game_id, player_id) for F3 / F5."""
+    say = log or (lambda m: None)
+    t0 = time.time()
+    pos = ST.load_positions(conn)
+    if group == "F6":
+        out = schedule.build(conn)
+    elif group == "F3":
+        out = tracking.build(conn, frame, pos=pos)
+    elif group == "F5":
+        out = matchups.build(conn, frame, pos=pos, log=say)
+    else:
+        raise ValueError(group)
+    say(f"features: {group} {len(out)} rows ({time.time() - t0:.0f}s)")
+    return out
+
+
+def extend_frame(conn: sqlite3.Connection, frame: pd.DataFrame, groups, *, season: str = "",
+                 cache: bool = True, log: Callable[[str], None] | None = None) -> pd.DataFrame:
+    """`frame` (build_frame) + the columns of the extension groups in `groups` (F3 / F5 / F6;
+    others are ignored) and their row-level columns. Row order is kept."""
+    out = frame
+    for g in groups:
+        if g not in ("F3", "F5", "F6"):
+            continue
+        cols = {"F3": tracking.TEAM_COLS, "F5": matchups.TEAM_COLS,
+                "F6": schedule.TEAM_COLS}[g]
+        if all(c in out.columns for c in cols):
+            continue
+        path = _ext_path(season, g, frame)
+        if cache and path.exists():
+            tab = pd.read_parquet(path)
+        else:
+            tab = group_table(conn, frame, g, log=log)
+            if cache:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tab.to_parquet(path)
+        key = ["game_id", "team"] if g == "F6" else ["game_id", "player_id"]
+        tab = tab.drop_duplicates(key)
+        n = len(out)
+        out = out.merge(tab[key + list(cols)], on=key, how="left")
+        assert len(out) == n
+        if g == "F3":
+            out = pd.concat([out, tracking.row_features(out)], axis=1)
+    return out
+
+
+# ============================================================================== live hook
+
+class LiveExtras:
+    """Per-season inputs of the extension groups for the pipeline / live path, loaded once per
+    process (seasons S-3..S; every use is strictly before the projected day by construction,
+    and older history carries < 1% weight under the groups' half-lives)."""
+
+    def __init__(self, conn: sqlite3.Connection, season: str, groups, *, pos=None,
+                 log: Callable[[str], None] | None = None):
+        say = log or (lambda m: None)
+        t0 = time.time()
+        self.groups = tuple(g for g in groups if g in ("F3", "F5", "F6"))
+        self.season = season
+        pos = pos if pos is not None else ST.load_positions(conn)
+        first = season_label(int(season[:4]) - 3)
+        self.trk = self.mh = self.ph = self.dq = self.sch = None
+        if "F3" in self.groups:
+            self.trk = tracking.load_history(conn, first=first, last=season, pos=pos)
+        if "F5" in self.groups:
+            self.mh = matchups.History(conn, first=first, last=season, pos=pos)
+            self.ph = matchups.pair_history(self.mh)
+            self.dq = matchups._expected(self.mh.m)
+        if "F6" in self.groups:
+            self.sch = schedule.History(conn, since_season=season_label(int(season[:4]) - 1))
+        say(f"context extras {'+'.join(self.groups) or '-'} {season} ({time.time() - t0:.0f}s)")
+
+    def day(self, conn: sqlite3.Connection, day, games: pd.DataFrame, rows: pd.DataFrame
+            ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """(team-game F6 rows keyed game_id, team; player F3 / F5 rows keyed game_id,
+        player_id) for the games of `day`. `rows`: game_id, team, player_id, grp, w (expected
+        weight: pre-game minutes x P(available); 0 = out) for every candidate of both teams."""
+        dn = int(ST._day_of(day))
+        sidx = ST.sidx_of(ST.season_of(pd.Timestamp(day).date()))
+        tf = pd.DataFrame({"game_id": pd.concat([games["game_id"], games["game_id"]]),
+                           "team": pd.concat([games["home"], games["away"]])}
+                          ).reset_index(drop=True)
+        if self.sch is not None:
+            tf = self.sch.day_features(conn, day, games[["game_id", "home", "away"]])
+        r = rows[["game_id", "team", "player_id", "grp", "w"]].copy().reset_index(drop=True)
+        r["day"], r["sidx"] = dn, sidx
+        pf = r[["game_id", "player_id"]].copy()
+        if self.trk is not None:
+            f3 = tracking.player_features(self.trk, r[["player_id", "day", "sidx", "grp"]])
+            pf = pd.concat([pf, f3], axis=1)
+        if self.mh is not None:
+            f5 = matchups.features(self.mh, r, ph=self.ph, dq=self.dq)
+            pf = pd.concat([pf, f5.drop(columns=["game_id", "player_id"])], axis=1)
+        return tf, pf.drop_duplicates(["game_id", "player_id"])

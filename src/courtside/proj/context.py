@@ -35,7 +35,9 @@ CLI: python -m courtside.proj.context {dvp-params, ablation, fit, bundle} ...
                       this layer fit on seasons < S), whatever the switch is set to
 
 INTEGRATION (wired in `pipeline`, behind `pipeline.CONTEXT_ON`, default OFF; env
-COURTSIDE_CONTEXT=1 turns it on):
+COURTSIDE_CONTEXT=1 turns it on; the extended layer P+F2+F3+F6 additionally needs
+`pipeline.CONTEXT_EXT`, env COURTSIDE_CONTEXT_EXT=1: bundle `bundle_<S>_v1_cx2.json`,
+`pathA-v0.4`, F3 per player and F6 per team-game from `features.LiveExtras`):
   1. Bundle: `Bundle.context` (JSON key "context", only present when set, so an OFF bundle is
      byte-identical to the pre-context format), fit in `load_bundle` on seasons < S by
      `fit_season(conn, S, bundle.state)` = `fit(FX.build_frame(conn, S, sp), season < S,
@@ -83,7 +85,14 @@ LGB_PARAMS = {
 }
 MAX_ROUNDS, EARLY = 1500, 60
 VARIANTS = {"base": (), "P": ("P",), "P+F1": ("P", "F1"), "P+F2": ("P", "F2"),
-            "P+F1+F2": ("P", "F1", "F2")}
+            "P+F1+F2": ("P", "F1", "F2"),
+            # second ablation (F3 / F5 / F6 on top of the shipped P+F2)
+            "P+F2+F3": ("P", "F2", "F3"), "P+F2+F5": ("P", "F2", "F5"),
+            "P+F2+F6": ("P", "F2", "F6"), "P+F2+F3+F5+F6": ("P", "F2", "F3", "F5", "F6"),
+            "P+F2+F3+F5": ("P", "F2", "F3", "F5"), "P+F2+F3+F6": ("P", "F2", "F3", "F6")}
+VARIANTS_2 = ("P+F2", "P+F2+F3", "P+F2+F5", "P+F2+F6", "P+F2+F3+F5+F6")
+# staged: F5 / F6 on top of P+F2+F3 (F3 passes alone by a wide margin)
+VARIANTS_3 = ("P+F2", "P+F2+F3", "P+F2+F3+F5", "P+F2+F3+F6", "P+F2+F3+F5+F6")
 
 
 # ============================================================================== model
@@ -223,6 +232,8 @@ def fit(frame: pd.DataFrame, train_mask: np.ndarray, groups: Sequence[str], *,
 
 
 LIVE_GROUPS = ("P", "F2")
+# the extended layer behind pipeline.CONTEXT_EXT (Phase 2F second ablation; see PLAYERS.md)
+LIVE_GROUPS_EXT = ("P", "F2", "F3", "F6")
 LIVE_N_TRAIN = 6
 
 
@@ -238,6 +249,9 @@ def fit_season(conn: sqlite3.Connection, season: str, sp: dict, *,
     t0 = time.time()
     fr = frame if frame is not None else FX.build_frame(conn, season, sp, n_train=n_train,
                                                          log=say)
+    ext = [g for g in groups if g in FX.EXTENSION_GROUPS]
+    if ext:
+        fr = FX.extend_frame(conn, fr, ext, season=season, cache=frame is None, log=say)
     train = (fr["season"] < season).to_numpy()
     m = fit(fr, train, groups, season=season, params=params, log=say)
     m.meta["n_train_seasons"] = n_train
@@ -261,16 +275,20 @@ def importances(model: ContextModel, kind: str = "gain") -> pd.DataFrame:
 # ============================================================================== pipeline hook
 
 def apply_rates(model: ContextModel, rates: pd.DataFrame, team_feats: pd.DataFrame,
-                game_id: Sequence, team: Sequence) -> pd.DataFrame:
+                game_id: Sequence, team: Sequence,
+                player_feats: pd.DataFrame | None = None) -> pd.DataFrame:
     """Scale the EB rates of a `state.rate_frame` result (one row per panel row) by the
     context multipliers: r_<s> *= m_s for the DK stats, r_dk recomputed. `team_feats` =
-    `features.team_game_features` rows (game_id, team, F1/F2 columns) for the day."""
+    `features.team_game_features` rows (game_id, team, F1/F2 (+ F6) columns) for the day;
+    `player_feats` = per (game_id, player_id) F3 / F5 columns (`features.LiveExtras.day`)."""
     if not model.boosters:
         return rates
     X = rates.copy()
     X["game_id"] = np.asarray(game_id)
     X["team"] = np.asarray(team)
-    X = FX.attach(X, team_feats)
+    if player_feats is not None and "player_id" not in X:
+        raise ValueError("player features need rates.player_id")
+    X = FX.attach(X, team_feats, player_feats)
     mult = model.predict(X)
     out = rates.copy()
     for s in DK_STATS:
@@ -323,15 +341,23 @@ def cv_table(rows: pd.DataFrame) -> tuple[list, list]:
     return fit_cv(mu, _dk_actual(rows) - mu)
 
 
+def _date_se(d: np.ndarray, dates: np.ndarray) -> float:
+    from .metrics import paired_cluster
+    return float(paired_cluster(d, dates)["se"])
+
+
 def evaluate(test: pd.DataFrame, mults: dict, cv: tuple, *, pairs: Sequence[tuple],
              masks: dict | None = None) -> dict:
     """NB log-lik (sum of the 7 DK stats, and per stat) and DK MAE / CRPS given actual minutes,
-    per variant, and paired differences with two-way clustered SEs (game x player-season).
-    `mults` {variant: {stat: (n,)} or None (= base)}; pairs [(a, b)] -> a minus b."""
+    per variant, and paired differences with two-way clustered SEs (game x player-season) and
+    date-clustered SEs (`se_date`). `mults` {variant: {stat: (n,)} or None (= base)};
+    pairs [(a, b)] -> a minus b."""
     from .metrics import crps_normal
     y_dk = _dk_actual(test)
     g1 = test["game_id"].to_numpy()
     g2 = (test["player_id"].astype(str) + "|" + test["season"]).to_numpy()
+    gd = (test["game_date"].astype(str).to_numpy() if "game_date" in test
+          else test["game_id"].to_numpy())
     masks = masks or {"all": np.ones(len(test), bool)}
     per = {}
     for v, m in mults.items():
@@ -357,18 +383,25 @@ def evaluate(test: pd.DataFrame, mults: dict, cv: tuple, *, pairs: Sequence[tupl
                 key = "ll_tot" if met == "ll" else ("ae" if met == "mae" else "crps")
                 d = sign * (ra[key] - rb[key])[mk]           # positive = a better
                 res[met] = {"diff": float(d.mean()),
-                            "se": two_way_se(d, g1[mk], g2[mk])}
+                            "se": two_way_se(d, g1[mk], g2[mk]),
+                            "se_date": _date_se(d, gd[mk])}
             res["ll_by_stat"] = {}
             for s in DK_STATS:
                 d = (ra["ll"][s] - rb["ll"][s])[mk]
                 res["ll_by_stat"][s] = {"diff": float(d.mean()),
-                                        "se": two_way_se(d, g1[mk], g2[mk])}
+                                        "se": two_way_se(d, g1[mk], g2[mk]),
+                                        "se_date": _date_se(d, gd[mk])}
             out["pairs"].setdefault(f"{a} vs {b}", {})[k] = res
     return out
 
 
 PAIRS = (("P", "base"), ("P+F1", "P"), ("P+F2", "P"), ("P+F1+F2", "P+F2"),
-         ("P+F1+F2", "P+F1"), ("P+F1+F2", "base"))
+         ("P+F1+F2", "P+F1"), ("P+F1+F2", "base"),
+         ("P+F2+F3", "P+F2"), ("P+F2+F5", "P+F2"), ("P+F2+F6", "P+F2"),
+         ("P+F2+F3+F5+F6", "P+F2"),
+         ("P+F2+F3+F5", "P+F2+F3"), ("P+F2+F3+F6", "P+F2+F3"),
+         ("P+F2+F3+F5+F6", "P+F2+F3"), ("P+F2+F3+F5+F6", "P+F2+F3+F6"),
+         ("P+F2+F3+F5+F6", "P+F2+F3+F5"))
 
 
 def state_params_for(conn: sqlite3.Connection, season: str) -> dict:
@@ -481,6 +514,9 @@ def run_ablation(conn: sqlite3.Connection, season: str, *, n_train: int = 6,
     sp = state_params_for(conn, season)
     fr = frame if frame is not None else FX.build_frame(conn, season, sp, n_train=n_train,
                                                          log=say)
+    ext = sorted({g for v in variants.values() for g in v if g in FX.EXTENSION_GROUPS})
+    if ext:
+        fr = FX.extend_frame(conn, fr, ext, season=season, log=say)
     if base != "E":
         fr = fr.copy()
         for s in DK_STATS:
@@ -548,12 +584,16 @@ def format_ablation(ev: dict) -> str:
         L.append("    paired (positive = first better; SE two-way game x player-season):")
         for p, d in ev["pairs"].items():
             x = d[k]
-            L.append(f"    {p:20s} LL {x['ll']['diff']:+.5f} (SE {x['ll']['se']:.5f}, z "
-                     f"{x['ll']['diff'] / x['ll']['se']:+.1f})  MAE {x['mae']['diff']:+.4f} "
-                     f"(SE {x['mae']['se']:.4f})  CRPS {x['crps']['diff']:+.4f} "
-                     f"(SE {x['crps']['se']:.4f})")
+            sd = {m: x[m].get("se_date", float("nan")) for m in ("ll", "mae", "crps")}
+            L.append(f"    {p:20s} LL {x['ll']['diff']:+.5f} (SE {x['ll']['se']:.5f} / date "
+                     f"{sd['ll']:.5f}, z {x['ll']['diff'] / max(x['ll']['se'], sd['ll']):+.1f})"
+                     f"  MAE {x['mae']['diff']:+.4f} (SE {x['mae']['se']:.4f} / "
+                     f"{sd['mae']:.4f})  CRPS {x['crps']['diff']:+.4f} "
+                     f"(SE {x['crps']['se']:.4f} / {sd['crps']:.4f}, z "
+                     f"{x['crps']['diff'] / max(x['crps']['se'], sd['crps']):+.1f})")
             L.append("      LL by stat: " + "  ".join(
-                f"{s} {v['diff']:+.4f}/{v['se']:.4f}" for s, v in x["ll_by_stat"].items()))
+                f"{s} {v['diff']:+.4f}/{max(v['se'], v.get('se_date', 0.0)):.4f}"
+                for s, v in x["ll_by_stat"].items()))
     if "extract_proxy" in ev:
         x = ev["extract_proxy"]
         L.append(f"  end-to-end proxy (T2.7 extract, pipeline mu x context, played, n={x['n']}):")

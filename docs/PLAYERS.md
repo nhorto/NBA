@@ -87,6 +87,7 @@ No review item is rejected outright. Three are accepted with a different option 
 | **Minutes v1 (T2.2) held back from live** after one deploy (2026-10-19): walk-forward it wins (MAE 4.49 / 4.40 vs 4.63 / 4.58; DK gate 8.049 vs 8.181), but on the live opener slate projected team minutes summed to ~205–213 vs ~224–236 for v0.5, and points reconciliation then inflated stars by up to +7 DK. The eval used the oracle panel, not the live candidate path. | Live = v0.5 (`pathA-v0.1`) until v1 is fixed and passes a live-path team-minutes test |
 | **Phase 2F, first ablation (F0–F2):** a per-player descriptor model **P** fixes the role-tier bias (end-to-end DK MAE −0.022 to −0.025, 6–8 SE, every season). **F2 opponent defense** (league-relative allowed-vs-expected index by position + 15 team box rates) clears the bar in 2023-24 / 2024-25 (per-minute NB LL +12 SE, CRPS 3–5 SE; harness CRPS 3.9 / 1.45 SE); it helps rebounds, blocks, assists, steals, turnovers and 3PM, not points (the market total covers points). **F1 opponent availability does not ship** (CRPS < 1 SE in 2024-25, negative in 2019-20). | P+F2 committed, wired into the live pipeline only after the opener with live-path checks |
 | **P + F2 wired into the pipeline behind a switch (2026-10-20), default OFF.** `pipeline.CONTEXT_ON` (`CONTEXT_DEFAULT = False`, env `COURTSIDE_CONTEXT=1/0` overrides). ON = `pathA-v0.3`, bundle `bundle_<S>_v1_cx.json` (the OFF bundle + the layer fit on seasons < S, 1 LightGBM thread so refits are byte-identical); seeds stay on `pathA-v0.2` so ON/OFF share draws. The F2 pace term uses the environment's market total (live books total on the live path; there is no closing line before the tip). With the switch OFF, projections are bit-identical to HEAD (bdb8a56) on a historical day and on the live opener slate. | Walk-forward ON vs OFF, every season better at 5.5–9.5 SE (DK MAE −0.026…−0.038, CRPS −0.011…−0.018); star bias −1.1…−1.4 → −0.6…−0.9; coverage unchanged; gate lines all PASS in both arms; lineups +1.3 / +1.9 pts (< 1.2 SE). Opener: team minutes/points unchanged, team DK −3%…+1%, max player move 2.1 DK. Table under Phase 2F |
+| **Phase 2F, second ablation (F3 / F5 / F6 on top of P+F2, 2026-10-20):** **F3 tracking** (rebound chances, passes, touches, deflections, contested shots, box-outs: shrunk per-minute rates, opportunity conversions, tracking-implied rate vs the EB rate) clears the per-minute bar by a wide margin in every season 2022-23…2025-26 (NB LL +7.7…+10.3 SE, CRPS +2.7…+4.2 SE). **F6 schedule** (home, rest, density, travel, time zones, altitude, season stage) adds on top of F3 (LL +1.0…+3.1 SE, CRPS +1.2…+2.8 SE). End to end (T2.1 harness) **F3 + F6** beats P+F2 by CRPS +0.0017 (1.3 SE) / +0.0041 (3.0 SE) and MAE +0.0042 (1.9 SE) / +0.0052 (2.3 SE) in 2023-24 / 2024-25; F3 alone is only 0.6 SE in 2023-24. **F5 matchups** (likely defenders from 2.2M matchup rows x shrunk defender quality) is real but tiny per minute (LL +1.4…+5.6 SE on top of F3+F6) and **adds nothing end to end** (CRPS +0.0000 / −0.0002): dropped. | **P+F2+F3+F6 kept, F5 dropped.** Wired opt-in as `pathA-v0.4` (`COURTSIDE_CONTEXT=1 COURTSIDE_CONTEXT_EXT=1`, bundle `bundle_<S>_v1_cx2.json`); default OFF; with the extension off ON stays bit-identical to `pathA-v0.3`. Star bias moves −0.06…−0.10 DK further negative (star-tier MAE within 1 SE). Table under Phase 2F |
 | P(play) uses hierarchical Beta cells (status × report age × reason × role) fit on the 151 rescued days (T1.3). Report age barely matters within a status; re-reading the latest report at lock−45/−10 is what matters. | CV log-loss on D/Q/P .463 vs .503 for the old map |
 | **Late swap (T2.14, `proj/dfs/swap.py`)**: a slot is fixed when its game has tipped or DK's file says so (`(LOCKED)` cell, "In Progress"/"Final" in the file's player list); fixed players are pinned and every result re-checked, failures are left unchanged. Open players may move between open slots; a second solve keeps everyone else in his old seat. An entry changes only when a ruled-out player must go or the objective gains ≥ 0.5 pts. Objective: cash for our cash lineup and double-up / 50-50 / H2H contest names, else mean. Same-contest entries stay ≥ 1 player apart (identical entries solve once); optional overlap / exposure caps count the locked parts and are relaxed, with a note, only when locks force it. Unchanged and locked cells are written back exactly as DK wrote them; new cells use the ID from DK's own player list in the upload. Read-only: stored projections, not a fresh pipeline run. The runner's swap loop moved to `swap.resolve_targets` unchanged. | 150 real-slate entries in 0.9 s (budget 30 s); 20 tests, including 40 random lock/shock trials and a byte-for-byte equivalence test of the runner's loop |
 | **Showdown (T2.15, `proj/dfs/showdown.py`)**: verified against pydfs Captain Mode. Slates are 30 RotoGuru single games (CPT = 1.5 × DK salary; actual points plus a noisy quarter-point variant) and the 3 captured DK Showdown slates (FPPG). pydfs hard-codes `max_from_one_team = 5`, which in a 2-team game is the same rule as our `teamCount.min = 2`. DK's CPT salary is exactly 1.5 × UTIL on all 250 captured rows: UTIL prices are in $200 steps, so no rounding rule is ever needed. | `courtside dfs showdown-check`: 33/33 slates, 63/63 comparisons with an equal objective, 0 ties |
@@ -654,6 +655,60 @@ v0 projects per-minute rates from the player's own history plus a position × ti
 - Multipliers stay within [0.8, 1.25]. Only fg3m (5.7%) and tov (4.7%) touch the clip. The DK-rate multiplier ranges 0.93–1.04.
 - `live-path-eval` with the switch ON passes (minutes only, identical by construction).
 - Verdict: ship after the opener is graded.
+
+**Phase 2F, second ablation: F3 tracking, F5 matchups, F6 schedule on top of P+F2 (2026-10-20).** Code: `proj/features/{tracking,matchups,schedule}.py`, `features.extend_frame` / `features.LiveExtras`, `context.run_ablation` (`research/context_ablation2.py`; `--staged` = F5 / F6 on top of P+F2+F3). Each layer is fit walk-forward on the 6 regular seasons < S, with one LightGBM thread. The per-minute metrics are NB log-lik per row (sum of the 7 DK stats) and DK CRPS / MAE given actual minutes, on all regular-season rows of S (n ≈ 26k). The SE is the larger of the two-way (game × player-season) and date-clustered SEs. Gain > 0 means the first arm is better. Reports: `var/reports/context_ablation2/` (Mac scratch `courtside-compute/f356`).
+
+| Comparison | Season | NB LL/row gain (SE, z) | DK CRPS gain (SE, z) | DK MAE gain (SE, z) |
+|---|---|---|---|---|
+| **+F3 vs P+F2** | 2022-23 | +0.00550 (0.00071, 7.7) | +0.0031 (0.0011, 2.7) | +0.0059 (0.0019, 3.0) |
+| | 2023-24 | +0.00645 (0.00074, 8.7) | +0.0046 (0.0012, 3.9) | +0.0057 (0.0020, 2.9) |
+| | 2024-25 | +0.00785 (0.00082, 9.6) | +0.0059 (0.0014, 4.2) | +0.0087 (0.0025, 3.6) |
+| | 2025-26 | +0.00885 (0.00086, 10.3) | +0.0047 (0.0014, 3.4) | +0.0076 (0.0024, 3.1) |
+| +F5 vs P+F2 (alone) | 2023-24 / 2024-25 | +0.00073 (1.7) / +0.00078 (1.9) | +0.0010 (1.2) / +0.0011 (1.4) | +0.0017 (1.1) / +0.0014 (1.0) |
+| +F6 vs P+F2 (alone) | 2023-24 / 2024-25 | +0.00037 (1.3) / +0.00066 (2.3) | +0.0015 (2.6) / +0.0009 (1.5) | +0.0028 (2.9) / +0.0020 (2.0) |
+| **+F6 vs P+F2+F3** | 2022-23 | +0.00032 (0.00034, 1.0) | +0.0009 (0.0006, 1.7) | +0.0021 (0.0010, 2.1) |
+| | 2023-24 | +0.00083 (0.00030, 2.7) | +0.0018 (0.0006, 2.8) | +0.0030 (0.0011, 2.8) |
+| | 2024-25 | +0.00093 (0.00030, 3.1) | +0.0007 (0.0006, 1.2) | +0.0019 (0.0011, 1.7) |
+| | 2025-26 | +0.00086 (0.00036, 2.4) | +0.0007 (0.0006, 1.3) | +0.0015 (0.0010, 1.5) |
+| +F5 vs P+F2+F3+F6 | 2022-23 | +0.00209 (0.00037, 5.6) | +0.0026 (0.0007, 3.8) | +0.0035 (0.0012, 3.0) |
+| | 2023-24 | +0.00056 (0.00039, 1.4) | +0.0009 (0.0008, 1.1) | +0.0018 (0.0013, 1.3) |
+| | 2024-25 | +0.00079 (0.00038, 2.0) | +0.0009 (0.0008, 1.2) | +0.0015 (0.0014, 1.1) |
+| | 2025-26 | +0.00102 (0.00039, 2.6) | +0.0017 (0.0008, 2.2) | +0.0013 (0.0013, 1.0) |
+| all (F3+F5+F6) vs P+F2 | 2022-23 … 2025-26 | +0.0079 / +0.0078 / +0.0096 / +0.0107 (9.1…11.7) | +0.0066 / +0.0073 / +0.0076 / +0.0071 (4.7…5.0) | +0.0114 / +0.0106 / +0.0122 / +0.0104 (4.0…4.8) |
+
+End to end (T2.1 harness, avail protocol, closing lines, 4,000 sims, every date; each arm's bundle = the OFF bundle + its layer fit on seasons < S, via the pipeline switch; paired against the P+F2 ON runs with common random numbers; rows identical, same expected minutes; SE clustered by date):
+
+| Arm vs P+F2 ON (`pathA-v0.3`) | Season | DK MAE (gain, SE, z) | DK CRPS (gain, SE, z) | 80% cov | bias (all / star tier) | Verdict |
+|---|---|---|---|---|---|---|
+| +F3 | 2023-24 | 8.0249 → 8.0225 (+0.0025, 0.0021, 1.2) | 5.6520 → 5.6514 (+0.0007, 0.0012, 0.6) | 0.820 → 0.820 | −0.08 → −0.12 / −0.92 → −1.01 | below bar alone |
+| | 2024-25 | 7.9950 → 7.9902 (+0.0048, 0.0022, 2.1) | 5.6464 → 5.6425 (+0.0039, 0.0013, 2.9) | 0.824 → 0.824 | +0.05 → +0.03 / −0.61 → −0.71 | |
+| **+F3+F6** | 2023-24 | 8.0249 → 8.0207 (+0.0042, 0.0023, 1.9) | 5.6520 → 5.6503 (+0.0017, 0.0013, 1.3) | 0.820 → 0.820 | −0.08 → −0.11 / −0.92 → −0.98 | **kept** |
+| | 2024-25 | 7.9950 → 7.9897 (+0.0052, 0.0022, 2.3) | 5.6464 → 5.6423 (+0.0041, 0.0014, 3.0) | 0.824 → 0.824 | +0.05 → +0.03 / −0.61 → −0.71 | |
+| +F3+F5+F6 vs +F3+F6 | 2023-24 | −0.0006 (0.0012, −0.5) | +0.0000 (0.0007, 0.0) | 0.820 → 0.821 | | **F5 dropped** |
+| | 2024-25 | −0.0002 (0.0012, −0.2) | −0.0002 (0.0007, −0.3) | 0.824 → 0.825 | | |
+
+F3+F6 vs OFF (`pathA-v0.2`): CRPS +0.0192 (7.8 SE) / +0.0171 (6.9 SE), MAE +0.0372 / +0.0335. F6 on top of F3 end to end: CRPS +0.0010 (1.9 SE) / +0.0002 (0.4 SE).
+
+**Per stat** (NB LL/row ×10⁻⁴ of the full F3+F5+F6 vs P+F2, z in brackets): assists +20…+26 (5.0–6.4) and steals +7…+26 (3.0–7.2) gain most, then 3PM +11…+21 (3.5–5.7), rebounds +6…+17 (1.9–4.8), points +6…+12 (2.0–4.3) and turnovers +4…+9 (1.9–4.5). Blocks are small (+4…+5, 2.7–3.1) and slightly negative in 2023-24 (−1.7, −0.7). Where F3 acts (split gain): the opportunity conversions do most of the work. These are AST per pass, DREB / OREB per chance, uncontested FG% (shooting-luck regression, used by both points and 3PM), and STL per deflection. Next come the tracking-implied-vs-EB gaps for steals, rebounds and assists, then touches for turnovers and contested 2PT shots for blocks. F6 acts almost entirely through season stage (rebounds, assists, blocks, turnovers); rest / travel / altitude barely split. F5's signal is the matchup-weighted 3PA / AST / TOV quality of the defenders faced and the attacking tendencies of the players a defender guards (steals, blocks).
+
+**Leak tests** (`tests/test_proj_features2.py`, `tests/test_proj_context_ext.py`):
+- L1 scramble per group (F3, F5): every tracking / hustle / matchup / box stat on or after the cut is re-randomised; features up to the cut are identical and later ones change.
+- L5 truncation (F3, F5): every row after the cut is deleted, and features up to it are identical.
+- F6: only earlier games and the game's own date / site are used. Dropping later games and zeroing results changes nothing, and the per-day hook equals the table with the day's games missing from `team_games` (the live case).
+- Live hooks: `LiveExtras.day` reproduces the frame's F3 / F5 columns exactly. In the pipeline with ON + ext, deleting the day's and later box / tracking / hustle / matchup rows leaves the sims identical.
+- Walk-forward: the extended bundle is fit on seasons < S only.
+
+**Live path (opener, slate 154575 at 2026-10-20 12:00Z, ON + ext vs ON).**
+- No NaN in the 46 extension columns for any of the 106 slate players, including 29 traded players.
+- Every 2026-27 roster player of the six opener teams was checked through the same hook, including 16 rookies / camp players with no NBA minutes. They get the group prior (`t3_ln_min` 0) and finite multipliers inside the clip.
+- Team DK moves −1.4…+1.5 and the largest player move is 1.0 DK (SGA −1.0, Pritchard −0.8, George +0.8).
+- ON P+F2 with this code is bit-identical to the committed P+F2 wiring on 2025-01-15 (11 games, 1.31M sim values, same seed).
+
+Not done / caveats:
+- Potential assists are not in the source (stats.nba.com leaves `matchupPotentialAssists` at 0). Drives and contested rebounds are not in the box-score tracking feed.
+- The F3 / F5 / F6 shrinkage constants were set by hand, not tuned.
+- F3 adds 0.06–0.10 DK to the star tier's under-projection.
+- The RotoGuru lineup seasons (2019-20 / 2020-21) were not rerun: they have no tracking history to train on.
 
 ### Phase 2.5: contest builder, GPP, late swap, Showdown (Nov 15 – 21)
 
