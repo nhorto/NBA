@@ -291,9 +291,11 @@ def _injury_match(conn: sqlite3.Connection, now: datetime) -> dict:
         if not bs:
             continue
         rep = injuries.match_report(conn, [(src, bs[-1])])["total"]
-        if not rep["rows"]:
+        if not rep["rows"] or rep["rate"] is None:
             continue
-        parts.append(f"{src} {rep['matched']}/{rep['rows']} ({rep['rate']:.0%})")
+        nh = f", {rep['no_history']} rookies/camp with no NBA minutes" if rep["no_history"] else ""
+        parts.append(f"{src} {rep['matched']}/{rep['rows'] - rep['no_history']} "
+                     f"({rep['rate']:.0%}{nh})")
         if primary is None:
             primary = rep["rate"]
     if primary is None:

@@ -371,7 +371,7 @@ def _injuries_cmd(args) -> int:
         print(f"{b['source']:<13} {b['captured_at']}  rows {b['rows']:>3}  matched {b['matched']:>3}"
               f" ({100 * (b['rate'] or 0):.1f}%; {b['other_team']} via other team)  "
               f"relevant {b['relevant_matched']}/{b['relevant_rows']}  off-roster {b['off_roster']}"
-              f"  unknown {b['unknown']}  ambiguous {b['ambiguous']}")
+              f"  unknown {b['unknown']}  ambiguous {b['ambiguous']}  no-history {b['no_history']}")
     t = r["total"]
     print(f"total: {t['matched']}/{t['rows']} matched ({100 * (t['rate'] or 0):.1f}%); "
           f"unmatched written to {csv_path}")

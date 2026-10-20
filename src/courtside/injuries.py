@@ -478,6 +478,17 @@ def _league_names(conn: sqlite3.Connection) -> dict[str, set[int]]:
     return out
 
 
+def _season_rosters(conn: sqlite3.Connection, day: date) -> set[tuple[str, str]]:
+    """{(team, normalised name)} of the season's official roster snapshot (`team_rosters`)."""
+    y = day.year if day.month >= 8 else day.year - 1
+    season = f"{y}-{(y + 1) % 100:02d}"
+    try:
+        rows = conn.execute("SELECT team, player FROM team_rosters WHERE season=?", (season,))
+        return {(r[0], norm_name(r[1])) for r in rows}
+    except sqlite3.OperationalError:
+        return set()
+
+
 def match_report(conn: sqlite3.Connection, batches_: list[tuple[str, str]] | None = None,
                  csv_path: Path | str | None = None) -> dict:
     """Match every row of the given (source, captured_at) snapshot batches (default: all) to
@@ -486,7 +497,9 @@ def match_report(conn: sqlite3.Connection, batches_: list[tuple[str, str]] | Non
     Per batch and overall: rows, matched, rate, and the unmatched split into `off_roster`
     (a player_games name that is not active for any team within the lookback: G League, out for
     the season before it began, retired), `unknown` (never in player_games: rookies, new
-    signings) and `ambiguous`; `other_team` matches (traded/signed, found league-wide) count as
+    signings) and `ambiguous`; `no_history` is an unmatched name that IS on his team's current
+    official roster (`team_rosters`) but has no NBA minutes in the lookback (rookies, two-way and
+    camp players): the model has nothing to price for him, so he is left out of the rates; `other_team` matches (traded/signed, found league-wide) count as
     matched and are also counted separately. `relevant_*` repeats the counts for Out/Doubtful/Questionable rows only,
     the ones that can move a prediction."""
     if batches_ is None:
@@ -495,8 +508,8 @@ def match_report(conn: sqlite3.Connection, batches_: list[tuple[str, str]] | Non
             "ORDER BY captured_at, source")]
     known = _league_names(conn)
     per, unmatched = [], []
-    keys = ("rows", "matched", "other_team", "off_roster", "unknown", "ambiguous",
-            "relevant_rows", "relevant_matched")
+    keys = ("rows", "matched", "other_team", "off_roster", "unknown", "ambiguous", "no_history",
+            "relevant_rows", "relevant_matched", "relevant_no_history")
     tot = dict.fromkeys(keys, 0)
     how_count: dict[str, int] = {}
     for src, cap in batches_:
@@ -504,6 +517,7 @@ def match_report(conn: sqlite3.Connection, batches_: list[tuple[str, str]] | Non
         act = active_players(conn, nba_day_of(cap))
         rosters = recent_rosters(conn, nba_day_of(cap), None, act)
         league = [(p, n) for p, n, _ in act]
+        official = _season_rosters(conn, nba_day_of(cap))
         b = dict.fromkeys(keys, 0)
         for r in rows:
             roster = rosters.get(r["team"], [])
@@ -518,7 +532,9 @@ def match_report(conn: sqlite3.Connection, batches_: list[tuple[str, str]] | Non
                 how_count[how] = how_count.get(how, 0) + 1
                 continue
             cat = ("ambiguous" if how == "ambiguous" else
+                   "no_history" if (r["team"], norm_name(r["player_name"])) in official else
                    "off_roster" if norm_name(r["player_name"]) in known else "unknown")
+            b["relevant_no_history"] += rel and cat == "no_history"
             b[cat] += 1
             unmatched.append({"source": src, "captured_at": cap, "team": r["team"],
                               "player_name": r["player_name"], "player_id": r.get("player_id"),
@@ -541,6 +557,8 @@ def match_report(conn: sqlite3.Connection, batches_: list[tuple[str, str]] | Non
 
 
 def _rates(b: dict) -> dict:
-    return {"rate": round(b["matched"] / b["rows"], 4) if b["rows"] else None,
-            "relevant_rate": round(b["relevant_matched"] / b["relevant_rows"], 4)
-            if b["relevant_rows"] else None}
+    """Match rates over the rows the model could price (`no_history` rows are excluded)."""
+    n = b["rows"] - b.get("no_history", 0)
+    nr = b["relevant_rows"] - b.get("relevant_no_history", 0)
+    return {"rate": round(b["matched"] / n, 4) if n else None,
+            "relevant_rate": round(b["relevant_matched"] / nr, 4) if nr else None}

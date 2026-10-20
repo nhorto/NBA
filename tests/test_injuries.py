@@ -243,3 +243,27 @@ def test_match_report_counts_and_writes_the_unmatched_csv(tmp_path):
     lines = path.read_text().strip().splitlines()
     assert lines[0].startswith("source,captured_at,team,player_name") and len(lines) == 2
     assert "Nobody Atall" in lines[1] and "unknown" in lines[1]
+
+
+def test_match_report_rookie_on_official_roster_is_no_history_not_a_miss():
+    """A listed rookie / camp player on his team's official roster with no NBA minutes cannot be
+    priced, so he is `no_history` and left out of the match rate (opener 2026-10-20: five Out
+    rookies escalated the pregame alert to critical)."""
+    from synth import synth_conn
+    c = synth_conn()
+    day = day_date("2024-25", 22)
+    roster = injuries.recent_rosters(c, day)
+    ins = ("INSERT INTO injury_snapshots (captured_at, source, team, player_name, status, "
+           "reason) VALUES (?,?,?,?,?,?)")
+    at = f"{day}T20:00:00Z"
+    c.execute("CREATE TABLE IF NOT EXISTS team_rosters (season TEXT, team_id INTEGER, team TEXT, "
+              "player_id INTEGER, player TEXT)")
+    c.execute("INSERT INTO team_rosters VALUES ('2024-25', 1, 'BOS', 999001, 'Rookie Newguy')")
+    for team, n in (("BOS", roster["BOS"][0][1]), ("BOS", "Rookie Newguy"),
+                    ("NYK", "Rookie Newguy"), ("BOS", "Nobody Atall")):
+        c.execute(ins, (at, "nba_official", team, n, "Out", "x"))
+    c.commit()
+    b = injuries.match_report(c)["batches"][0]
+    assert (b["rows"], b["matched"], b["no_history"], b["unknown"]) == (4, 1, 1, 2)
+    assert b["rate"] == pytest.approx(1 / 3, abs=1e-3)       # 1 of the 3 priceable rows
+    assert b["relevant_no_history"] == 1
