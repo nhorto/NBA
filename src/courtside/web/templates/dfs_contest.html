@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set s = v.slate %}
+{% set pf = v.portfolio %}
+{% block title %}Contest builder &middot; DFS &middot; {{ v.day|medium_date }} &middot; Courtside{% endblock %}
+{% block description %}Build a diversified DraftKings lineup set for one contest, with its simulated payout against a modelled field. Simulated, not real results.{% endblock %}
+
+{% block content %}
+{% if v.refresh %}<meta http-equiv="refresh" content="{{ v.refresh }}">{% endif %}
+<section class="wrap dfs-hero" aria-labelledby="dfc-title">
+  <div class="mast-kicker">
+    <span class="kicker">DFS</span>
+    <time datetime="{{ v.day }}">{{ v.day_label }}</time>
+  </div>
+  <h1 class="dfs-h1" id="dfc-title">Contest builder</h1>
+  <p class="hm-sub">{{ s.label }} &middot; {{ s.games }} game{{ "s" if s.games != 1 }}{% if s.lock_text %} &middot; {{ s.lock_text }}{% endif %}</p>
+  <nav class="rs-links" aria-label="DFS">
+    <a href="{{ s.url }}">Back to the slate</a><a href="/dfs/results">Real results</a><a href="/health/dfs">DFS health</a>
+  </nav>
+</section>
+
+{% if v.flash %}
+<div class="wrap">
+  <div class="rs-flash is-{{ v.flash.kind }}" role="alert"><p class="rs-flash-title">Could not start the build</p><p>{{ v.flash.text }}</p></div>
+</div>
+{% endif %}
+
+<div class="wrap dfs-body">
+  <p class="caveat dfc-sim"><strong>{{ v.sim_label }}.</strong> Every number on this page comes from our simulations of tonight&rsquo;s games, scored against a modelled field. Ownership and the field are a <b>proxy</b> built from public information, not real entries. A modelled field is likely weaker than a real DraftKings field, so raw payouts would run far above what real contests return. Until real standings calibrate them, the page compares lineup sets and shows chances as ranges instead of dollar forecasts.</p>
+</div>
+
+{# ================================================================ RESULT #}
+{% if pf %}
+<div class="wrap dfs-body">
+<section class="section" id="result" aria-labelledby="result-title">
+  {{ m.sec_head("result", "1", pf.contest_name, pf.created_text) }}
+
+  {% if pf.status == "building" %}
+  <div class="card dfc-building" role="status" aria-live="polite">
+    <p class="dfc-spin"><span class="hm-banner-dot" aria-hidden="true"></span><strong>Building&hellip;</strong> {{ pf.stage }} ({{ pf.elapsed }}s)</p>
+    <p class="muted">A set of {{ pf.n_requested }} usually takes under two minutes. This page refreshes itself; <a href="{{ v.action }}?p={{ pf.id }}">refresh now</a>.</p>
+  </div>
+  {% elif pf.status == "error" %}
+  <div class="rs-flash is-error" role="alert"><p class="rs-flash-title">The build failed</p><p>{{ pf.error }}</p></div>
+  {% elif pf.status == "stale" %}
+  <div class="rs-flash is-error" role="alert"><p class="rs-flash-title">This build did not finish</p><p>The server stopped while it was running. Start it again below.</p></div>
+  {% else %}
+  {% set sm = pf.summary %}
+  <p class="card-sub dfc-contest">{{ pf.contest_line }}</p>
+  {% set h = pf.headline %}
+  <dl class="stats dfc-stats" aria-label="Simulated portfolio summary">
+    <div><dt>Entries</dt><dd>{{ sm.entries }}{% if sm.entries != sm.requested %}<small> of {{ sm.requested }}</small>{% endif %}</dd></div>
+    <div><dt>vs Top {{ h.baseline_n }} by proj. <small>sim</small></dt><dd>{{ h.relative }}</dd></div>
+    <div><dt>Any entry cashes <small>sim</small></dt><dd>{{ h.any_cash }}</dd></div>
+    <div><dt>Any top-1% finish <small>sim</small></dt><dd>{{ h.any_top1 }}</dd></div>
+  </dl>
+  <ul class="dfc-facts">
+    <li><b>{{ h.relative }}</b> is this set&rsquo;s simulated payout relative to simply entering the top {{ h.baseline_n }} lineups by projection, on the same simulations and field{% if h.relative_se %} (&plusmn;{{ h.relative_se }} simulation error){% endif %}. It compares two ways to fill the same entries; it is not a forecast of money won.</li>
+    <li>Chances are shown as ranges: they come from a modelled field and are not yet calibrated against real contest results.</li>
+    {% if pf.calibrated %}<li>Expected payout <b>{{ sm.e_payout }}</b> for {{ sm.cost }} in fees; ROI <b>{{ sm.roi }}</b> (simulated against a modelled field, not real results).</li>{% endif %}
+  </ul>
+  <details class="card dfc-details">
+    <summary>Details <span class="muted">(simulated, uncalibrated)</span></summary>
+    <div class="dfc-details-body">
+      <p class="muted">These raw simulation outputs assume the modelled field is right. Until enough real standings are uploaded to check them (10 slates), they are not shown as headline numbers.</p>
+      <ul class="dfc-facts">
+        <li>Expected payout {{ sm.e_payout }} &plusmn; {{ sm.e_payout_se }} for {{ sm.cost }} in fees; ROI {{ sm.roi }}{% if sm.base_e %}; Top {{ h.baseline_n }} by projection: {{ sm.base_e }}{% endif %}</li>
+        <li>Any entry cashes {{ sm.p_any_cash }}; set makes a profit {{ sm.p_profit }}; any top-1% finish {{ sm.p_any_top1 }}; entries cashing on average {{ sm.e_cashing }}</li>
+        {% if sm.range %}<li>Expected payout by field strength <small>(proxy: how informed the modelled field is)</small>: softer field {{ sm.range.soft_e }}, medium {{ sm.e_payout }}, sharper field {{ sm.range.sharp_e }}</li>{% endif %}
+        <li>{{ sm.n_sims }} simulations; every raw number is in the <a href="{{ pf.json }}">JSON</a>.</li>
+      </ul>
+    </div>
+  </details>
+  {% if sm.stopped %}<p class="caveat">Only {{ sm.entries }} of {{ sm.requested }} lineups fit the exposure and shared-player limits. Loosen them to get more.</p>{% endif %}
+  <div class="dfs-actions dfc-dl">
+    <a class="btn" href="{{ pf.csv }}" download>Download DK CSV</a>
+    <a class="btn btn-sm btn-ghost" href="{{ pf.csv }}?fmt=name_id" download>CSV with names</a>
+    <span class="muted">Upload it on DraftKings yourself. Courtside never signs in or enters contests.</span>
+  </div>
+
+  <h3 class="mini-head dfc-h3" id="exp-title">Exposure</h3>
+  <div class="card dfs-poolcard">
+    <div class="table-scroll dfs-scroll">
+    <table class="table dfc-exp" aria-labelledby="exp-title">
+      <thead><tr><th scope="col">Player</th><th scope="col" class="num">Lineups</th><th scope="col" class="num">Share</th><th scope="col" class="num">Cap</th><th scope="col">Field popularity <small>(proxy)</small></th></tr></thead>
+      <tbody>
+      {% for r in pf.exposure %}
+      <tr>
+        <th scope="row"><span class="dfs-name">{{ r.name }}</span>{% if r.locked %} <span class="tag">Locked</span>{% endif %}<span class="dfs-psub">{{ r.team }} &middot; {{ r.positions }} &middot; {{ r.salary_text }}</span></th>
+        <td class="num">{{ r.count }}</td>
+        <td class="num"><span class="dfc-bar" style="--w:{{ (r.share_v * 100)|round(0) }}%" aria-hidden="true"></span>{{ r.share }}</td>
+        <td class="num">{{ r.cap }}</td>
+        <td>{{ r.band }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <h3 class="mini-head dfc-h3">Lineups</h3>
+  <p class="muted dfc-note">Each lineup&rsquo;s chances are simulated with the whole set entered, shown as ranges. Dupe risk is how likely others in the field hold the same eight players (proxy).</p>
+  <ol class="dfs-topn">
+    {% for lu in pf.lineups %}
+    <li>
+      <details class="card dfs-card" id="pl-{{ lu.rank }}">
+        <summary>
+          <span class="dfs-rank">#{{ lu.rank }}</span>
+          <span class="dfs-sum-main">
+            <span class="dfs-sum-line"><b class="num">{{ lu.mean|num(1) }}</b> sim mean
+              <span class="muted">&middot; cash {{ lu.cash_band }} &middot; top 1% {{ lu.top1_band }}</span>
+              <span class="muted">&middot; dupe risk {{ lu.dupe_band }}</span>
+            </span>
+            <span class="muted dfs-sum-sub">{{ lu.names }}</span>
+          </span>
+        </summary>
+        <div class="dfs-card-body">
+          <div class="table-scroll dfs-scroll">
+          <table class="table dfs-lu">
+            <caption class="sr">Contest lineup {{ lu.rank }}, eight roster slots</caption>
+            <thead><tr><th scope="col">Slot</th><th scope="col">Player</th><th scope="col" class="num">Salary</th><th scope="col" class="num">Proj</th></tr></thead>
+            <tbody>
+            {% for p in lu.slots %}
+            <tr><th scope="row" class="dfs-slot">{{ p.slot }}</th><td class="dfs-who"><span class="dfs-name">{{ p.name }}</span>{% if p.team %} <span class="team-tag">{{ p.team }}</span>{% endif %}</td><td class="num">{{ p.salary_text }}</td><td class="num">{{ p.mean|num(1) }}</td></tr>
+            {% endfor %}
+            </tbody>
+            <tfoot><tr><th scope="row" colspan="2">Total</th><td class="num">{{ lu.salary_text }}</td><td class="num">{{ lu.mean|num(1) }}</td></tr></tfoot>
+          </table>
+          </div>
+          {% if lu.p10 is not none and lu.p90 is not none %}<p class="muted dfc-note">Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }} points (10th to 90th percentile, simulated).</p>{% endif %}
+          <p class="muted dfc-note">Details (simulated, uncalibrated): cash {{ lu.p_cash }}, top 1% {{ lu.p_top1 }}, expected payout {{ lu.e_payout }} within the set.</p>
+        </div>
+      </details>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="footnote">Built from {{ pf.basis.candidates }} candidate lineups and {{ pf.basis.n_sims }} simulations in {{ pf.basis.seconds|num(0) }}s. Lineups share at most {{ pf.basis.gamma }} players. The field is a sample of {{ pf.basis.field_sample }} modelled lineups; ownership is {{ "fitted on uploaded results" if pf.basis.ownership_calibrated else "hand-set from public information (not yet calibrated)" }}.</p>
+  {% endif %}
+</section>
+</div>
+{% endif %}
+
+{# ================================================================ FORM #}
+<div class="wrap dfs-body">
+<section class="section" id="build" aria-labelledby="build-title">
+  {{ m.sec_head("build", "2" if pf else "1", "Build a lineup set", s.run_text) }}
+  {% if not v.contests %}
+  {{ m.empty("No contests captured", "Contest payout tables are captured from the DraftKings lobby on game days. None are stored for this slate.") }}
+  {% else %}
+  <form class="dfc-form" method="post" action="{{ v.action }}">
+    <fieldset class="dfc-fs">
+      <legend class="mini-head">Contest</legend>
+      <div class="table-scroll dfs-scroll dfc-contests">
+      <table class="table">
+        <thead><tr><th scope="col">Contest</th><th scope="col" class="num">Fee</th><th scope="col" class="num">Entries</th><th scope="col" class="num">Max per user</th><th scope="col" class="num">Top prize</th></tr></thead>
+        <tbody>
+        {% for c in v.contests %}
+        <tr>
+          <th scope="row"><label class="dfc-radio"><input type="radio" name="contest" value="{{ c.contest_id }}"{% if c.contest_id == v.form.contest %} checked{% endif %} required> <span><span class="dfs-name">{{ c.name }}</span><span class="dfs-psub">{{ c.kind }}{% if c.paid_text %} &middot; {{ c.paid_text }}{% endif %}</span><span class="dfs-psub dfc-mmeta">{{ c.fee_text }} fee &middot; {{ c.field_text }} entries &middot; max {{ c.max_per_user }} &middot; top {{ c.top_text }}</span></span></label></th>
+          <td class="num">{{ c.fee_text }}</td><td class="num">{{ c.field_text }}</td><td class="num">{{ c.max_per_user }}</td><td class="num">{{ c.top_text }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </fieldset>
+    <div class="rs-form dfc-opts">
+      <label class="rs-field"><span>Entries <small>(up to the contest&rsquo;s max, 150 at most)</small></span>
+        <input class="dfs-input" type="number" name="n" min="1" max="150" step="1" inputmode="numeric" value="{{ v.form.n }}" required></label>
+      <label class="rs-field"><span>Max exposure per player <small>(% of lineups; applies from 5 entries)</small></span>
+        <input class="dfs-input" type="number" name="max_exp" min="10" max="100" step="5" inputmode="numeric" value="{{ v.form.max_exp }}" required></label>
+      <label class="rs-field"><span>Most players two lineups may share <small>(of 8)</small></span>
+        <select class="dfs-input" name="gamma">{% for g in v.gamma_choices %}<option value="{{ g }}"{% if g|string == v.form.gamma %} selected{% endif %}>{{ g }}</option>{% endfor %}</select></label>
+    </div>
+    {% if v.players %}
+    <details class="card dfc-players"{% if v.form.acts %} open{% endif %}>
+      <summary>Lock or exclude players <span class="muted">(optional)</span></summary>
+      <div class="table-scroll dfs-scroll">
+      <table class="table">
+        <thead><tr><th scope="col">Player</th><th scope="col" class="num">Salary</th><th scope="col" class="num">Proj</th><th scope="col">Use</th></tr></thead>
+        <tbody>
+        {% for p in v.players %}
+        {% set act = v.form.acts.get(p.id, "") %}
+        <tr>
+          <th scope="row"><span class="dfs-name">{{ p.name }}</span>{% if p.status %} <span class="pill pill-questionable">{{ p.status }}</span>{% endif %}<span class="dfs-psub">{{ p.team }} &middot; {{ p.positions }}</span></th>
+          <td class="num">{{ p.salary_text }}</td><td class="num">{{ p.proj|num(1) }}</td>
+          <td><select class="dfs-input dfc-act" name="p_{{ p.id }}" aria-label="Use {{ p.name }}"><option value=""{% if not act %} selected{% endif %}>Auto</option><option value="lock"{% if act == "lock" %} selected{% endif %}>Lock in all</option><option value="exclude"{% if act == "exclude" %} selected{% endif %}>Exclude</option></select></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </details>
+    {% endif %}
+    <div class="rs-actions dfc-go">
+      <button class="btn" type="submit"{% if not v.can_build or v.busy %} disabled{% endif %}>Build lineup set</button>
+      {% if v.why_not %}<span class="muted">{{ v.why_not }}</span>{% elif v.busy %}<span class="muted">Another build is running.</span>{% else %}<span class="muted">Takes about a minute. Simulated, not real results.</span>{% endif %}
+    </div>
+  </form>
+  {% endif %}
+</section>
+
+{# ================================================================ GUIDANCE #}
+<section class="section" id="guidance" aria-labelledby="guidance-title">
+  {{ m.sec_head("guidance", "3" if pf else "2", "Choosing contests") }}
+  <div class="card dfs-soon">
+    <ul class="dfc-guide">{% for g in v.guidance %}<li>{{ g }}</li>{% endfor %}</ul>
+    <p class="dfc-stakes"><strong>{{ v.stakes }}</strong></p>
+  </div>
+</section>
+
+{% if v.recent %}
+<section class="section" id="builds" aria-labelledby="builds-title">
+  {{ m.sec_head("builds", "4" if pf else "3", "Builds for this slate") }}
+  <ul class="dfc-recent">
+    {% for r in v.recent %}
+    <li{% if r.active %} aria-current="true"{% endif %}><a href="{{ r.url }}">{{ r.contest }}</a> <span class="muted">&middot; {{ r.n }} entr{{ "y" if r.n == 1 else "ies" }} &middot; {{ r.when }}{% if r.status != "ok" %} &middot; {{ {"building": "building", "error": "failed", "stale": "did not finish"}.get(r.status, r.status) }}{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<p class="footnote dfs-foot">Simulated, not real results: projections, ranges and payouts come from our simulations against a modelled field (proxy ownership and entries). Lineups are information, not advice, and real results can land far from these numbers. There is no stake sizing here by design. Downloads are plain CSV files you upload to DraftKings yourself.</p>
+</div>
+{% endblock %}

@@ -1103,6 +1103,8 @@ class FieldEval:
     contest: Contest
     info: dict
     label: str = LABEL
+    per_sim: dict | None = None     # evaluate(per_sim=True): (S x L) "score" (1/64-point units
+                                    # + BIAS, int32), "above" / "tied" (other entries, float32)
 
     def cash_line_summary(self) -> dict:
         q = np.percentile(self.cash_line, [10, 25, 50, 75, 90])
@@ -1183,16 +1185,22 @@ def dupes(field: Field, rows: np.ndarray) -> np.ndarray:
 
 
 def evaluate(field: Field, fp: np.ndarray, contest: Contest, lineups: Sequence = (), *,
-             seed: int = 0, chunk: int | None = None, tiers: bool = True) -> FieldEval:
+             seed: int = 0, chunk: int | None = None, tiers: bool = True,
+             own_entries: int = 1, per_sim: bool = False) -> FieldEval:
     """Score the field and candidate lineups on per-sim player DK points `fp` (S x n, columns =
-    `field.pids`). See the module docstring for the definitions."""
+    `field.pids`). See the module docstring for the definitions.
+
+    `own_entries` is how many of the contest's M entries are ours (the other entries are
+    M - own_entries; default 1, a single entry). `per_sim=True` also returns, per sim and
+    candidate, the score and the number of other entries above / tied with it (the inputs of a
+    joint multi-entry payout, proj/dfs/portfolio.py)."""
     t0 = time.perf_counter()
     rng = np.random.default_rng(seed)
     S_all, n = fp.shape
     M = int(contest.field_size)
     if M < 2:
         raise ValueError("contest field size must be >= 2")
-    m_o = M - 1
+    m_o = max(1, M - max(1, int(own_entries)))
     R = min(max(1, contest.paid), M)
     R1 = max(1, int(math.ceil(0.01 * M)))
     tier_ranks = sorted({min(int(t["max_pos"]), M) for t in contest.payouts})
@@ -1226,6 +1234,8 @@ def evaluate(field: Field, fp: np.ndarray, contest: Contest, lineups: Sequence =
     e_pay2 = np.zeros(L)
     score_sum = np.zeros(L)
     denom = UNIT * WUNIT
+    keep = {"score": np.zeros((S_all, L), np.int32), "above": np.zeros((S_all, L), np.float32),
+            "tied": np.zeros((S_all, L), np.float32)} if per_sim and L else None
 
     def pos_of(rank: int) -> int:     # ascending index of the rank-th largest of n_o values
         k = rank if scale == 1.0 else int(math.ceil(rank / scale))
@@ -1269,6 +1279,10 @@ def evaluate(field: Field, fp: np.ndarray, contest: Contest, lineups: Sequence =
                 p = rng.beta(gt + 1.0, F - gt + 1.0)
                 above = rng.binomial(m_o, p).astype(np.float64)
                 tied = eq * scale
+            if keep is not None:
+                keep["score"][a:b] = cs
+                keep["above"][a:b] = above
+                keep["tied"][a:b] = tied
             lo = np.clip(np.rint(above) + 1, 1, M).astype(np.int64)
             hi = np.clip(np.rint(above + tied) + 1, 1, M).astype(np.int64)
             won = (cum[hi] - cum[lo - 1]) / (hi - lo + 1)
@@ -1291,7 +1305,7 @@ def evaluate(field: Field, fp: np.ndarray, contest: Contest, lineups: Sequence =
             "mode": "exact" if exact else ("drawn" if explicit else "scaled"),
             "scale": scale, "paid": R, "top1_rank": R1, "tier_ranks": tier_ranks,
             "seconds": round(time.perf_counter() - t0, 2), "label": LABEL}
-    return FieldEval(cash_pts, top1_pts, tl_pts, res, contest, info)
+    return FieldEval(cash_pts, top1_pts, tl_pts, res, contest, info, per_sim=keep)
 
 
 def dupe_band(d: float) -> str:

@@ -150,7 +150,7 @@ def test_page_renders_full(make):
     assert r.status_code == 200
     t = text_of(r.text)
     assert "Cash lineup" in t and "Top 3 lineups" in t and "Player pool" in t
-    assert "Contest builder" in t and "Coming soon" in t and "1 contest archived" in t
+    assert "Contest builder" in t and "1 contest captured" in t and "Open the contest builder" in t
     assert "Locks in 2h 10m" in t                             # 16:50Z -> 19:00Z
     assert "Last run: 45-minute run, 2:20 PM ET" in t
     assert "Projections: model dfsmodel-v1" in t and "Beta" not in t

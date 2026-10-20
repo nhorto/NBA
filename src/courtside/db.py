@@ -910,6 +910,26 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX IF NOT EXISTS idx_ppg_game ON player_projection_grades(game_id);
     """,
+    # 13: contest-builder portfolios (proj/dfs/portfolio.py, T2.12 / T2.16). One row per build
+    # (status building | ok | error); its lineups are dfs_lineups rows with run_id =
+    # portfolio_id and mode 'gpp'. Kept out of dfs_runs (not a projection run).
+    """
+    CREATE TABLE IF NOT EXISTS dfs_portfolios (
+        portfolio_id TEXT PRIMARY KEY,
+        slate_id TEXT NOT NULL,
+        contest_id TEXT,
+        run_id TEXT,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL,
+        n_requested INTEGER,
+        n_built INTEGER,
+        settings_json TEXT,
+        summary_json TEXT,
+        seconds REAL,
+        error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfs_portfolios_slate ON dfs_portfolios(slate_id, created_at);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",

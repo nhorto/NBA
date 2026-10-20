@@ -1289,3 +1289,41 @@ textarea.dfs-input { resize: vertical; min-height: 4.5rem; }
 .sw-notes { margin-top: 8px; font-size: .82rem; color: var(--ink-2); display: grid; gap: 2px; }
 .sw-groups { display: grid; gap: 4px; font-size: .88rem; margin-bottom: 10px; }
 .sw-exp th, .sw-exp td { padding: 7px 6px; }
+
+/* contest builder (/dfs/<day>/<slate>/contest, T2.16) */
+.dfc-sim { margin-top: 4px; }
+.dfc-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.dfc-stats dt small { font-weight: 600; letter-spacing: .04em; }
+.dfc-facts { margin: 14px 0 6px; padding-left: 1.1em; display: grid; gap: 3px; font-size: .92rem; color: var(--ink-2); }
+.dfc-dl { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0 6px; }
+.dfc-dl .muted { font-size: .84rem; }
+.dfc-h3 { margin: 22px 0 8px; }
+.dfc-note { font-size: .86rem; margin: 0 0 10px; }
+.dfc-bar { display: inline-block; width: 48px; height: 6px; margin-right: 8px; border-radius: 3px; vertical-align: middle; background: linear-gradient(90deg, var(--accent, var(--ink-2)) var(--w), var(--line) var(--w)); }
+.dfc-building { display: grid; gap: 6px; }
+.dfc-spin { display: flex; align-items: center; gap: 8px; }
+.dfc-form { display: grid; gap: 16px; }
+.dfc-fs { border: 0; padding: 0; margin: 0; min-width: 0; }
+.dfc-contests { max-height: 26rem; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--r-md); padding: 4px 10px; }
+.dfc-radio { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; font-weight: 450; }
+.dfc-radio input { width: 18px; height: 18px; margin-top: 2px; flex: none; }
+.dfc-radio .dfs-psub { display: block; }
+.dfc-players { padding: 0; }
+.dfc-players > summary { padding: 12px var(--pad); font-weight: 600; cursor: pointer; }
+.dfc-players .table-scroll { padding: 0 var(--pad) var(--pad); max-height: 30rem; overflow-y: auto; }
+.dfc-act { min-height: 34px; padding: 4px 8px; font-size: .86rem; }
+.dfc-go { align-items: center; flex-wrap: wrap; }
+.dfc-go .muted { font-size: .86rem; }
+.dfc-guide { padding-left: 1.1em; display: grid; gap: 6px; }
+.dfc-stakes { margin-top: 6px; color: var(--ink); }
+.dfc-recent { display: grid; gap: 6px; padding-left: 1.1em; font-size: .92rem; }
+.dfc-recent li[aria-current] a { font-weight: 700; }
+@media (max-width: 640px) { .dfc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .dfc-stats > div:nth-child(3) { border-left: 0; padding-left: 0; } }
+.dfc-mmeta { display: none; }
+@media (max-width: 640px) {
+  .dfc-contests th.num, .dfc-contests td.num { display: none; }
+  .dfc-mmeta { display: block; }
+}
+.dfc-details { padding: 0; margin-top: 10px; }
+.dfc-details > summary { padding: 10px var(--pad); font-weight: 600; cursor: pointer; font-size: .92rem; }
+.dfc-details-body { padding: 0 var(--pad) var(--pad); font-size: .9rem; }
