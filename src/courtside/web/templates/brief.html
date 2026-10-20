@@ -43,6 +43,7 @@
 <nav class="secnav" aria-label="Sections">
   <div class="wrap secnav-in">
     <a href="#last-night">Last Night</a>
+    {% if v.stories.stories %}<a href="#player-stories">Stories</a>{% endif %}
     <a href="#teams">Teams</a>
     <a href="#players">Players</a>
     <a href="#injuries">Injuries</a>
@@ -76,6 +77,20 @@
   {% endif %}
   {% else %}
   {{ m.empty("No games last night", "Nothing to recap from " ~ (ln.day|medium_date or "the previous day") ~ ". The league was off.") }}
+  {% endif %}
+  {% set ps = v.stories %}
+  {% if ps.stories %}
+  <div class="strip-head" id="player-stories"><h3 class="sub-head sub-plain">Player stories</h3><span class="muted strip-hint">DK points vs our pre-game projection</span></div>
+  <div class="card">
+    <ul class="story-list">
+      {% for s in ps.stories %}
+      <li class="story">
+        <p class="story-top"><span><b>{{ s.player }}</b> <span class="team-tag">{{ m.dot(s.team) }}{{ s.team.code }}</span></span><span class="tabnum"><span class="muted">{{ s.expected|num }}</span> {{ m.icon("arrow") }} <b class="{{ 'pos' if s.above else 'neg' }}">{{ s.actual|num }}</b> <small class="muted">DK</small></span></p>
+        <p class="story-text">{{ s.text }}</p>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
   {% endif %}
 </section>
 

@@ -1185,6 +1185,32 @@ def sixty_view(brief: dict, cards: list[dict], tonight: list[dict], team: dict, 
     return {"auto": True, "bullets": items[:5]}
 
 
+def stories_view(brief: dict) -> dict:
+    """Player stories (schema 1.2): last night's biggest gaps between DK points and our
+    pre-game projection. Writer text when present, else the deterministic template line.
+    Older Briefs without the section render nothing."""
+    from ..brief.templates import player_story
+    ps = brief.get("player_stories") if isinstance(brief.get("player_stories"), dict) else {}
+    rows = []
+    for e in ps.get("stories") or []:
+        if not isinstance(e, dict) or not e.get("player"):
+            continue
+        dk = e.get("dk") if isinstance(e.get("dk"), dict) else {}
+        try:
+            fallback = player_story(e)
+        except Exception:  # noqa: BLE001 - a malformed entry must not break the page
+            fallback = None
+        text = text_of(e.get("text")) or fallback
+        if not text:
+            continue
+        rows.append({"player": e["player"], "team": identity(e.get("team")),
+                     "game_id": e.get("game_id"), "actual": dk.get("actual"),
+                     "expected": dk.get("expected"), "diff": dk.get("diff"),
+                     "above": (dk.get("diff") or 0) > 0, "dnp": bool(e.get("did_not_play")),
+                     "text": text})
+    return {"day": ps.get("day"), "stories": rows}
+
+
 def brief_view(brief: dict) -> dict:
     meta = brief.get("meta") or {}
     ln = brief.get("last_night") or {}
@@ -1257,6 +1283,7 @@ def brief_view(brief: dict) -> dict:
         "last_night": {"day": ln.get("day") or meta.get("last_night_day"), "cards": cards,
                        **card_tiers(cards),
                        "picks": picks, "text": section_text(ln), "summary": lsum},
+        "stories": stories_view(brief),
         "team": team, "player": player, "injuries": injuries,
         "tonight": {"day": tn.get("day") or meta.get("day"), "games": tonight,
                     "text": section_text(tn), "upsets": sum(1 for x in tonight if x["upset"]

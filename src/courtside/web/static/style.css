@@ -762,6 +762,10 @@ details > summary:hover { color: var(--ink); }
 .strip-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; margin: 24px 0 10px; }
 .strip-head .sub-plain { margin: 0; }
 .strip-hint { font-size: .78rem; }
+.story-list { display: grid; gap: 14px; }
+.story + .story { border-top: 1px solid var(--line); padding-top: 14px; }
+.story-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; margin: 0 0 4px; }
+.story-text { margin: 0; font-size: .92rem; color: var(--ink-2); }
 .pstrip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(84px, 1fr); gap: 8px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; padding: 1px 1px 4px; }
 .pstrip::-webkit-scrollbar { display: none; }
 .ps { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px; padding: 10px 10px 9px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); scroll-snap-align: start; min-width: 0; }

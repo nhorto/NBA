@@ -22,6 +22,14 @@ What is checked (violations make the writer retry once, then fall back to templa
   are accepted but warned about.
 * **betting**   banned tipster language (see docs/STYLE.md).
 * **length**    only gross overruns (more than ~30% over the target) are violations.
+* **units**     when the facts carry ``unit_values`` (``{"dk": [...], "minutes": [...],
+  "points": [...], ...}``, e.g. the Brief's player stories), a number written with a unit
+  ("52.3 DK points", "41 minutes", "6 threes") must be one of that unit's values, so a
+  minutes figure can't be passed off as DK points.
+* **player_story** (kind) DFS-tipster words are banned on top of the betting list ("edge",
+  "lean", "value", "chalk", "cover", "lock", "smash", and the betting phrases "the over", "hit the
+  over", "over/under", "o/u"; plain "over"/"under" are allowed), and when the facts carry ``direction``
+  (``above``/``below`` our projection) the text may not say the opposite.
 
 Warnings (recorded, never trigger a retry): clichés, exclamation marks, markdown, tricodes.
 """
@@ -76,6 +84,7 @@ LIMITS: dict[str, tuple[int | None, int | None, int | None, int | None]] = {
     "blurb": (None, 75, 2, 3),
     "tonight": (None, 75, 2, 3),
     "brief_headline": (12, 15, 1, 2),
+    "player_story": (None, 60, 2, 3),
 }
 
 
@@ -159,6 +168,8 @@ class FactIndex:
         self.tricodes: set[str] = set()
         self.margins: set[float] = set()       # leads, deficits, margins, spreads
         self.words: set[str] = set()           # every lowercase word in the facts' strings
+        self.units: dict[str, set[float]] = {}  # unit -> allowed values (facts' `unit_values`)
+        self.direction: str | None = None       # 'above' / 'below' our projection (stories)
 
     # -- building ----------------------------------------------------------------------
     @classmethod
@@ -240,6 +251,15 @@ class FactIndex:
                 self._walk(v, key)
             return
         if isinstance(obj, dict):
+            uv = obj.get("unit_values")
+            if isinstance(uv, dict):
+                for unit, vals in uv.items():
+                    bucket = self.units.setdefault(str(unit), set())
+                    for v in vals if isinstance(vals, (list, tuple)) else [vals]:
+                        if isinstance(v, (int, float)) and not isinstance(v, bool):
+                            bucket.add(abs(float(v)))
+            if obj.get("direction") in ("above", "below") and self.direction is None:
+                self.direction = obj["direction"]
             if _is_scoreboard(obj):
                 a, b = list(obj.values())
                 self.margins.add(float(abs(a - b)))
@@ -291,6 +311,15 @@ class FactIndex:
         tol = 0.5 * 10 ** (-decimals) + _EPS
         return any(abs(m - abs(v)) <= tol for m in self.margins)
 
+    def supports_unit(self, unit: str, v: float, decimals: int = 0) -> bool:
+        """`v` (as written, `decimals` places) is one of `unit`'s values, exactly or rounded
+        to the displayed precision. True when the facts declare no values for `unit`."""
+        vals = self.units.get(unit)
+        if not vals:
+            return True
+        tol = 0.5 * 10 ** (-decimals) + _EPS
+        return any(abs(f - abs(v)) < _EPS or abs(f - abs(v)) <= tol for f in vals)
+
     def supports_pair(self, a: float, b: float) -> bool:
         return any(abs(a - x) < _EPS and abs(b - y) < _EPS for x, y in self.pairs)
 
@@ -311,7 +340,7 @@ October November December Jan Feb Mar Apr Jun Jul Aug Sep Sept Oct Nov Dec Mon T
 Thur Thurs Fri Sat Sun NBA MVP OT OT2 OT3 TS FG FT PM ORtg DRtg CI Q1 Q2 Q3 Q4 Q5 PT PTS REB AST
 STL BLK TOV Eastern Western East West Conference Finals Playoffs Playoff All-Star All-NBA
 All-Defensive Christmas Cup Rookie Year Season Regular Game Games Courtside Brief
-Pulse Power Rankings No Mr Dr Jr Sr II III IV St Vs Per Net Rating Ratings
+Pulse Power Rankings No Mr Dr Jr Sr II III IV St Vs Per Net Rating Ratings DraftKings DK
 """.split()}
 _KNOWN_ABBR = re.compile(r"\b(Jr|Sr|vs|St|Mr|Dr|No|P\.J|T\.J|C\.J|R\.J|A\.J|D\.J|J\.J|O\.G)\.")
 
@@ -412,6 +441,9 @@ def check_numbers(text: str, ix: FactIndex) -> list[Violation]:
             add("time", m.group(0), "clock time not in the facts")
         return " "
     work = _CLOCK_RE.sub(clocks, work)
+    if ix.units:
+        for v in check_units(work, ix):
+            add(v.kind, v.token, v.detail)
 
     def ords(m: re.Match) -> str:
         n = int(m.group(1))
@@ -448,6 +480,87 @@ def check_numbers(text: str, ix: FactIndex) -> list[Violation]:
         v = _spelled_value(m.group(1))
         if not ix.supports(v):
             add("number", m.group(1), f"{v} is not in the facts")
+    return vs
+
+
+# ---------------------------------------------------------------------------------------
+# units (player stories)
+# ---------------------------------------------------------------------------------------
+
+UNIT_WORDS = {
+    "points": "points", "point": "points", "rebounds": "rebounds", "rebound": "rebounds",
+    "boards": "rebounds", "assists": "assists", "assist": "assists", "threes": "threes",
+    "three": "threes", "three-pointers": "threes", "three-pointer": "threes",
+    "steals": "steals", "steal": "steals", "blocks": "blocks", "block": "blocks",
+    "turnovers": "turnovers", "turnover": "turnovers", "minutes": "minutes", "minute": "minutes",
+}
+_DK_UNIT_RE = re.compile(rf"(?<![\w.])({_NUMBER_RE})\s*(?:more\s+|fewer\s+|extra\s+)?"
+                         rf"(?:DK|DraftKings|fantasy)(?:\s+fantasy)?\s+points?\b", re.I)
+_STAT_UNIT_RE = re.compile(
+    rf"(?<![\w.\-])({_NUMBER_RE})\s+(?:more\s+|fewer\s+|extra\s+|made\s+)?("
+    + "|".join(sorted((re.escape(k) for k in UNIT_WORDS), key=len, reverse=True))
+    + r")\b", re.I)
+
+
+def check_units(text: str, ix: FactIndex) -> list[Violation]:
+    """Numbers written with a unit must be one of that unit's values (facts' `unit_values`).
+    "52.3 DK points" is checked against `dk`, "41 minutes" against `minutes`, "6 threes" against
+    `threes`. A bare "points" means real points; "DK points" never reads as real points."""
+    vs: list[Violation] = []
+    dk_spans = []
+    for m in _DK_UNIT_RE.finditer(text):
+        dk_spans.append((m.start(), m.end()))
+        x = m.group(1)
+        if not ix.supports_unit("dk", _num(x), _decimals(x)):
+            vs.append(Violation("number", m.group(0).strip(),
+                                "not one of the DK-point figures in the facts"))
+    for m in _STAT_UNIT_RE.finditer(text):
+        if any(a <= m.start() < b for a, b in dk_spans):
+            continue
+        unit = UNIT_WORDS[m.group(2).lower()]
+        x = m.group(1)
+        if not ix.supports_unit(unit, _num(x), _decimals(x)):
+            vs.append(Violation("number", m.group(0).strip(),
+                                f"not one of his {unit} figures in the facts"))
+    return vs
+
+
+# DFS / tipster vocabulary banned in player stories (STYLE.md). Plain "over" and "under" are
+# basketball English ("turned it over", "over 30 minutes", "under 20 minutes"); only the betting
+# phrases are banned ("the over", "hit the over", "over/under", "o/u", "cover").
+STORY_BANNED_RE = re.compile(
+    r"(?<![\w/])(?:o/u|over\s*/\s*under|under\s*/\s*over)(?![\w/])|"
+    r"\b(?:(?:hit|hits|hitting|hammer|take|took|play|played|bet)\s+)?the\s+(?:over|under)\b"
+    r"(?![\s-]+(?:the|a|an|his|her|their|its|\d)\b)|"
+    r"\b(?:edges?|lean(?:s|ed|ing)?|value|chalk|sleeper|smash(?:ed|es|ing)?|fade[sd]?|fading|"
+    r"locks?|locked|bust|boom|punt|pivot|leverage|ownership|lineups?|salary|cash(?:ed|ing)?|GPP|"
+    r"must-play|exposure|stack(?:ed|ing)?|covers?|covered|covering)\b", re.I)
+_STORY_ABOVE_RE = re.compile(
+    r"\b(?:outperform\w*|outscor\w+ (?:our|his|the) (?:number|projection)|exceed\w*|surpass\w*|"
+    r"beat (?:our|his|the) (?:number|projection)|above (?:our|his|the) (?:number|projection))\b",
+    re.I)
+_STORY_BELOW_RE = re.compile(
+    r"\b(?:underperform\w*|fell short|falls short|disappoint\w*|missed (?:our|his|the) "
+    r"(?:number|projection)|below (?:our|his|the) (?:number|projection))\b", re.I)
+
+
+def check_story(text: str, ix: FactIndex) -> list[Violation]:
+    """Player-story rules: no DFS-tipster words, and no claim in the wrong direction."""
+    vs: list[Violation] = []
+    seen: set[str] = set()
+    for m in STORY_BANNED_RE.finditer(text):
+        w = m.group(0).lower()
+        if w not in seen:
+            seen.add(w)
+            vs.append(Violation("betting", m.group(0), "DFS/betting language is banned"))
+    if ix.direction == "below":
+        m = _STORY_ABOVE_RE.search(text)
+        if m:
+            vs.append(Violation("direction", m.group(0), "he finished below our projection"))
+    elif ix.direction == "above":
+        m = _STORY_BELOW_RE.search(text)
+        if m:
+            vs.append(Violation("direction", m.group(0), "he finished above our projection"))
     return vs
 
 
@@ -552,6 +665,8 @@ def check(text: Any, facts: Any, *, kind: str = "game_story") -> CheckResult:
     sv, sw = check_style(text, kind, ix)
     res.violations += sv
     res.warnings += sw
+    if kind == "player_story":
+        res.violations += check_story(text, ix)
     return res
 
 

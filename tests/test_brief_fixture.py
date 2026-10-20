@@ -3,7 +3,9 @@
 * `sample_brief.json`      schema 1.0, results-only `elo_sched` (injuries listed, not priced): the
   caveat path. Kept as is: 1.1 only adds keys, so a 1.0 document stays a valid input.
 * `sample_brief_gbm.json`  the current schema, built from the production models with the
-  2026-02-19/20 official injury reports priced in (day 2026-02-20, real data).
+  2026-02-19/20 official injury reports priced in (day 2026-02-20, real data). Its 1.2
+  `player_stories` section comes from a historical projection of 2026-02-19
+  (`proj day --historical`, run into a copy of the DB) decomposed by `proj why --historical`.
 """
 
 import json
@@ -25,7 +27,7 @@ SECTIONS = {"meta", "headline", "last_night", "team_pulse", "player_pulse", "inj
                                                  "gbm_market")])
 def test_sample_brief_matches_the_schema_version_and_sections(path, version, model):
     b = json.loads(path.read_text())
-    assert set(b) == SECTIONS
+    assert set(b) == SECTIONS | ({"player_stories"} if version >= "1.2" else set())
     assert b["meta"]["schema_version"] == version and b["meta"]["model"] == model
     assert path.stat().st_size < 300_000
     assert b["last_night"]["games"] and b["tonight"]["games"]

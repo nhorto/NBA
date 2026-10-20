@@ -377,6 +377,7 @@ def build_record(p: dict, gid: str, box_row: dict | None, rates: dict[str, float
         "margin": ctx.get("margin"),
         "started": started,
         "p_start": _opt(started_exp),
+        "exp_min_played": _opt(p["minutes"].get("mean_played")),   # minutes if he plays
         "teammates_not_playing": absent,
         "p_play": _opt(p.get("p_play")),
         "double_double_cats": cats,
@@ -806,10 +807,32 @@ def build(conn: sqlite3.Connection, nba_day, *, llm: bool = True, complete=None,
 
 # ============================================================================== for the Brief
 
-def top_stories(conn: sqlite3.Connection, nba_day, n: int = 5, *, per_game: int = 2) -> list[dict]:
+def is_rotation(expected_dk, expected_min, facts: dict | None, *, did_not_play: bool,
+                min_dk: float, min_minutes: float) -> bool:
+    """A story about a rotation player: projected DK >= `min_dk` or projected minutes >=
+    `min_minutes` (both cond 'all'). A player who did not play also qualifies when he was a
+    projected starter (p_start >= 0.5, or >= `min_minutes` minutes if he played), so a late
+    scratch whose 'all' numbers were cut by a Questionable tag still counts."""
+    if _f(expected_dk) >= min_dk or _f(expected_min) >= min_minutes:
+        return True
+    if did_not_play:
+        f = facts or {}
+        ps, mp = _opt(f.get("p_start")), _opt(f.get("exp_min_played"))
+        return (ps is not None and ps >= 0.5) or (mp is not None and mp >= min_minutes)
+    return False
+
+
+def top_stories(conn: sqlite3.Connection, nba_day, n: int = 5, *, per_game: int = 2,
+                max_dnp: int | None = None, min_expected_dk: float | None = None,
+                min_expected_min: float | None = None) -> list[dict]:
     """The biggest stored stories of an NBA day for the Brief: [{game_id, player_id, player,
-    team, opponent, expected, actual, diff, text, source, terms}] by |diff|, at most `per_game`
-    from one game. `terms` is the signed DK-point split (minutes, pts, ..., bonus)."""
+    team, opponent, expected, actual, diff, text, source, terms, minutes, expected_counts,
+    actual_counts, facts, pre_tip}] by |diff|, at most `per_game` from one game and at most
+    `max_dnp` players who did not play (None = no limit). With `min_expected_dk` /
+    `min_expected_min` only rotation players count (`is_rotation`), before the caps apply.
+    `terms` is the signed DK-point split
+    (minutes, pts, ..., bonus); `minutes` is {expected, actual}; `expected_counts` are the
+    projection's full-game stat means; `facts` the stored context facts."""
     day = str(nba_day)[:10]
     gids = {r[0] for r in conn.execute("SELECT DISTINCT game_id FROM player_projections "
                                        "WHERE nba_day=?", (day,))}
@@ -823,16 +846,30 @@ def top_stories(conn: sqlite3.Connection, nba_day, n: int = 5, *, per_game: int 
         f"SELECT game_id, player_id, expected, actual, terms_json, text FROM postgame_why_v0 "
         f"WHERE game_id IN ({q})", sorted(gids)).fetchall()
     rows = sorted(rows, key=lambda r: (-abs((r[3] or 0) - (r[2] or 0)), r[0], r[1]))
-    out, seen = [], defaultdict(int)
+    out, seen, dnp = [], defaultdict(int), 0
     for r in rows:
         if seen[r[0]] >= per_game:
             continue
-        seen[r[0]] += 1
         tj = _json(r[4])
+        exp, act = _json(tj.get("expected")), _json(tj.get("actual"))
+        did_not_play = _f(act.get("min")) <= 0
+        if did_not_play and max_dnp is not None and dnp >= max_dnp:
+            continue
+        if (min_expected_dk is not None or min_expected_min is not None) and not is_rotation(
+                r[2], exp.get("min"), _json(tj.get("facts")), did_not_play=did_not_play,
+                min_dk=min_expected_dk if min_expected_dk is not None else float("inf"),
+                min_minutes=min_expected_min if min_expected_min is not None else float("inf")):
+            continue
+        seen[r[0]] += 1
+        dnp += int(did_not_play)
         out.append({"game_id": r[0], "player_id": r[1], "player": tj.get("name"),
                     "team": tj.get("team"), "opponent": tj.get("opponent"),
                     "expected": r[2], "actual": r[3], "diff": (r[3] or 0) - (r[2] or 0),
-                    "text": r[5], "source": tj.get("text_source"), "terms": tj.get("terms")})
+                    "text": r[5], "source": tj.get("text_source"), "terms": tj.get("terms"),
+                    "minutes": {"expected": _opt(exp.get("min")), "actual": _opt(act.get("min"))},
+                    "expected_counts": _json(exp.get("counts")),
+                    "actual_counts": _json(act.get("counts")),
+                    "facts": _json(tj.get("facts")), "pre_tip": tj.get("pre_tip")})
         if len(out) >= n:
             break
     return out

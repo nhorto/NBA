@@ -13,6 +13,15 @@ def _num(x, nd=1, sign=False):
     return f"{x:+.{nd}f}" if sign else f"{x:.{nd}f}"
 
 
+def story_text(e: dict) -> str:
+    """A player story's writer text, else the deterministic template line."""
+    t = e.get("text")
+    if isinstance(t, str) and t.strip():
+        return t.strip()
+    from .templates import player_story
+    return player_story(e)
+
+
 def _teams(g):
     return g["away"]["team"], g["home"]["team"]
 
@@ -65,6 +74,12 @@ def format_brief(b: dict, width: int = 100) -> str:
         t = g["text"]
         if t.get("headline"):
             L.append(f"      \"{t['headline']}\"")
+
+    ps = b.get("player_stories") or {}
+    if ps.get("stories"):
+        L += ["", f"PLAYER STORIES  {ps.get('day')}  (DK points vs our pre-game projection)"]
+        for e in ps["stories"]:
+            L.append(f"  - {story_text(e)}")
 
     tp = b["team_pulse"]
     L += ["", "TEAM PULSE"]

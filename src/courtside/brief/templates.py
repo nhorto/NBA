@@ -10,6 +10,7 @@ tests run them through ``factcheck`` for every fixture.
     pulse_headline(teams, players) -> str
     tonight(pred)          -> str            (pred = a normalised prediction, see writer)
     brief_headline(summary)-> str
+    player_story(entry)    -> str            (entry = a Brief ``player_stories.stories[i]``)
 """
 
 from __future__ import annotations
@@ -344,3 +345,96 @@ def brief_headline(summary: dict) -> str:
     if p:
         return str(p).rstrip(".")
     return "The Courtside Morning Brief"
+
+
+# ---------------------------------------------------------------------------------------
+# player stories (last night vs our projection, in DK points)
+# ---------------------------------------------------------------------------------------
+
+def _count(x) -> str:
+    """A projected count as shown: one decimal, a trailing .0 dropped (24.0 -> 24, 1.8 -> 1.8)."""
+    s = f"{float(x):.1f}"
+    return s[:-2] if s.endswith(".0") else s
+
+
+def _dk(x) -> str:
+    return f"{float(x or 0):.1f}"
+
+
+_STORY_NOUN = {"pts": ("point", "points"), "reb": ("rebound", "rebounds"),
+               "ast": ("assist", "assists"), "fg3m": ("three", "threes"),
+               "stl": ("steal", "steals"), "blk": ("block", "blocks"),
+               "tov": ("turnover", "turnovers")}
+_STORY_VERB = {"pts": "had", "reb": "grabbed", "ast": "handed out", "fg3m": "made", "stl": "had",
+               "blk": "had", "tov": "committed"}
+
+
+def _shooting(line: dict) -> str:
+    m = re.match(r"(\d+)-(\d+)", str(line.get("fg") or ""))
+    return f" on {m.group(1)}-of-{m.group(2)} shooting" if m else ""
+
+
+def story_reason(r: dict, e: dict, only: bool = True) -> str | None:
+    """One reason as box-score English: 'played 41 minutes (32 expected)'. `only` marks a
+    figure below the projection ('played only 22 minutes'); used once per line."""
+    k = r.get("kind")
+    if k in ("double_double", "triple_double"):
+        return f"picked up the {k.replace('_', '-')} bonus"
+    a, p = r.get("actual"), r.get("projected")
+    if a is None or p is None:
+        return None
+    if k == "minutes":
+        return (f"played {'only ' if only and a < p else ''}{a} {_plural(int(a), 'minute')} "
+                f"({p} expected)")
+    if k not in _STORY_NOUN:
+        return None
+    one, many = _STORY_NOUN[k]
+    s = f"{_STORY_VERB[k]} {'only ' if only and a < p else ''}{a} {one if int(a) == 1 else many} ({_count(p)} projected)"
+    if k == "pts":
+        s += _shooting(e.get("line") or {})
+    return s
+
+
+def _story_context(e: dict) -> str | None:
+    c = e.get("context") or {}
+    kinds = {r.get("kind"): r for r in e.get("reasons") or []}
+    mins = kinds.get("minutes")
+    bits = []
+    if c.get("fouled_out"):
+        bits.append("he fouled out")
+    if c.get("ejected"):
+        bits.append("he was ejected")
+    if c.get("blowout_margin") and mins:          # cut a starter's minutes or padded a bench's
+        bits.append(f"the game was a {c['blowout_margin']}-point blowout")
+    if c.get("overtime") and mins and mins["actual"] > mins["projected"] \
+            and not c.get("blowout_margin"):
+        bits.append(f"the game went to {_ot_phrase(int(c['overtime']))}")
+    tm = [n for n in c.get("teammates_not_playing") or [] if isinstance(n, str)][:2]
+    if tm and (e.get("dk") or {}).get("diff", 0) > 0 and mins and mins["actual"] > mins["projected"]:
+        bits.append(f"{' and '.join(tm)} did not play")
+    if not bits:
+        return None
+    s = "; ".join(bits[:2])
+    return s[0].upper() + s[1:] + "."
+
+
+def player_story(e: dict) -> str:
+    """Deterministic story line: '<Player> scored 52.3 DK points vs 38.0 projected: he played
+    41 minutes (32 expected) and made 6 threes (1.8 projected).' Box-score English only, never
+    a cause the facts do not state; a player who did not play gets no reason at all."""
+    name = e.get("player") or "He"
+    dk = e.get("dk") or {}
+    if e.get("did_not_play"):
+        m = (e.get("minutes") or {}).get("expected")
+        tail = f" and about {m} {_plural(int(m), 'minute')}" if m else ""
+        return f"{name} did not play; we had projected {_dk(dk.get('expected'))} DK points{tail}."
+    head = f"{name} scored {_dk(dk.get('actual'))} DK points vs {_dk(dk.get('expected'))} projected"
+    parts = [t for t in (story_reason(r, e, only=i == 0)
+                         for i, r in enumerate(e.get("reasons") or [])) if t]
+    if parts:
+        body = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+        s = f"{head}: he {body}."
+    else:
+        s = f"{head}, with the gap spread across his line."
+    ctx = _story_context(e)
+    return s + (" " + ctx if ctx else "")

@@ -21,8 +21,8 @@ def small_history(monkeypatch):
 
 
 DAY = day_date("2024-25", 30)
-SECTIONS = {"meta", "headline", "last_night", "team_pulse", "player_pulse", "injury_watch",
-            "tonight", "scorecard"}
+SECTIONS = {"meta", "headline", "last_night", "player_stories", "team_pulse", "player_pulse",
+            "injury_watch", "tonight", "scorecard"}
 
 
 def seed(conn):
@@ -50,7 +50,7 @@ def test_sections_present_json_clean_and_stored():
     assert set(b) == SECTIONS
     json.dumps(b, allow_nan=False)
     m = b["meta"]
-    assert m["schema_version"] == assemble.SCHEMA_VERSION == "1.1"
+    assert m["schema_version"] == assemble.SCHEMA_VERSION == "1.2"
     assert m["day"] == DAY.isoformat() and m["last_night_day"] == (DAY - timedelta(1)).isoformat()
     assert m["text_filled"] is False and b["headline"] == {"text": None}
     assert m["data_freshness"]["team_games_through"] == m["last_night_day"]
@@ -91,7 +91,7 @@ def test_sections_present_json_clean_and_stored():
     # stored in the table and on disk, identical
     row = conn.execute("SELECT brief_json, version FROM briefs WHERE nba_day=?",
                        (DAY.isoformat(),)).fetchone()
-    assert json.loads(row["brief_json"]) == b and row["version"] == "1.1"
+    assert json.loads(row["brief_json"]) == b and row["version"] == "1.2"
     on_disk = json.loads((config.data_dir() / m["path"]).read_text())
     assert on_disk == b
     assert assemble.load_brief(conn, DAY) == b
@@ -310,7 +310,7 @@ def test_brief_meta_flags_and_schema_for_the_production_pair():
     seed_production(conn)
     b = assemble.build_brief(conn, DAY)
     m = b["meta"]
-    assert m["schema_version"] == "1.1" and m["model"] == predict.PRODUCTION_WINPROB == "gbm_market"
+    assert m["schema_version"] == "1.2" and m["model"] == predict.PRODUCTION_WINPROB == "gbm_market"
     assert m["model_uses_injuries"] is True and m["model_uses_market"] is True
     assert m["opinion_model"] == predict.PRODUCTION_OPINION == "gbm_opinion"
     assert m["availability_basis"].get("injury_report", 0) >= 2          # BOS's game: both sides

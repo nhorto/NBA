@@ -7,6 +7,7 @@ Public API (all take an optional ``complete=`` callable for tests; default ``llm
                                          "players": {player_key: text}, "sources": {...}}
     write_tonight(predictions)       -> {game_id: text}
     write_brief_headline(summary)    -> {"headline", "source"}
+    write_player_stories(stories)    -> {"<game_id>:<player_id>": {"text", "source"}}
     fill(brief)                      -> brief with every ``"text": null`` slot written
 
 Every function makes ONE batched LLM call (plus at most one retry call for the items that
@@ -746,6 +747,93 @@ def write_brief_headline(brief_summary: dict, *, complete: Complete | None = Non
 
 
 # ---------------------------------------------------------------------------------------
+# 4b. player stories (last night vs our projection, DK points)
+# ---------------------------------------------------------------------------------------
+
+_STORY_UNITS = {"pts": "points", "reb": "rebounds", "ast": "assists", "fg3m": "threes",
+                "stl": "steals", "blk": "blocks", "tov": "turnovers"}
+_REASON_LABEL = {"minutes": "minutes", **_STORY_UNITS, "double_double": "double_double",
+                 "triple_double": "triple_double"}
+
+
+def story_key(e: dict) -> str:
+    return f"{e.get('game_id')}:{e.get('player_id')}"
+
+
+def story_facts(e: dict) -> dict:
+    """What the writer sees for one ``player_stories.stories[i]`` entry (and is checked
+    against). Box keys become words (``pts`` -> ``points``) so the prose and the facts agree."""
+    line = e.get("line") or {}
+    proj = e.get("projected") or {}
+    return _drop_none({
+        "player": e.get("player"),
+        "team_nickname": templates.nick(e["team"]) if e.get("team") else None,
+        "opponent_nickname": templates.nick(e["opponent"]) if e.get("opponent") else None,
+        "unit": "DK points",
+        "dk": e.get("dk"), "direction": e.get("direction"),
+        "did_not_play": e.get("did_not_play") or None,
+        "minutes": _drop_none({k: (e.get("minutes") or {}).get(k) for k in ("actual", "expected")}),
+        "line": _drop_none({**{w: line.get(k) for k, w in _STORY_UNITS.items()},
+                            "fg": line.get("fg"), "fg3": line.get("fg3")}) or None,
+        "projected": _drop_none({w: proj.get(k) for k, w in _STORY_UNITS.items()}),
+        "reasons": [_drop_none({"kind": _REASON_LABEL.get(r.get("kind"), r.get("kind")),
+                                "actual": r.get("actual"), "projected": r.get("projected"),
+                                "dk_points": r.get("dk_points")})
+                    for r in e.get("reasons") or [] if isinstance(r, dict)] or None,
+        "context": e.get("context") or None,
+    })
+
+
+def story_units(e: dict) -> dict[str, list[float]]:
+    """Per-unit values a story may quote (factcheck ``unit_values``): DK figures, minutes and
+    each stat's actual and projected count, so "41 DK points" can't borrow the minutes."""
+    dk = e.get("dk") or {}
+    mins = e.get("minutes") or {}
+    line, proj = e.get("line") or {}, e.get("projected") or {}
+    units: dict[str, list[float]] = {
+        "dk": [v for v in (dk.get("actual"), dk.get("expected"), dk.get("diff")) if v is not None]
+        + [r["dk_points"] for r in e.get("reasons") or [] if r.get("dk_points") is not None],
+        "minutes": [v for v in (mins.get("actual"), mins.get("expected"), mins.get("diff"))
+                    if v is not None],
+    }
+    for k, w in _STORY_UNITS.items():
+        units[w] = [v for v in (line.get(k), proj.get(k)) if v is not None]
+    if line.get("fg3a") is not None:
+        units["threes"].append(line["fg3a"])
+    return units
+
+
+def write_player_stories(stories: list[dict], *, complete: Complete | None = None,
+                         report: dict | None = None, timeout: int = 180) -> dict[str, dict]:
+    """ONE call for the Brief's player stories -> {"<game_id>:<player_id>": {"text", "source"}}.
+    Each line is fact-checked (kind ``player_story``: numbers, per-unit numbers, names, DFS and
+    betting words, direction) against its own entry; failures retry once, then
+    ``templates.player_story``."""
+    ents = [e for e in stories or [] if isinstance(e, dict) and e.get("player")]
+    if not ents:
+        return {}
+    items = []
+    for e in ents:
+        f = story_facts(e)
+        items.append(Item(story_key(e), {"text": "player_story"},
+                          {**f, "unit_values": story_units(e)},
+                          (lambda e=e: {"text": templates.player_story(e)})))
+    prompt = render("player_stories", facts=_dumps([{"id": story_key(e), **story_facts(e)}
+                                                     for e in ents]))
+
+    def extract(parsed: Any) -> dict[str, dict[str, str]]:
+        body = parsed.get("stories", parsed) if isinstance(parsed, dict) else {}
+        if isinstance(body, list):
+            body = {str(x.get("id")): x.get("text") for x in body if isinstance(x, dict)}
+        return {str(k): {"text": _s(v if isinstance(v, str) else (v or {}).get("text"))}
+                for k, v in body.items() if v}
+
+    outcomes = generate(prompt, items, extract, complete=complete, timeout=timeout)
+    _record(report, outcomes)
+    return {k: {"text": o.fields["text"], "source": o.source} for k, o in outcomes.items()}
+
+
+# ---------------------------------------------------------------------------------------
 # 5. fill(brief)   (schema: docs/BRIEF.md)
 # ---------------------------------------------------------------------------------------
 
@@ -774,6 +862,7 @@ def fill(brief: dict, *, complete: Complete | None = None) -> dict:
     """Return a copy of ``brief`` with the writer's text slots filled (docs/BRIEF.md).
 
     Filled: ``headline.text``; ``last_night.games[i].text.{headline, story}`` (needs ``facts``);
+    ``player_stories.stories[i].text``;
     ``team_pulse.{rising,sliding,...}[i].text`` and ``team_pulse.text`` (the pulse headline);
     ``player_pulse.{hot,cold,...}[i].text``; ``tonight.games[i].text.preview``.
     Left null: ``last_night.text``, ``player_pulse.text``, ``injury_watch.text``,
@@ -807,6 +896,17 @@ def fill(brief: dict, *, complete: Complete | None = None) -> dict:
                 if _slot_empty(c["text"], k):
                     c["text"][k] = s[k]
             tally(f"game:{gid}", s["source"])
+
+    # -- player stories -----------------------------------------------------------------
+    ents = [e for e in _dicts((b.get("player_stories") or {}).get("stories"))
+            if _slot_empty(e, "text")]
+    if ents:
+        got = write_player_stories(ents, complete=complete)
+        for e in ents:
+            r = got.get(story_key(e))
+            if r and r.get("text"):
+                e["text"] = r["text"]
+                tally(f"story:{story_key(e)}", r["source"])
 
     # -- pulse --------------------------------------------------------------------------
     tp = b.get("team_pulse") if isinstance(b.get("team_pulse"), dict) else {}

@@ -81,6 +81,21 @@ line*. Never: bet, wager, parlay, lock, fade, smash, hammer, "take the...", "cov
 "our model likes Boston by 7; the market has it at 4.5" is journalism; "take Boston -4.5" is a tip.
 Disagreement with the market is "a gap", never "an edge worth playing".
 
+## Player stories (DK points vs our projection)
+
+Lead with the DK points, always labelled "DK points" ("fantasy points" is fine; bare "points"
+means real points), then say why in box-score English, biggest reason first: *"Cade Cunningham
+scored 79.0 DK points vs 48.9 projected: he had 42 points (24.1 projected) on 17-of-34 shooting and
+played 38 minutes (35 expected)."* Our number is "projected"/"our projection"; minutes are
+"expected". A blowout, an overtime, a foul-out or a teammate who did not play may be added when
+the facts carry it; never a cause they don't state. A player who did not play gets no reason. On
+top of the betting list, these are DFS-tipster words and are banned here: edge, lean, value, chalk,
+sleeper, smash, fade, lock, cover, boom, bust, punt, pivot, leverage, ownership, lineup, salary,
+cash, stack, and the betting phrases "the over", "the under", "hit the over", "over/under", "o/u".
+Plain "over" and "under" are basketball English and are fine ("turned it over", "over 30
+minutes"). Stories feature rotation players only: projected DK >= 15 or projected minutes >= 20
+(a projected starter who did not play also counts).
+
 ## Clichés: never
 
 Cut on sight (the checker flags these as warnings):
@@ -122,6 +137,7 @@ rhetorical questions, and "That's what", "Make no mistake".
 | pulse headline | at most 10 words |
 | Brief headline | at most 12 words |
 | Tonight preview, per game | at most 2 sentences |
+| Player story (vs our projection) | 1-2 sentences, at most about 45 words |
 
 ## Headline craft
 

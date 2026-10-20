@@ -1,13 +1,16 @@
-# Courtside Brief: JSON schema (version 1.1)
+# Courtside Brief: JSON schema (version 1.2)
 
 One document per NBA day, built by `courtside.brief.assemble.build_brief(conn, day)`.
 
 - Stored in SQLite table `briefs(nba_day, brief_json, built_at, version)` and written to
   `$COURTSIDE_DATA/briefs/<day>.json`.
 - Real examples (day 2026-02-20, built from real data): `tests/fixtures/brief/sample_brief_gbm.json`
-  (schema 1.1, the production models with injuries priced: **build against this one**) and
+  (schema 1.2, the production models with injuries priced: **build against this one**) and
   `tests/fixtures/brief/sample_brief.json` (schema 1.0, results-only `elo_sched`, kept as the
   "model does not price injuries" caveat case).
+- **1.2** (additive over 1.1): new top-level section `player_stories` (last night's biggest gaps
+  between a player's DK points and our pre-game projection, from `proj/why_v0`), and its
+  `stories[i].text` writer slot. Nothing else changed.
 - **1.1** (additive over 1.0): production predictions are now the stacked models with injuries priced
   in. New keys: `meta.opinion_model`, `meta.model_uses_market`, `meta.availability_basis`;
   `tonight.games[i].opinion`, `.availability`, `edge.model`; factors of kind `model_factor`;
@@ -23,6 +26,7 @@ One document per NBA day, built by `courtside.brief.assemble.build_brief(conn, d
 | section | covers |
 |---|---|
 | `last_night` | games of `day - 1` (`meta.last_night_day`) |
+| `player_stories` | players of `day - 1`'s games: DK points vs our pre-game projection (`postgame_why_v0`) |
 | `team_pulse`, `player_pulse` | trends computed from games strictly before `day` |
 | `injury_watch` | latest injury snapshots at or before the end of `day`, diffed against ~24 h earlier |
 | `tonight` | games of `day`; win probability, margin and total come from the production models (see "Production models") |
@@ -48,15 +52,16 @@ A Brief for `day` is rebuilt several times: after postgame (03:00/09:00), and af
 ## Top level
 
 ```
-{ "meta": {...}, "headline": {"text": null}, "last_night": {...}, "team_pulse": {...},
-  "player_pulse": {...}, "injury_watch": {...}, "tonight": {...}, "scorecard": {...} }
+{ "meta": {...}, "headline": {"text": null}, "last_night": {...}, "player_stories": {...},
+  "team_pulse": {...}, "player_pulse": {...}, "injury_watch": {...}, "tonight": {...},
+  "scorecard": {...} }
 ```
 
 ## `meta`
 
 | key | type | notes |
 |---|---|---|
-| `schema_version` | string | `"1.1"` |
+| `schema_version` | string | `"1.2"` |
 | `day` | string | the Brief's day |
 | `last_night_day` | string | `day - 1` |
 | `season` | string | e.g. `"2025-26"` |
@@ -100,6 +105,56 @@ A Brief for `day` is rebuilt several times: after postgame (03:00/09:00), and af
 | `facts` | object\|null | the full analytics `game_facts` document (see `docs/ANALYTICS.md` section 4): top performers, unsung hero candidates, runs, turning point, clutch, notable lines, incidents, validation. Null with `facts_available: false` if the box/play-by-play was not archived or analytics failed |
 | `facts_available` | bool | |
 | `text` | `{headline, story}` | both null until written. `story` is 2-4 sentences |
+
+## `player_stories` (1.2)
+
+The post-game "why" (`proj/why_v0`, PLAYERS.md §2.8) for last night: the biggest gaps between the
+DraftKings points a player scored and our pre-game projection, with the reason in box-score terms.
+The postgame job writes `postgame_why_v0` (step `player_why`) before it builds the next morning's
+Brief; `assemble.player_stories_section` reads it through `why_v0.top_stories(day - 1, n=5,
+per_game=2, max_dnp=1, min_expected_dk=15, min_expected_min=20)`: rotation players only (projected
+DK >= 15 or projected minutes >= 20, both including the chance he sits; a player who did not play
+also counts when he was a projected starter: p_start >= 0.5 or >= 20 minutes if he played, from
+`facts.exp_min_played`), then biggest |gap| first, at most 2 players from one game, at most 1
+player who did not play (a late scratch is a story once, not five times). The floor applies before
+the caps, so garbage-time minutes of a deep-bench player never crowd out a starter.
+
+```
+{ "available": bool, "day": "YYYY-MM-DD", "unit": "DK points",
+  "basis": "DraftKings fantasy points vs our pre-game projection", "stories": [Story], "text": null }
+```
+
+`available: false` and `stories: []` (and no note) when there is nothing to tell: no finals yet, a
+day without projections, the why step has not run, or the DB has no projection tables. Only
+pre-tip projections are used (historical, post-tip runs are skipped).
+
+**Story**
+
+| key | notes |
+|---|---|
+| `game_id`, `player_id`, `player`, `team`, `opponent` | tricodes for the teams |
+| `dk` | `{actual, expected, diff}` DK points, 1 decimal; `expected` is the projection the optimizer saw (cond `all`: includes the chance he sits) |
+| `direction` | `above` / `below` our projection |
+| `did_not_play` | true when he logged no minutes (then `line` is null and `reasons` is empty: we never guess why) |
+| `minutes` | `{actual, expected, diff}` whole minutes |
+| `line` | his box: `pts, reb, ast, fg3m, stl, blk, tov` plus `fg` ("12-22 FG"), `fg3` ("2-6 3P"), `fg3a` when he shot |
+| `projected` | our full-game projected `pts, reb, ast, fg3m, stl, blk, tov` (1 decimal) |
+| `reasons` | up to 3 `{kind, dk_points, actual, projected}`, biggest first: the exact why_v0 split (`minutes`, `pts`, `reb`, `ast`, `fg3m`, `stl`, `blk`, `tov`, plus `double_double`/`triple_double` when he earned that bonus), each worth ≥ 1.0 DK point and kept only when the box agrees with its sign against the full-game projection (extra minutes can lift his points while his per-minute rate fell; that is the minutes story) |
+| `context` | facts only, no causes: `overtime`, `blowout_margin` (≥ 20), `fouled_out` (6 fouls or the facts' foul-outs), `ejected`, `started`, `teammates_not_playing` (regulars of the previous games) |
+| `why_text` | the stored why_v0 line (DK-term form, for debugging) |
+| `text` | writer slot, one or two sentences |
+
+**Wording (decision).** Lead with DK points, always labelled "DK points", then translate the reasons
+into box-score English: *"Bennedict Mathurin scored 55.8 DK points vs 25.5 projected: he had 38
+points (14.7 projected) on 12-of-22 shooting, played 34 minutes (28 expected) and had 3 steals (0.7
+projected)."* DK points are the unit the projection and the gap are measured in, so they head the
+line; the per-term DK splits ("+19.9 from points") read as jargon, so the reasons are the box figures
+against the projection instead. Never "edge", "lean", "cover", "the over", "over/under" or other
+DFS words (STYLE.md); plain "over"/"under" ("turned it over") are allowed.
+The deterministic fallback is `templates.player_story`; the writer prompt is
+`prompts/player_stories.md`; each line is checked with `factcheck.check(kind="player_story")`
+against its entry plus `unit_values` (a figure written with a unit, "41 minutes", "38 DK points",
+"6 threes", must be one of that unit's values), the DFS word list, and the `direction` guard.
 
 ## `team_pulse`
 
@@ -220,7 +275,8 @@ no, the market is sharper).
 
 ## Text slots (what the writer fills)
 
-`headline.text`; each `last_night.games[i].text.{headline, story}`; `team_pulse.text` and
+`headline.text`; each `last_night.games[i].text.{headline, story}`; each
+`player_stories.stories[i].text`; `team_pulse.text` and
 `rising[i].text` / `sliding[i].text`; `player_pulse.text` and `hot[i].text` / `cold[i].text`;
 `injury_watch.text`; `tonight.text` and `tonight.games[i].text.preview`; `last_night.text`; `scorecard.text`.
 The writer receives the whole Brief and returns it with these filled (`courtside.brief.writer.fill`).

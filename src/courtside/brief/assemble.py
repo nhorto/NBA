@@ -6,8 +6,8 @@ numeric is computed here from stored facts; prose lives only in the `text` slots
 optional writer (`courtside.brief.writer.fill`) fills afterwards. Without it, or when it
 fails, the slots stay `null` and the Brief is still complete.
 
-Sections: meta, headline, last_night, team_pulse, player_pulse, injury_watch, tonight,
-scorecard.
+Sections: meta, headline, last_night, player_stories, team_pulse, player_pulse, injury_watch,
+tonight, scorecard.
 """
 
 from __future__ import annotations
@@ -33,7 +33,14 @@ from ..trends.summarize import league_facts
 
 log = logging.getLogger("courtside.brief")
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
+PLAYER_STORIES_MAX = 5          # stories in the Brief (proj/why_v0.top_stories) ...
+PLAYER_STORIES_PER_GAME = 2     # ... at most this many from one game ...
+PLAYER_STORIES_MAX_DNP = 1      # ... and at most this many players who did not play
+STORY_MIN_EXPECTED_DK = 15.0    # rotation players only: projected DK >= this ...
+STORY_MIN_EXPECTED_MIN = 20.0   # ... or projected minutes >= this (DNP: or a projected starter)
+STORY_TERM_FLOOR = 1.0          # a DK-point term must be this big to be a reason
+STORY_MAX_REASONS = 3
 MIN_REAL_TRAIN = 500
 CONFIDENCE_TIERS = ((0.56, "toss-up"), (0.65, "lean"), (0.75, "solid"), (1.01, "strong"))
 UPSET_MIN_FAVORITE = 0.60      # the market favourite must be at least this likely to win ...
@@ -261,6 +268,157 @@ def last_night_section(conn: sqlite3.Connection, ln_day: date, notes: list[str])
                         "picks_correct": correct, "market_favorites_scored": fav_n,
                         "market_favorites_correct": fav_ok},
             "text": None}
+
+
+# ------------------------------------------------------------------ player stories
+
+# why_v0 term key -> (stat key in the box/projection, label)
+_STORY_STATS = {"pts": "points", "reb": "rebounds", "ast": "assists", "fg3m": "threes",
+                "stl": "steals", "blk": "blocks", "tov": "turnovers"}
+
+
+def _r1(x) -> float | None:
+    v = _r(x, 1)
+    return (0.0 if v == 0 else v) if v is not None else None
+
+
+def _box_lines(conn: sqlite3.Connection, keys: list[tuple[str, int]]) -> dict[tuple[str, int], dict]:
+    out = {}
+    for gid, pid in keys:
+        r = conn.execute("SELECT min, pts, reb, ast, fg3m, fg3a, fgm, fga, stl, blk, tov, pf "
+                         "FROM player_games WHERE game_id=? AND player_id=?", (gid, pid)).fetchone()
+        if r is not None:
+            out[(gid, pid)] = dict(r)
+    return out
+
+
+def _incident(facts: dict | None, kind: str, pid, player: str | None) -> bool:
+    """Is the player listed under `incidents.<kind>` (foul_outs, ejections) of the game facts?"""
+    for e in ((facts or {}).get("incidents") or {}).get(kind) or []:
+        if not isinstance(e, dict):
+            continue
+        if pid is not None and e.get("id") is not None and str(e["id"]) == str(pid):
+            return True
+        who = e.get("name") or e.get("player")
+        if player and isinstance(who, str) and injuries.norm_name(who) == injuries.norm_name(player):
+            return True
+    return False
+
+
+def story_reasons(terms: dict, line: dict, projected: dict, minutes: dict) -> list[dict]:
+    """The DK-point terms worth naming, biggest first (|term| >= STORY_TERM_FLOOR, at most
+    STORY_MAX_REASONS), each with the box figure and the full-game projection it compares.
+
+    A stat term is kept only when the box agrees with its sign against the full-game projection
+    (a player with extra minutes can beat his projected points while scoring below his per-minute
+    rate: that is the minutes term's story, not the points term's). Turnovers count the other
+    way. The bonus is named only when he earned a double- or triple-double."""
+    out = []
+    for k, v in sorted(((k, v) for k, v in (terms or {}).items() if v is not None),
+                       key=lambda kv: -abs(kv[1])):
+        if abs(v) < STORY_TERM_FLOOR:
+            break
+        if k == "minutes":
+            a, e = minutes.get("actual"), minutes.get("expected")
+            if a is None or e is None or a == e:
+                continue
+            out.append({"kind": "minutes", "dk_points": _r1(v), "actual": a, "projected": e})
+        elif k in _STORY_STATS:
+            a, e = line.get(k), projected.get(k)
+            if a is None or e is None:
+                continue
+            gap = (e - a) if k == "tov" else (a - e)
+            if gap == 0 or (gap > 0) != (v > 0) or round(a) == round(e):
+                continue
+            out.append({"kind": k, "dk_points": _r1(v), "actual": a, "projected": e})
+        elif k == "bonus":
+            cats = sum(1 for s in ("pts", "reb", "ast", "stl", "blk") if (line.get(s) or 0) >= 10)
+            if v > 0 and cats >= 2:
+                out.append({"kind": "triple_double" if cats >= 3 else "double_double",
+                            "dk_points": _r1(v)})
+        if len(out) >= STORY_MAX_REASONS:
+            break
+    return out
+
+
+def story_entry(s: dict, box: dict | None, facts: dict | None) -> dict:
+    """One Brief story from a `why_v0.top_stories` row (plus the box line and game facts)."""
+    act_min = (s.get("minutes") or {}).get("actual")
+    exp_min = (s.get("minutes") or {}).get("expected")
+    dnp = not act_min or act_min <= 0
+    box = box or {}
+    ac = s.get("actual_counts") or {}
+    line = {}
+    for k in _STORY_STATS:
+        v = box.get(k, ac.get(k))
+        line[k] = int(round(v)) if v is not None else None
+    if box.get("fga"):
+        line["fg"] = f"{box.get('fgm') or 0}-{box['fga']} FG"
+    if box.get("fg3a"):
+        line["fg3"] = f"{box.get('fg3m') or 0}-{box['fg3a']} 3P"
+        line["fg3a"] = box["fg3a"]
+    projected = {k: _r1((s.get("expected_counts") or {}).get(k)) for k in _STORY_STATS}
+    minutes = {"actual": int(round(act_min or 0)),
+               "expected": int(round(exp_min)) if exp_min is not None else None}
+    if minutes["expected"] is not None:
+        minutes["diff"] = minutes["actual"] - minutes["expected"]
+    dk = {"actual": _r1(s.get("actual")), "expected": _r1(s.get("expected")),
+          "diff": _r1(s.get("diff"))}
+    f = s.get("facts") or {}
+    ctx = {"overtime": f.get("overtime") or None,
+           "blowout_margin": f.get("blowout_margin"),
+           "fouled_out": True if not dnp and ((box.get("pf") or 0) >= 6 or _incident(
+               facts, "foul_outs", s.get("player_id"), s.get("player"))) else None,
+           "ejected": True if not dnp and _incident(facts, "ejections", s.get("player_id"),
+                                                    s.get("player")) else None,
+           "started": f.get("started"),
+           "teammates_not_playing": f.get("teammates_not_playing") or None}
+    return {
+        "game_id": s.get("game_id"), "player_id": s.get("player_id"),
+        "player": s.get("player"), "team": s.get("team"), "opponent": s.get("opponent"),
+        "dk": dk, "direction": "above" if (dk["diff"] or 0) > 0 else "below",
+        "did_not_play": bool(dnp), "minutes": minutes,
+        "line": None if dnp else line, "projected": projected,
+        "reasons": [] if dnp else story_reasons(s.get("terms") or {}, line, projected, minutes),
+        "context": {k: v for k, v in ctx.items() if v is not None},
+        "why_text": s.get("text"), "text": None,
+    }
+
+
+def player_stories_section(conn: sqlite3.Connection, ln_day: date, last_night: dict,
+                           notes: list[str]) -> dict:
+    """Last night's biggest gaps between a player's DK points and our pre-game projection
+    (`postgame_why_v0`, written by the postgame job before the Brief). Empty, and silent, when
+    there are no finals or no projections for that day."""
+    base = {"available": False, "day": ln_day.isoformat(), "unit": "DK points",
+            "basis": "DraftKings fantasy points vs our pre-game projection", "stories": [],
+            "text": None}
+    try:
+        from ..proj import why_v0
+        rows = why_v0.top_stories(conn, ln_day.isoformat(), n=PLAYER_STORIES_MAX,
+                                  per_game=PLAYER_STORIES_PER_GAME,
+                                  max_dnp=PLAYER_STORIES_MAX_DNP,
+                                  min_expected_dk=STORY_MIN_EXPECTED_DK,
+                                  min_expected_min=STORY_MIN_EXPECTED_MIN)
+    except sqlite3.OperationalError as e:
+        if "no such table" in str(e):               # a DB without the projection tables
+            return base
+        log.exception("player stories unavailable")
+        notes.append(f"player stories unavailable: {type(e).__name__}: {e}")
+        return base
+    except Exception as e:  # noqa: BLE001 - a bad row must not sink the Brief
+        log.exception("player stories unavailable")
+        notes.append(f"player stories unavailable: {type(e).__name__}: {e}")
+        return base
+    rows = [r for r in rows if r.get("player") and r.get("expected") is not None
+            and r.get("actual") is not None and r.get("pre_tip") is not False]
+    if not rows:
+        return base
+    facts = {c["game_id"]: c.get("facts") for c in last_night.get("games") or []}
+    boxes = _box_lines(conn, [(r["game_id"], int(r["player_id"])) for r in rows])
+    stories = [story_entry(r, boxes.get((r["game_id"], int(r["player_id"]))),
+                           facts.get(r["game_id"])) for r in rows]
+    return {**base, "available": True, "stories": stories}
 
 
 # ------------------------------------------------------------------ pulses
@@ -828,6 +986,12 @@ def carry_text(old: dict | None, new: dict) -> int:
                 o = olds.get(e[idk])
                 if o and _without_text(o) == _without_text(e):
                     put(e, "text", o.get("text"))
+    old_stories = {(e.get("game_id"), e.get("player_id")): e
+                   for e in (old.get("player_stories") or {}).get("stories") or []}
+    for e in (new.get("player_stories") or {}).get("stories") or []:
+        o = old_stories.get((e.get("game_id"), e.get("player_id")))
+        if o and _without_text(o) == _without_text(e):
+            put(e, "text", o.get("text"))
     old_games = {g["game_id"]: g for g in old.get("tonight", {}).get("games", [])}
     for g in new["tonight"]["games"]:
         o = old_games.get(g["game_id"])
@@ -870,6 +1034,7 @@ def build_brief(conn: sqlite3.Connection, day, *, write: bool = True,
     t0 = datetime.now(timezone.utc)
 
     last_night = last_night_section(conn, ln_day, notes)
+    player_stories = player_stories_section(conn, ln_day, last_night, notes)
     team_pulse, player_pulse = pulses(conn, day, notes)
     index = player_index(conn, day)
     form = _team_form(conn, day, notes)
@@ -925,6 +1090,7 @@ def build_brief(conn: sqlite3.Connection, day, *, write: bool = True,
         },
         "headline": {"text": None},
         "last_night": last_night,
+        "player_stories": player_stories,
         "team_pulse": team_pulse,
         "player_pulse": player_pulse,
         "injury_watch": injury_watch,
