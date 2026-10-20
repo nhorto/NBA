@@ -50,7 +50,14 @@ Operational notes:
 - **Live model `pathA-v0.2`** (minutes v1). Mac at f7a1b42; overnight pregame/postgame ran clean (new postgame steps: dfs_grade (skipped, no finals), rate_state, player_why). Official report for today is in (Tobias Harris SAS **Out**). Lineups on the page are from last night; the dfs-tick watcher rebuilds at lock−45/−10 (≈14:13 and 14:48 ET for the 15:00 main slate; also 19:00 and 21:30 locks).
 - Open warnings (non-blocking): `data:ids_dk` (camp/two-way players), `data:pregame.injury_match` (ESPN fringe names 80%), `dfs:recon_gap` (PHI: stacked stars' box rates exceed the market total; reconciliation scales them, as intended).
 - Mac disk freed by the owner (63 GB free). Per-game reparse into the Mac DB **done 07:46**: matchups 11,540 games / 2.17M rows, tracking 8,916 / 190k, hustle 8,916 / 180k.
-- **Build wave started 07:58 (3 agents, none touch the live default):** (a) P+F2 context layer behind `CONTEXT_ON` (default off) + gates; (b) T2.12 GPP portfolio + T2.16 contest builder UI; (c) T2.14 late-swap edit CSV + UI, T2.15 Showdown pydfs check.
+- **Shipped to the Mac today (live default model unchanged, still `pathA-v0.2`):**
+  - T2.14 late swap (`/dfs/<day>/<slate>/swap`, `courtside dfs swap`), T2.15 Showdown = pydfs on 33/33 slates (13ccd24).
+  - P+F2 context layer behind `COURTSIDE_CONTEXT` (default off; ON = `pathA-v0.3`, +5.5–9.5 SE every season) (b1697c7). Bundle `var/proj/bundle_2026-27_v1_cx.json` prefit on the Mac.
+  - F3 tracking + F6 schedule on top (opt-in `COURTSIDE_CONTEXT_EXT=1`, `pathA-v0.4`; F5 matchups dropped) (93f7a5b). Bundle `_v1_cx2.json` prefit on the Mac.
+  - Brief "Player stories" from the post-game why (1e7e60b). First real one: the 2026-10-21 Brief.
+  - T2.12 GPP portfolio + T2.16 contest builder (`/dfs/<day>/<slate>/contest`, `courtside dfs portfolio`; migration 13 `dfs_portfolios`). Calibrated live-like field, chances shown as bands, no ROI headlines until ≥ 10 uploaded standings (7be6967). Acceptance (greedy beats top-individual at 2 SE) NOT met: +13.6 ± 13.4.
+  - Injury match check: rookies/camp players on the official roster with no NBA minutes no longer count as misses.
+- **Pending decision after the opener is graded (2026-10-21 03:00):** switch on P+F2 (`pathA-v0.3`), or P+F2+F3+F6 (`pathA-v0.4`). Steps: set `CONTEXT_DEFAULT`/`CONTEXT_EXT_DEFAULT = True` in `proj/pipeline.py` (or the env vars in the launchd plists), deploy, `courtside proj live-path-eval`.
 - **Owner decision 2026-10-20: keep building today.** Don't change the live model before tonight's games are graded (2026-10-21 03:00); build + test in parallel.
 
 **Next (in order):**
