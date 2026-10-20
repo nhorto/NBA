@@ -49,7 +49,8 @@ Operational notes:
 **Status at 2026-10-20 07:50 ET (opener day):**
 - **Live model `pathA-v0.2`** (minutes v1). Mac at f7a1b42; overnight pregame/postgame ran clean (new postgame steps: dfs_grade (skipped, no finals), rate_state, player_why). Official report for today is in (Tobias Harris SAS **Out**). Lineups on the page are from last night; the dfs-tick watcher rebuilds at lock−45/−10 (≈14:13 and 14:48 ET for the 15:00 main slate; also 19:00 and 21:30 locks).
 - Open warnings (non-blocking): `data:ids_dk` (camp/two-way players), `data:pregame.injury_match` (ESPN fringe names 80%), `dfs:recon_gap` (PHI: stacked stars' box rates exceed the market total; reconciliation scales them, as intended).
-- Mac disk freed by the owner (63 GB free). Per-game matchups/tracking/hustle reparse into the Mac DB started 07:45 (`var/logs/mac_pergame_reparse.log`).
+- Mac disk freed by the owner (63 GB free). Per-game reparse into the Mac DB **done 07:46**: matchups 11,540 games / 2.17M rows, tracking 8,916 / 190k, hustle 8,916 / 180k.
+- **Build wave started 07:58 (3 agents, none touch the live default):** (a) P+F2 context layer behind `CONTEXT_ON` (default off) + gates; (b) T2.12 GPP portfolio + T2.16 contest builder UI; (c) T2.14 late-swap edit CSV + UI, T2.15 Showdown pydfs check.
 - **Owner decision 2026-10-20: keep building today.** Don't change the live model before tonight's games are graded (2026-10-21 03:00); build + test in parallel.
 
 **Next (in order):**
