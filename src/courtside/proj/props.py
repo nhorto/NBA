@@ -11,11 +11,14 @@ Which run
     page uses, across every slate that contains the game. Rows of the run's model_version only.
 
 Our probability: a per-stat distribution built from the run
-    Path A v0 simulates DK points and minutes; per-stat values (pts, reb, ast, fg3m) are stored
-    as means only (rates x minutes, environment-scaled, `player_projection_stats` with NULL
-    sd/quantiles) and the sims npz holds DK points only. Per-stat draws arrive with the
-    component copula (T2.10 v1). Until then the distribution of a stat, **conditional on
-    playing** (§7.5: props on a player who does not play are void), is:
+    **Copula v1 runs** (T2.10, `COURTSIDE_COPULA=v1`) store per-stat count sims beside the DK
+    sims (`store.stat_sims_path`): then a stat's distribution **conditional on playing** (§7.5:
+    props on a player who does not play are void) is the empirical pmf of the player's played
+    sims (PRA = pts + reb + ast per sim), when he has >= MIN_PLAYED_SIMS of them.
+    Otherwise (v0 runs, a missing file) the fallback: Path A v0 simulates DK points and minutes;
+    per-stat values (pts, reb, ast, fg3m) are stored as means only (rates x minutes,
+    environment-scaled, `player_projection_stats` with NULL sd/quantiles) and the sims npz holds
+    DK points only, so the distribution of a stat given playing is approximated:
 
         minutes  m ~ the run's simulated played-minutes distribution (its stored q05..q95,
                      interpolated; `minutes_draws`)
@@ -90,6 +93,7 @@ PREFERRED_PROVIDER = "100"          # DraftKings via ESPN
 QUANTS = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 QCOLS = ("q05", "q10", "q25", "q50", "q75", "q90", "q95")
 N_MINUTES = 64                       # minute draws per player (inverse-CDF midpoints)
+MIN_PLAYED_SIMS = 200                # stat sims: fewer played sims -> the approximation
 MAX_MINUTES = 58.0
 
 # unjoined reasons
@@ -212,10 +216,13 @@ def pmf_quantile(pmf: np.ndarray, q: float) -> int:
 
 @dataclass
 class PlayerDist:
-    """Per-stat played-conditional distributions of one projection (pmfs memoised)."""
+    """Per-stat played-conditional distributions of one projection (pmfs memoised). `source`
+    'sims' = empirical pmfs of the run's per-stat sims, 'approx' = the NB-given-minutes
+    approximation."""
     means: dict
     minutes: np.ndarray
     _pmfs: dict = field(default_factory=dict, repr=False)
+    source: str = "approx"
 
     def pmf(self, stat: str) -> np.ndarray | None:
         mu = self.means.get(stat)
@@ -230,6 +237,56 @@ class PlayerDist:
         if p is None:
             return None
         return pmf_quantile(p, lo), pmf_quantile(p, hi)
+
+
+def sims_dist(counts: dict, minutes: np.ndarray | None = None) -> PlayerDist | None:
+    """PlayerDist from one player's per-stat sim counts {stat: (S,)} and minutes (S,) (0 = did
+    not play): empirical pmfs over the played sims, PRA per sim. None when he has fewer than
+    MIN_PLAYED_SIMS played sims or a stat is missing."""
+    if any(s not in counts for s in ("pts", "reb", "ast", "fg3m")):
+        return None
+    played = (np.asarray(minutes) > 0) if minutes is not None else np.ones(
+        len(counts["pts"]), bool)
+    if int(played.sum()) < MIN_PLAYED_SIMS:
+        return None
+    vals = {s: np.asarray(counts[s], np.int64)[played] for s in ("pts", "reb", "ast", "fg3m")}
+    vals["pra"] = vals["pts"] + vals["reb"] + vals["ast"]
+    pmfs = {s: np.bincount(v) / len(v) for s, v in vals.items()}
+    means = {s: float(v.mean()) for s, v in vals.items()}
+    return PlayerDist(means=means, minutes=np.asarray(minutes, float)[played]
+                      if minutes is not None else np.zeros(0), _pmfs=pmfs, source="sims")
+
+
+def run_stat_sims(run: dict | None, game_id: str | None = None,
+                  cache: dict | None = None) -> dict[int, PlayerDist]:
+    """{player_id: PlayerDist} from a run's per-stat sims file (copula v1 runs), restricted to
+    `game_id` when the file carries game ids. {} when the run has none (v0 runs)."""
+    from .store import load_sims, stat_sims_path
+    sp = (run or {}).get("sim_path")
+    if not sp:
+        return {}
+    key = ("statsims", sp)
+    z = cache.get(key) if cache is not None else None
+    if z is None:
+        path = stat_sims_path(sp)
+        try:
+            z = load_sims(path) if path.exists() else {}
+        except (OSError, ValueError):
+            z = {}
+        if cache is not None:
+            cache[key] = z
+    if not z or "player_id" not in z:
+        return {}
+    cols = np.arange(len(z["player_id"]))
+    if game_id is not None and "game_id" in z:
+        cols = cols[z["game_id"] == str(game_id)]
+    out = {}
+    for j in cols:
+        d = sims_dist({s: z[s][:, j] for s in ("pts", "reb", "ast", "fg3m") if s in z},
+                      z["min"][:, j] if "min" in z else None)
+        if d is not None:
+            out.setdefault(int(z["player_id"][j]), d)
+    return out
 
 
 def player_dist(stats: dict) -> PlayerDist:
@@ -443,6 +500,9 @@ def compare_game(conn: sqlite3.Connection, game: dict, *, at: str | None = None,
         cache[("names", run["run_id"], gid)] = names
     aliases = cache.setdefault("aliases", _aliases(conn))
     dists: dict[int, PlayerDist] = cache.setdefault(("dists", run["run_id"], gid), {})
+    sim_dists = cache.get(("simdists", run["run_id"], gid))
+    if sim_dists is None:                           # copula v1 runs: real per-stat sims
+        sim_dists = cache[("simdists", run["run_id"], gid)] = run_stat_sims(run, gid, cache)
     roster = None
     for p in props:
         pid, how = match_name(p.get("player_name"), names, aliases)
@@ -457,7 +517,7 @@ def compare_game(conn: sqlite3.Connection, game: dict, *, at: str | None = None,
         pr = proj[pid]
         d = dists.get(pid)
         if d is None:
-            d = dists[pid] = player_dist(pr["stats"])
+            d = dists[pid] = sim_dists.get(pid) or player_dist(pr["stats"])
         stat = p["stat"]
         pmf = d.pmf(stat)
         if pmf is None:

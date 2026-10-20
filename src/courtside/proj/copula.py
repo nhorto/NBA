@@ -440,6 +440,7 @@ class GameSims:
     teams: dict                 # team -> reconciliation / scenario info
     margin: np.ndarray          # (S,) home margin draws
     total: np.ndarray           # (S,)
+    stats: dict | None = None   # v1 only: COMP_STATS -> (S, n) uint8 counts (0 when not playing)
 
 
 # ============================================================================== grids
@@ -649,6 +650,36 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
 
 # ============================================================================== summaries
 
+def summarize_counts(x: np.ndarray, played: np.ndarray) -> pd.DataFrame:
+    """`summarize` for uint8 count sims (S, n), vectorised through per-column histograms:
+    mean, sd and **count quantiles** (the smallest k with P(Y <= k) >= q) over all sims and over
+    played sims. Same frame layout as `summarize` (cond, col, mean, sd, q05..q95)."""
+    S, n = x.shape
+    idx = (x.astype(np.int64) + 256 * np.arange(n)[None, :]).ravel()
+    k = np.arange(256, dtype=float)
+    rows = []
+    for cond, wts in (("all", None), ("played", played.ravel().astype(float))):
+        h = np.bincount(idx, weights=wts, minlength=256 * n).reshape(n, 256)
+        tot = h.sum(1)
+        cdf = np.cumsum(h, 1) / np.maximum(tot, 1e-12)[:, None]
+        mean = (h @ k) / np.maximum(tot, 1e-12)
+        var = (h @ (k * k)) / np.maximum(tot, 1e-12) - mean ** 2
+        qs = {f"q{int(round(q * 100)):02d}": (cdf >= q - 1e-12).argmax(1).astype(float)
+              for q in QUANTS}
+        for j in range(n):
+            r = {"cond": cond, "col": j}
+            if tot[j] > 0:
+                r.update({"mean": float(mean[j]), "sd": float(np.sqrt(max(var[j], 0.0)))})
+                r.update({c: v[j] for c, v in qs.items()})
+            else:
+                r.update({"mean": None, "sd": None})
+                r.update({c: None for c in qs})
+            rows.append(r)
+    out = pd.DataFrame(rows)
+    order = np.argsort(np.r_[np.arange(n) * 2, np.arange(n) * 2 + 1], kind="stable")
+    return out.iloc[order].reset_index(drop=True)
+
+
 def summarize(sims: np.ndarray, played: np.ndarray | None = None) -> pd.DataFrame:
     """Per column: mean, sd, q05..q95 over all sims ('all') and over played sims ('played')."""
     sims = np.asarray(sims, np.float64)
@@ -679,3 +710,655 @@ def sim_corr(fp: np.ndarray, i: Sequence[int], j: Sequence[int]) -> np.ndarray:
     a = fp[:, list(i)] - fp[:, list(i)].mean(0)
     b = fp[:, list(j)] - fp[:, list(j)].mean(0)
     return (a * b).mean(0) / np.maximum(a.std(0) * b.std(0), 1e-12)
+
+
+# ============================================================================== v1 (T2.10)
+#
+# Path A copula v1: the same environment, availability, minutes and reconciliation as v0, but
+# per player and sim it draws the box components (COMP_STATS) instead of DK points:
+#
+#   * means: rate x minutes x f(min/mpg) x usage bump, pts scaled by the team factor g c and the
+#     other stats by (g c)^alpha (exactly v0's reconciliation), then the **winner/loser shift**
+#     f_{stat,tier}(signed margin of the sim) fit on seasons < S given actual minutes and actual
+#     team points (points are re-normalised per team and sim, so the shift only moves points
+#     between tiers and the market total is still met);
+#   * marginals: NB2 counts, var = m + c2(m) m^2, with c2 by level per stat fit on seasons < S on
+#     the same conditional residuals (the **CV-by-level fit** of v1). Draws are inverse-CDF table
+#     lookups (`CountTables`: NU quantile cells x a mean grid, stochastic rounding between the two
+#     neighbouring grid means so E[count] equals the mean exactly);
+#   * within a player: a 7 x 7 latent Gaussian correlation per role tier (`r_within`), fit by
+#     simulated moments so the simulated count covariances match the observed residual ones;
+#   * across players: the T2.7 causal tier x position matrices (mode PM, `corr_<S>.json`, seasons
+#     < S) on each player's latent **DK direction**: Z_i = b_i w_i + E_i with w ~ N(0, R_players),
+#     b_i = R_w a_i / sqrt(a_i' R_w a_i), a_i = DK weight x Hermite-1 coefficient of the stat at
+#     the player's level, E_i ~ N(0, R_w - b_i b_i'). Then Var(Z_i) = R_w and the DK direction of
+#     player i is exactly w_i, so the player-level correlations are those of the matrix;
+#   * DK points are scored exactly from the counts (DK Classic table of `dfs.rules`), so a
+#     double-double / triple-double is a discrete +1.5 / +4.5 jump.
+#
+# The first four RNG streams (environment, scenarios, minutes, player copula) are v0's, so with
+# the same seed v1 has the same margins, totals, availability and minutes as v0 (common random
+# numbers); two extra streams draw the component noise and the grid rounding.
+
+COMP_STATS = DK_STATS                          # pts, fg3m, reb, ast, stl, blk, tov
+N_COMP = len(COMP_STATS)
+DD_STATS = ("pts", "reb", "ast", "stl", "blk")
+COPULA_V1_VERSION = "copula-v1.0"
+NU = 4096                                      # quantile cells per mean grid row
+N_MEAN = 321                                   # mean grid rows (0 .. MEAN_MAX)
+KMAX = 255                                     # counts are uint8
+MEAN_MAX = {"pts": 80.0, "fg3m": 12.0, "reb": 32.0, "ast": 24.0, "stl": 8.0, "blk": 10.0,
+            "tov": 12.0}
+C2_MIN = 1e-3
+WL_EDGES = (-1e9, -20.0, -12.0, -6.0, -2.0, 2.0, 6.0, 12.0, 20.0, 1e9)
+WL_K = 300.0                                   # shrinkage of a bin ratio toward 1 (rows)
+WL_BOUNDS = (0.8, 1.25)
+DISP_BINS = 16
+_SCORING_KEYS = {"pts": "point", "fg3m": "three_pointer_made", "reb": "rebound",
+                 "ast": "assist", "stl": "steal", "blk": "block", "tov": "turnover"}
+
+
+def dk_scoring() -> dict:
+    """DK Classic weights per component + the double / triple-double bonuses, from the table
+    `dfs.rules.dk_points` scores with (`sources.dfs.CLASSIC_SCORING`)."""
+    from .dfs import rules as R
+    sc = R.dfs.CLASSIC_SCORING
+    out = {s: float(sc[k]) for s, k in _SCORING_KEYS.items()}
+    out["dd"] = float(sc["double_double"])
+    out["td"] = float(sc["triple_double"])
+    return out
+
+
+def dk_from_components(stats: dict, scoring: dict | None = None) -> np.ndarray:
+    """DK Classic points of count arrays {stat: array} (same shape), with the real DD / TD
+    bonuses: 10+ in two of pts/reb/ast/stl/blk adds dd, in three adds td on top (= 4.5)."""
+    sc = scoring or dk_scoring()
+    tot = sum(sc[s] * np.asarray(stats[s], np.float32) for s in COMP_STATS)
+    cats = sum((np.asarray(stats[s]) >= 10).astype(np.int8) for s in DD_STATS)
+    return tot + sc["dd"] * (cats >= 2) + sc["td"] * (cats >= 3)
+
+
+@dataclass
+class CopulaV1Params:
+    """What v1 learns on seasons < `season` (JSON). Defaults = a usable prior (NB1-like
+    dispersion, a mild pts-fg3m link, no winner/loser shift, v0's tier-pair correlations)."""
+    season: str
+    train_seasons: list = field(default_factory=list)
+    disp_mu: dict = field(default_factory=dict)        # stat -> level centres
+    disp_c2: dict = field(default_factory=dict)        # stat -> NB2 excess c^2 at the centres
+    r_within: dict = field(default_factory=dict)       # tier -> 7 x 7 (COMP_STATS order)
+    wl_centres: list = field(default_factory=list)     # signed team margin
+    wl_factor: dict = field(default_factory=dict)      # stat -> tier -> factor per centre
+    corr: dict = field(default_factory=dict)           # T2.7 PM table (+ "source")
+    diagnostics: dict = field(default_factory=dict)
+    version: str = COPULA_V1_VERSION
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self), sort_keys=True)
+
+    @classmethod
+    def from_json(cls, s: str) -> "CopulaV1Params":
+        return cls(**json.loads(s))
+
+
+_DEFAULT_PHI = {"pts": 2.3, "fg3m": 1.1, "reb": 1.15, "ast": 1.2, "stl": 1.05, "blk": 1.15,
+                "tov": 1.05}
+
+
+def default_copula_v1_params(season: str = "2099-00",
+                             cp: CopulaParams | None = None) -> CopulaV1Params:
+    lv = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
+    v = CopulaV1Params(season=season)
+    for s in COMP_STATS:
+        mu = [x for x in lv if x <= MEAN_MAX[s]]
+        v.disp_mu[s] = mu
+        v.disp_c2[s] = [max((_DEFAULT_PHI[s] - 1.0) / m, C2_MIN) for m in mu]
+    R = np.eye(N_COMP)
+    i, j = COMP_STATS.index("pts"), COMP_STATS.index("fg3m")
+    R[i, j] = R[j, i] = 0.5
+    v.r_within = {t: R.tolist() for t in TIERS}
+    cp = cp or default_copula_params(season)
+    v.corr = {"rho_team": dict(cp.rho_team), "rho_team_cell": {}, "rho_team_all": 0.0,
+              "rho_opp": {pair_key(a, b): cp.rho_opp for a in TIERS for b in TIERS},
+              "rho_opp_cell": {}, "rho_opp_all": cp.rho_opp, "source": "copula-v0"}
+    return v
+
+
+# ------------------------------------------------------------------------------ count tables
+
+class CountTables:
+    """Inverse-CDF tables of the NB2 marginals of a CopulaV1Params: per stat a mean grid
+    (N_MEAN rows over 0..MEAN_MAX) x NU quantile cells (the quantile at each cell's midpoint),
+    uint8. `draw` picks between the two grid rows around a mean with probability given by the
+    position (exact mean), `h` is the Hermite-1 coefficient E[Y Z] of a row (Y = Q(Phi(Z)))."""
+
+    def __init__(self, v1: CopulaV1Params):
+        from scipy import stats as sps
+        from scipy.special import ndtri
+        self.step, self.tab, self.h_row, self.mean_row, self.var_row = {}, {}, {}, {}, {}
+        edges = ndtri(np.arange(NU + 1) / NU)
+        dens = np.exp(-0.5 * np.nan_to_num(edges, posinf=0.0, neginf=0.0) ** 2) / np.sqrt(2 * np.pi)
+        dens[0] = dens[-1] = 0.0
+        wz = dens[:-1] - dens[1:]                        # integral of z over each u cell
+        u_mid = (np.arange(NU) + 0.5) / NU
+        k = np.arange(KMAX + 1, dtype=float)
+        for s in COMP_STATS:
+            grid = np.linspace(0.0, MEAN_MAX[s], N_MEAN)
+            c2 = np.maximum(np.interp(grid, v1.disp_mu[s], v1.disp_c2[s]), C2_MIN)
+            r = 1.0 / c2
+            m = np.maximum(grid, 1e-9)
+            pmf = sps.nbinom.pmf(k[None, :], r[:, None], (r / (r + m))[:, None])
+            pmf[0] = 0.0
+            pmf[0, 0] = 1.0
+            cdf = np.cumsum(pmf, axis=1)
+            cdf[:, -1] = 1.0
+            tab = np.empty((N_MEAN, NU), np.uint8)
+            for i in range(N_MEAN):
+                tab[i] = np.minimum(np.searchsorted(cdf[i], u_mid, side="left"), KMAX)
+            self.step[s] = grid[1] - grid[0]
+            self.tab[s] = tab.ravel()
+            tf = tab.astype(float)
+            self.h_row[s] = tf @ wz
+            self.mean_row[s] = tf.mean(1)
+            self.var_row[s] = tf.var(1)
+
+    def _row(self, s: str, m: np.ndarray, rnd: np.ndarray) -> np.ndarray:
+        x = np.clip(np.asarray(m, float) / self.step[s], 0.0, N_MEAN - 1 - 1e-9)
+        lo = np.floor(x)
+        return (lo + (rnd < (x - lo))).astype(np.int64)
+
+    def draw(self, s: str, m: np.ndarray, u: np.ndarray, rnd: np.ndarray) -> np.ndarray:
+        """Counts with mean m (any shape) at copula uniforms u; rnd = U(0,1) for the rounding."""
+        col = np.minimum((np.asarray(u) * NU).astype(np.int64), NU - 1)
+        return self.tab[s][self._row(s, m, rnd) * NU + col]
+
+    def h(self, s: str, m) -> np.ndarray:
+        x = np.clip(np.asarray(m, float) / self.step[s], 0.0, N_MEAN - 1)
+        return np.interp(x, np.arange(N_MEAN), self.h_row[s])
+
+    def var(self, s: str, m) -> np.ndarray:
+        x = np.clip(np.asarray(m, float) / self.step[s], 0.0, N_MEAN - 1)
+        return np.interp(x, np.arange(N_MEAN), self.var_row[s])
+
+
+_TABLES: dict[str, CountTables] = {}
+
+
+def count_tables(v1: CopulaV1Params) -> CountTables:
+    """CountTables of `v1`'s dispersion (built once per process per dispersion table)."""
+    key = json.dumps([v1.disp_mu, v1.disp_c2], sort_keys=True)
+    t = _TABLES.get(key)
+    if t is None:
+        if len(_TABLES) > 8:
+            _TABLES.clear()
+        t = _TABLES[key] = CountTables(v1)
+    return t
+
+
+# ------------------------------------------------------------------------------ v1 pieces
+
+def _stat_grids(players: pd.DataFrame, sp: dict) -> dict[str, np.ndarray]:
+    """Per stat (COMP_STATS): (3 bump roles, n, GRID_MAX + 1) expected count given minutes
+    (rate x m x f(m/mpg) x bump), the per-stat version of `_grids`."""
+    n = len(players)
+    m = np.arange(GRID_MAX + 1, dtype=float)
+    mpg = players["mpg"].to_numpy(float)
+    mm = np.broadcast_to(m[None, :], (n, len(m)))
+    mpgb = np.broadcast_to(mpg[:, None], (n, len(m)))
+    out = {}
+    for s in COMP_STATS:
+        r = players[f"r_{s}"].to_numpy(float)
+        base = r[:, None] * mm * ST.minutes_multiplier(sp, s, mm, mpgb)
+        out[s] = np.stack([base * (ST.bump_for(sp, role, s) if role != "none" else 1.0)
+                           for role in BUMP_ROLES])
+    return out
+
+
+def wl_factor(v1: CopulaV1Params, stat: str, tiers: np.ndarray, margin: np.ndarray
+              ) -> np.ndarray:
+    """Winner/loser per-minute factor (S, n) for players of one team: margin (S,) is the team's
+    signed margin per sim, tiers (n,) 0..2. 1 everywhere when not fitted."""
+    tab = v1.wl_factor.get(stat)
+    if not tab or not v1.wl_centres:
+        return np.ones((len(margin), len(tiers)))
+    out = np.empty((len(margin), len(tiers)))
+    for t in range(len(TIERS)):
+        cols = np.flatnonzero(np.asarray(tiers) == t)
+        if len(cols):
+            f = np.interp(margin, v1.wl_centres, tab[TIERS[t]])
+            out[:, cols] = f[:, None]
+    return out
+
+
+def corr_matrix_v1(team: np.ndarray, tiers: np.ndarray, pos: np.ndarray | None,
+                   v1: CopulaV1Params) -> np.ndarray:
+    """Player correlation matrix from v1's T2.7 table: teammates by tier x position cell when
+    both positions are known (G/F/C), else by tier pair; opponents by tier pair. Nearest PSD."""
+    c = v1.corr
+    team = np.asarray(team)
+    tiers = np.asarray(tiers, int)
+    n = len(team)
+    posl = ("G", "F", "C", "U")
+    R = np.empty((n, n))
+    for i in range(n):
+        for j in range(i + 1, n):
+            same = team[i] == team[j]
+            tp = pair_key(TIERS[tiers[i]], TIERS[tiers[j]])
+            tab, cells, allv = ((c.get("rho_team", {}), c.get("rho_team_cell", {}),
+                                 c.get("rho_team_all", 0.0)) if same else
+                                (c.get("rho_opp", {}), c.get("rho_opp_cell", {}),
+                                 c.get("rho_opp_all", 0.0)))
+            r = tab.get(tp, allv)
+            if same and pos is not None and pos[i] < 3 and pos[j] < 3 and cells:
+                a = f"{TIERS[tiers[i]]}:{posl[pos[i]]}"
+                b = f"{TIERS[tiers[j]]}:{posl[pos[j]]}"
+                key = "|".join(sorted((a, b), key=lambda g: (TIERS.index(g.split(":")[0]),
+                                                             posl.index(g.split(":")[1]))))
+                r = cells.get(key, r)
+            R[i, j] = R[j, i] = r
+    np.fill_diagonal(R, 1.0)
+    return nearest_corr(R)
+
+
+def _loadings(a: np.ndarray, Rw: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """For one player: b = R_w a / sqrt(a' R_w a) and L with L L' = R_w - b b' (eigen square
+    root, negative eigenvalues clipped). a = 0 -> b = 0, L = chol-like root of R_w."""
+    q = float(a @ Rw @ a)
+    b = Rw @ a / np.sqrt(q) if q > 1e-12 else np.zeros(len(a))
+    Cm = Rw - np.outer(b, b)
+    w, V = np.linalg.eigh((Cm + Cm.T) / 2.0)
+    return b, V * np.sqrt(np.maximum(w, 0.0))[None, :]
+
+
+def _r_within(v1: CopulaV1Params, tier: int) -> np.ndarray:
+    R = v1.r_within.get(TIERS[tier])
+    return np.eye(N_COMP) if R is None else np.asarray(R, float)
+
+
+def draw_components(means: dict, played: np.ndarray, w: np.ndarray, tiers: np.ndarray,
+                    v1: CopulaV1Params, tables: CountTables, r_cmp: np.random.Generator,
+                    r_rnd: np.random.Generator) -> dict:
+    """Counts {stat: (S, n) uint8} given per-sim means {stat: (S, n)}, the player-level copula
+    normals w (S, n) and tiers (n,). Players who sit are 0."""
+    S, n = played.shape
+    npl = np.maximum(played.sum(0), 1)
+    mbar = np.stack([means[s].sum(0) / npl for s in COMP_STATS], 1)          # (n, 7)
+    sc = dk_scoring()
+    wdk = np.array([sc[s] for s in COMP_STATS])
+    hb = np.stack([tables.h(s, mbar[:, k]) for k, s in enumerate(COMP_STATS)], 1)
+    B = np.zeros((n, N_COMP))
+    L = np.zeros((n, N_COMP, N_COMP))
+    for i in range(n):
+        B[i], L[i] = _loadings(wdk * hb[i], _r_within(v1, int(tiers[i])))
+    N = r_cmp.standard_normal((S, n, N_COMP), dtype=np.float32)
+    Z = np.einsum("snk,njk->snj", N, L.astype(np.float32))
+    Z += w.astype(np.float32)[:, :, None] * B.astype(np.float32)[None, :, :]
+    from scipy.special import ndtr
+    out = {}
+    for k, s in enumerate(COMP_STATS):
+        rnd = r_rnd.random((S, n), dtype=np.float32)
+        y = tables.draw(s, means[s], ndtr(Z[:, :, k]), rnd)
+        out[s] = np.where(played, y, 0).astype(np.uint8)
+    return out
+
+
+def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
+                     mp: M.MinutesParams, sp: dict, n_sims: int, seed) -> GameSims:
+    """Component sims for one game (module section v1). Deterministic in `seed`; margins,
+    totals, availability and minutes equal `simulate_game`'s for the same seed."""
+    ss = _seed_seq(seed)
+    r_env, r_sc, r_min, r_cop = (np.random.default_rng(s) for s in ss.spawn(4))
+    r_cmp, r_rnd = (np.random.default_rng(s) for s in ss.spawn(2))
+    S = int(n_sims)
+    cov = np.array([[cp.sd_margin ** 2, cp.corr_mt * cp.sd_margin * cp.sd_total],
+                    [cp.corr_mt * cp.sd_margin * cp.sd_total, cp.sd_total ** 2]])
+    e = r_env.standard_normal((S, 2)) @ np.linalg.cholesky(cov).T
+    margin = game.mu_margin + e[:, 0]
+    total = game.mu_total + e[:, 1]
+    n_ot = (np.abs(margin) < OT_BAND).astype(float)
+    team_pts = {"home": (total + margin) / 2.0, "away": (total - margin) / 2.0}
+    mean_pts = {"home": (game.mu_total + game.mu_margin) / 2.0,
+                "away": (game.mu_total - game.mu_margin) / 2.0}
+    sides = (("home", game.home, 1.0), ("away", game.away, -1.0))
+    parts, teams_info = [], {}
+    for side, ts, sign in sides:
+        pl = ts.players.reset_index(drop=True)
+        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min)
+        played = x > 0
+        star = pl["star"].to_numpy(bool)
+        rot = pl["rotation"].to_numpy(bool) & ~star
+        star_out = (absent & star[None, :]).any(1)
+        role = np.where(star_out[:, None] & star[None, :] & ~absent, 1, 0)
+        role = np.where(star_out[:, None] & rot[None, :] & ~absent, 2, role)
+        G = _grids(pl, sp)
+        GS = _stat_grids(pl, sp)
+        raw_pts = _lookup(G["pts"], role, x) * played
+        raw_oth = _lookup(G["oth"], role, x) * played
+        bonus = _lookup(G["bonus"], None, x) * played
+        g = team_pts[side] / max(mean_pts[side], 1.0)
+        rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
+        pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
+        means = {"pts": pts}
+        for s in OTHER_STATS:
+            means[s] = _lookup(GS[s], role, x) * played * k_pace[:, None]
+        rec.update(sinfo)
+        rec["team"] = ts.team
+        teams_info[ts.team] = rec
+        parts.append((ts, pl, x, played, pts + oth + bonus, means, sign))
+    pid = np.concatenate([p[1]["player_id"].to_numpy(np.int64) for p in parts])
+    team = np.concatenate([np.full(len(p[1]), p[0].team, dtype=object) for p in parts])
+    x = np.concatenate([p[2] for p in parts], axis=1)
+    played = np.concatenate([p[3] for p in parts], axis=1)
+    mu = np.concatenate([p[4] for p in parts], axis=1)
+    npl = np.maximum(played.sum(0), 1)
+    mu_played = mu.sum(0) / npl
+    min_played = x.sum(0) / npl
+    tiers = role_tiers(team, mu_played, min_played)
+    # winner/loser shift per team (points re-normalised per sim: the team's points are kept)
+    means = {s: [] for s in COMP_STATS}
+    off = 0
+    for ts, pl, xt, pt, _, mt, sign in parts:
+        tt = tiers[off:off + len(pl)]
+        off += len(pl)
+        for s in COMP_STATS:
+            f = wl_factor(v1, s, tt, sign * margin)
+            v = mt[s] * f
+            if s == "pts":
+                before = mt[s].sum(1)
+                after = v.sum(1)
+                v = v * np.where(after > 0, before / np.maximum(after, 1e-12), 1.0)[:, None]
+            means[s].append(v)
+    means = {s: np.concatenate(v, axis=1) for s, v in means.items()}
+    pos = (np.concatenate([p[1]["grp"].to_numpy(int) for p in parts])
+           if all("grp" in p[1] for p in parts) else None)
+    R = corr_matrix_v1(team, tiers, pos, v1)
+    w = draw_copula(R, S, r_cop)
+    cnt = draw_components(means, played, w, tiers, v1, count_tables(v1), r_cmp, r_rnd)
+    fp = np.where(played, dk_from_components(cnt), 0.0)
+    info = pd.DataFrame({"player_id": pid, "team": team,
+                         "p_avail": np.concatenate([p[1]["p_avail"].to_numpy(float)
+                                                    for p in parts]),
+                         "p_play": played.mean(0), "tier": [TIERS[t] for t in tiers],
+                         "normal": mu_played >= cp.normal_min, "mu_played": mu_played,
+                         "min_played": min_played})
+    for s in PROP_STATS:
+        v = cnt[s].astype(float)
+        info[f"{s}_all"] = v.mean(0)
+        info[f"{s}_played"] = v.sum(0) / npl
+    return GameSims(game_id=game.game_id, player_id=pid, team=team, fp=fp.astype(np.float32),
+                    minutes=x.astype(np.float32), info=info, teams=teams_info, margin=margin,
+                    total=total, stats=cnt)
+
+
+# ------------------------------------------------------------------------------ v1 fitting
+
+def v1_frame(conn: sqlite3.Connection, season: str, sp: dict, alpha: float, *,
+             n_seasons: int = 2, games: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Per-stat conditional means given ACTUAL minutes and ACTUAL team points (the v1 analogue
+    of `conditional_frame`) on the `n_seasons` regular seasons before `season`: columns game_id,
+    team, season, tier (0..2), margin (team perspective), y_<stat>, m_<stat> (pts x g, others x
+    g^alpha, g = team points / sum of rate x minutes points of the team-game), dk_act, mu_dk."""
+    s0 = int(season[:4])
+    seasons = [_season_label(s0 - k) for k in range(n_seasons, 0, -1)]
+    first = _season_label(s0 - n_seasons - sp.get("history_seasons", 6))
+    if games is None:
+        games = ST.load_games(conn, since_season=first, until_season=seasons[-1])
+    wf = pd.concat([ST.walk_forward(conn, s, sp, games=games) for s in seasons],
+                   ignore_index=True)
+    wf = wf[wf["season_type"] == "Regular Season"]
+    tp = pd.read_sql_query(
+        "SELECT t.game_id, t.team, t.pts AS team_pts, t.pts - o.pts AS margin FROM team_games t "
+        "JOIN team_games o ON o.game_id = t.game_id AND o.team != t.team "
+        "WHERE t.season >= ? AND t.season <= ?", conn, params=(seasons[0], seasons[-1]))
+    w = wf.merge(tp, on=["game_id", "team"], how="inner").reset_index(drop=True)
+    mins = w["min"].to_numpy(float)
+    mpg = w["mpg"].to_numpy(float)
+    raw = {s: w[f"r_{s}"].to_numpy(float) * mins * ST.minutes_multiplier(sp, s, mins, mpg)
+           for s in COMP_STATS}
+    key = (w["game_id"] + "|" + w["team"]).to_numpy()
+    rp = pd.Series(raw["pts"]).groupby(key).transform("sum").to_numpy()
+    g = w["team_pts"].to_numpy(float) / np.maximum(rp, 1.0)
+    out = pd.DataFrame({"game_id": w["game_id"].to_numpy(), "team": w["team"].to_numpy(),
+                        "season": w["season"].to_numpy(),
+                        "margin": w["margin"].to_numpy(float), "g": g})
+    for s in COMP_STATS:
+        out[f"y_{s}"] = w[s].to_numpy(float)
+        out[f"m_{s}"] = raw[s] * (g if s == "pts" else g ** alpha)
+    out["tier"] = role_tiers(key, (w["r_dk"] * w["mpg"]).to_numpy(), w["mpg"].to_numpy())
+    out["dk_act"] = dk_from_components({s: out[f"y_{s}"].to_numpy() for s in COMP_STATS})
+    out["mu_dk"] = sum(DK_W[s] * out[f"m_{s}"] for s in COMP_STATS)
+    ok = (out["g"] > 0.5) & (out["g"] < 2.0) & (out["mu_dk"] > 0.5)
+    return out[ok].reset_index(drop=True)
+
+
+def fit_wl(f: pd.DataFrame, k: float = WL_K) -> tuple[list, dict, dict]:
+    """Winner/loser factors: per stat and tier, the ratio sum(y) / sum(m) in each signed-margin
+    bin over the tier's overall ratio, shrunk to 1 by n / (n + k), clipped to WL_BOUNDS.
+    Returns (centres, {stat: {tier: [factor per bin]}}, n per tier and bin)."""
+    b = np.clip(np.searchsorted(WL_EDGES, f["margin"].to_numpy(), side="right") - 1, 0,
+                len(WL_EDGES) - 2)
+    nb = len(WL_EDGES) - 1
+    centres = [float(f["margin"].to_numpy()[b == i].mean()) if (b == i).any()
+               else float(np.clip((WL_EDGES[i] + WL_EDGES[i + 1]) / 2, -30, 30))
+               for i in range(nb)]
+    tier = f["tier"].to_numpy(int)
+    fac, ns = {}, {}
+    for s in COMP_STATS:
+        y, m = f[f"y_{s}"].to_numpy(), f[f"m_{s}"].to_numpy()
+        fac[s] = {}
+        for t in range(len(TIERS)):
+            mt = tier == t
+            base = y[mt].sum() / max(m[mt].sum(), 1e-9)
+            row = []
+            for i in range(nb):
+                sel = mt & (b == i)
+                n = int(sel.sum())
+                ns[f"{TIERS[t]}:{i}"] = n
+                if n == 0 or m[sel].sum() <= 0:
+                    row.append(1.0)
+                    continue
+                r = (y[sel].sum() / m[sel].sum()) / max(base, 1e-9)
+                row.append(float(np.clip(1.0 + (r - 1.0) * n / (n + k), *WL_BOUNDS)))
+            fac[s][TIERS[t]] = row
+    return centres, fac, ns
+
+
+def apply_wl(f: pd.DataFrame, v1: CopulaV1Params) -> pd.DataFrame:
+    """m_<stat> x the winner/loser factor at the actual margin; points re-normalised per
+    team-game (the team's points are conditioned on)."""
+    f = f.copy()
+    tier = f["tier"].to_numpy(int)
+    key = (f["game_id"] + "|" + f["team"]).to_numpy()
+    for s in COMP_STATS:
+        fac = np.ones(len(f))
+        for t in range(len(TIERS)):
+            sel = tier == t
+            fac[sel] = np.interp(f["margin"].to_numpy()[sel], v1.wl_centres,
+                                 v1.wl_factor[s][TIERS[t]])
+        m = f[f"m_{s}"].to_numpy() * fac
+        if s == "pts":
+            before = pd.Series(f[f"m_{s}"].to_numpy()).groupby(key).transform("sum").to_numpy()
+            after = pd.Series(m).groupby(key).transform("sum").to_numpy()
+            m = m * before / np.maximum(after, 1e-12)
+        f[f"m_{s}"] = m
+    f["mu_dk"] = sum(DK_W[s] * f[f"m_{s}"] for s in COMP_STATS)
+    return f
+
+
+def fit_dispersion(f: pd.DataFrame, n_bins: int = DISP_BINS, min_n: int = 300
+                   ) -> tuple[dict, dict]:
+    """NB2 excess c^2 by level per stat: in quantile bins of m, c^2 = (Var(y - m) - E[m]) /
+    E[m^2], floored at C2_MIN, smoothed over neighbouring bins (the v1 CV-by-level fit)."""
+    mus, c2s = {}, {}
+    for s in COMP_STATS:
+        y, m = f[f"y_{s}"].to_numpy(), f[f"m_{s}"].to_numpy()
+        ok = m > 0.01
+        y, m = y[ok], m[ok]
+        q = np.unique(np.quantile(m, np.linspace(0, 1, n_bins + 1)))
+        b = np.clip(np.searchsorted(q, m, side="right") - 1, 0, len(q) - 2)
+        cen, val = [], []
+        for i in range(len(q) - 1):
+            sel = b == i
+            if sel.sum() < min_n:
+                continue
+            r = y[sel] - m[sel]
+            v = r.var()
+            cen.append(float(m[sel].mean()))
+            val.append(float((v - m[sel].mean()) / np.mean(m[sel] ** 2)))
+        val = np.asarray(val)
+        if len(val) >= 3:
+            sm = val.copy()
+            sm[1:-1] = (val[:-2] + val[1:-1] + val[2:]) / 3.0
+            val = sm
+        mus[s] = cen or [1.0]
+        c2s[s] = [float(max(v, C2_MIN)) for v in val] or [0.1]
+    return mus, c2s
+
+
+def _cov_obs(f: pd.DataFrame, tier: int) -> tuple[np.ndarray, int]:
+    d = f[f["tier"] == tier]
+    r = np.stack([d[f"y_{s}"].to_numpy() - d[f"m_{s}"].to_numpy() for s in COMP_STATS], 1)
+    r = r - r.mean(0)
+    return r.T @ r / max(len(r), 1), len(r)
+
+
+def _cov_sim(f: pd.DataFrame, tier: int, R: np.ndarray, tables: CountTables, reps: int,
+             rng: np.random.Generator) -> np.ndarray:
+    d = f[f["tier"] == tier]
+    m = np.stack([d[f"m_{s}"].to_numpy() for s in COMP_STATS], 1)
+    m = np.repeat(m, reps, axis=0)
+    w, V = np.linalg.eigh(R)
+    Lr = V * np.sqrt(np.maximum(w, 0.0))[None, :]
+    z = rng.standard_normal(m.shape) @ Lr.T
+    from scipy.special import ndtr
+    u = ndtr(z)
+    y = np.stack([tables.draw(s, m[:, k], u[:, k], rng.random(len(m))).astype(float)
+                  for k, s in enumerate(COMP_STATS)], 1)
+    r = y - m
+    r = r - r.mean(0)
+    return r.T @ r / max(len(r), 1)
+
+
+def fit_within(f: pd.DataFrame, tables: CountTables, *, iters: int = 4, reps: int = 2,
+               seed: int = 0) -> tuple[dict, dict]:
+    """Latent within-player correlation per tier by simulated moments: start from the
+    Hermite-1 estimate cov_obs / E[h_s h_t], then Newton-like steps on (cov_obs - cov_sim) /
+    E[h_s h_t] until the simulated count covariances match the observed ones. Returns
+    ({tier: 7x7}, diagnostics: observed vs simulated correlation per tier)."""
+    rng = np.random.default_rng(seed)
+    out, diag = {}, {}
+    for t in range(len(TIERS)):
+        d = f[f["tier"] == t]
+        if len(d) < 500:
+            out[TIERS[t]] = np.eye(N_COMP).tolist()
+            continue
+        C_obs, n = _cov_obs(f, t)
+        H = np.stack([tables.h(s, d[f"m_{s}"].to_numpy()) for s in COMP_STATS], 1)
+        HH = H.T @ H / len(H)
+        R = np.clip(C_obs / np.maximum(HH, 1e-9), -0.95, 0.95)
+        np.fill_diagonal(R, 1.0)
+        R = nearest_corr(R)
+        for _ in range(iters):
+            C_sim = _cov_sim(f, t, R, tables, reps, rng)
+            R = R + (C_obs - C_sim) / np.maximum(HH, 1e-9)
+            R = np.clip((R + R.T) / 2.0, -0.95, 0.95)
+            np.fill_diagonal(R, 1.0)
+            R = nearest_corr(R)
+        C_sim = _cov_sim(f, t, R, tables, reps, rng)
+        sd_o, sd_s = np.sqrt(np.diag(C_obs)), np.sqrt(np.diag(C_sim))
+        out[TIERS[t]] = R.tolist()
+        diag[TIERS[t]] = {"n": n, "corr_obs": (C_obs / np.outer(sd_o, sd_o)).round(3).tolist(),
+                          "corr_sim": (C_sim / np.outer(sd_s, sd_s)).round(3).tolist(),
+                          "sd_obs": sd_o.round(3).tolist(), "sd_sim": sd_s.round(3).tolist()}
+    return out, diag
+
+
+def _dk_check(f: pd.DataFrame, v1: CopulaV1Params, tables: CountTables, reps: int = 2,
+              seed: int = 1) -> dict:
+    """Implied DK sd given minutes and environment by level band (v1 sims at the frame's means)
+    vs the observed RMS of the DK residual (real bonuses), and the bonus rate."""
+    from scipy.special import ndtr
+    rng = np.random.default_rng(seed)
+    rows = []
+    for t in range(len(TIERS)):
+        d = f[f["tier"] == t]
+        if not len(d):
+            continue
+        m = np.repeat(np.stack([d[f"m_{s}"].to_numpy() for s in COMP_STATS], 1), reps, 0)
+        R = _r_within(v1, t)
+        w, V = np.linalg.eigh(R)
+        z = rng.standard_normal(m.shape) @ (V * np.sqrt(np.maximum(w, 0.0))[None, :]).T
+        u = ndtr(z)
+        y = {s: tables.draw(s, m[:, k], u[:, k], rng.random(len(m)))
+             for k, s in enumerate(COMP_STATS)}
+        rows.append(pd.DataFrame({"mu": np.repeat(d["mu_dk"].to_numpy(), reps),
+                                  "sim": dk_from_components(y),
+                                  "act": np.repeat(d["dk_act"].to_numpy(), reps)}))
+    a = pd.concat(rows, ignore_index=True)
+    a["band"] = pd.cut(a["mu"], [0, 10, 20, 30, 40, 50, 200])
+    out = {}
+    for band, g in a.groupby("band", observed=True):
+        rs, ra = g["sim"] - g["mu"], g["act"] - g["mu"]
+        out[str(band)] = {"n": int(len(g) // reps), "mu": round(float(g["mu"].mean()), 2),
+                          "sd_sim": round(float(rs.std()), 3),
+                          "sd_act": round(float(ra.std()), 3),
+                          "mean_sim": round(float(g["sim"].mean()), 3),
+                          "mean_act": round(float(g["act"].mean()), 3)}
+    return out
+
+
+def corr_from_t27(season: str, conn: sqlite3.Connection | None = None, log=None) -> dict:
+    """The T2.7 causal PM table for season S (`corr_<S>.json`, fit on seasons < S; fitted from
+    the cached extracts of the 3 seasons before S when the file is missing). {} when neither
+    exists (the caller falls back to v0's tier pairs)."""
+    from . import corr as CR
+    say = log or (lambda m: None)
+    p = None
+    try:
+        p = CR.load(season)
+    except FileNotFoundError:
+        if conn is not None:
+            s0 = int(season[:4])
+            seasons = [_season_label(s0 - k) for k in (3, 2, 1)]
+            try:
+                p = CR.fit(conn, seasons, season=season, k_shrink=2000.0)
+                CR.save(p)
+            except FileNotFoundError as e:
+                say(f"copula v1 {season}: no T2.7 table ({e}); using v0 tier pairs")
+                return {}
+    if p is None or any(s >= season for s in p.train_seasons):
+        return {}
+    t = p.table("PM")
+    return {"rho_team": t.rho_team, "rho_team_cell": t.rho_team_cell,
+            "rho_team_all": t.rho_team_all, "rho_opp": t.rho_opp, "rho_opp_cell": {},
+            "rho_opp_all": t.rho_opp_all,
+            "source": f"corr {p.version} PM {season} train {p.train_seasons} k {p.k_shrink}"}
+
+
+def fit_copula_v1(conn: sqlite3.Connection, season: str, sp: dict, cp: CopulaParams, *,
+                  n_seasons: int = 2, games: pd.DataFrame | None = None, frame=None,
+                  log=None) -> CopulaV1Params:
+    """Fit CopulaV1Params on the regular seasons before `season` (module section v1): the
+    winner/loser shift, the per-stat dispersion by level, the within-player correlations per
+    tier, and the T2.7 player correlations. `cp` = the season's v0 params (alpha)."""
+    say = log or (lambda m: None)
+    f = frame if frame is not None else v1_frame(conn, season, sp, cp.alpha,
+                                                 n_seasons=n_seasons, games=games)
+    v1 = default_copula_v1_params(season, cp)
+    v1.train_seasons = sorted(f["season"].unique().tolist())
+    if any(s >= season for s in v1.train_seasons):
+        raise ValueError(f"copula v1 {season}: training rows from {v1.train_seasons}")
+    v1.wl_centres, v1.wl_factor, wl_n = fit_wl(f)
+    f = apply_wl(f, v1)
+    v1.disp_mu, v1.disp_c2 = fit_dispersion(f)
+    tables = count_tables(v1)
+    v1.r_within, wdiag = fit_within(f, tables)
+    c = corr_from_t27(season, conn, log=say)
+    if c:
+        v1.corr = c
+    v1.diagnostics = {"n": int(len(f)), "within": wdiag, "wl_n": wl_n,
+                      "dk_by_level": _dk_check(f, v1, tables), "corr_source":
+                      v1.corr.get("source")}
+    say(f"copula v1 fit {season}: n {len(f)}, corr {v1.corr.get('source')}, "
+        f"r(pts,fg3m) star {v1.r_within['star'][0][1]:.2f}")
+    return v1

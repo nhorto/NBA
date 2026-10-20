@@ -9,6 +9,13 @@ per-sim DK FP files, and the `dfs_runs.sim_path` pointer.
   sd/quantiles NULL until v1 draws components), cond in {played, all}.
 * Sims: float16 `npz` at `<data_dir>/sims/<slate>/<run_id>.npz` with `fp` (S, n), `player_id`
   (NBA ids) and optional `dk_id`; nothing is pruned by default (KEEP_DAYS = None).
+* Per-stat sims (copula v1 runs only, T2.10): `<run_id>.stats.npz` next to it (`stat_sims_path`)
+  with uint8 counts per box component (pts, fg3m, reb, ast, stl, blk, tov), `min` (uint8,
+  minutes rounded up, so 0 = did not play), `player_id`, optional `dk_id` / `game_id`. Only the
+  first STAT_SIMS sims are kept (an iid subset; 5,000 gives a prop chance to +-0.007): 7.2 MB
+  compressed for a 15-game, 468-player run (the DK `fp` file of the same run: 12.3 MB) instead of
+  ~95 MB raw for all 25k. `proj/props.py` reads them for real per-stat distributions when the
+  file exists.
 
 Writing a run replaces that (run_id, model_version)'s earlier rows, so re-running is idempotent.
 """
@@ -30,6 +37,7 @@ from .. import config
 # Sims are kept indefinitely (owner decision 2026-10-19: keep everything for later grading and
 # model work; ~8 MB per slate run). Pass a number of days to prune_sims to delete old files.
 KEEP_DAYS: int | None = None
+STAT_SIMS = 5_000
 STAT_COLS = ("mean", "sd", "q05", "q10", "q25", "q50", "q75", "q90", "q95")
 PROJ_COLS = ("game_id", "nba_day", "slate_id", "player_id", "team", "run_id", "model_version",
              "role", "p_play", "minutes_json", "inputs_json")
@@ -74,6 +82,31 @@ def save_sims(slate: str, run_id: str, player_id, fp: np.ndarray, *, dk_id=None,
         arrs["game_id"] = np.asarray([str(x) for x in game_id])
     np.savez_compressed(path, **arrs)
     prune_sims(keep_days, root=root)
+    return path
+
+
+def stat_sims_path(sim_path: str | Path) -> Path:
+    """`<run_id>.npz` -> `<run_id>.stats.npz` (same directory)."""
+    p = Path(sim_path)
+    return p.with_name(p.name[:-4] + ".stats.npz" if p.name.endswith(".npz")
+                       else p.name + ".stats.npz")
+
+
+def save_stat_sims(sim_path: str | Path, player_id, stats: dict, minutes: np.ndarray, *,
+                   dk_id=None, game_id=None, keep: int | None = STAT_SIMS) -> Path:
+    """Per-stat count sims {stat: (S, n)} + minutes (S, n) of a run as uint8 npz beside its
+    DK sims file; the first `keep` sims only (None = all). Returns the path."""
+    path = stat_sims_path(sim_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    k = slice(None) if keep is None else slice(0, int(keep))
+    arrs = {s: np.clip(np.asarray(v)[k], 0, 255).astype(np.uint8) for s, v in stats.items()}
+    arrs["min"] = np.clip(np.ceil(np.asarray(minutes, float)[k]), 0, 255).astype(np.uint8)
+    arrs["player_id"] = np.asarray(player_id, np.int64)
+    if dk_id is not None:
+        arrs["dk_id"] = np.asarray([str(x) if x is not None else "" for x in dk_id])
+    if game_id is not None:
+        arrs["game_id"] = np.asarray([str(x) for x in game_id])
+    np.savez_compressed(path, **arrs)
     return path
 
 

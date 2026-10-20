@@ -27,6 +27,13 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   `CONTEXT_EXT` (default OFF; env ``COURTSIDE_CONTEXT_EXT=1`` together with
   ``COURTSIDE_CONTEXT=1``): `bundle_<S>_v1_cx2.json`, `pathA-v0.4`, its per-day inputs from
   `Context.context_extras`. With CONTEXT_EXT off, ON is exactly `pathA-v0.3`.
+* **Copula v1** (T2.10, `copula.simulate_game_v1`: per-stat component sims, exact DD/TD,
+  winner/loser shift, T2.7 matrices), behind `COPULA` (default "v0"; env ``COURTSIDE_COPULA=v1``).
+  It composes with the context switches as a suffix: bundle file `<arm's bundle>_c1.json` (the
+  arm's v0 bundle + `copula_v1` params fit on seasons < S), MODEL_VERSION `<arm's version>+c1`
+  (`pathA-v0.2+c1`, `pathA-v0.3+c1`, `pathA-v0.4+c1`). Seeds stay on SEED_VERSION, so a v1 run
+  shares the environment / availability / minutes draws of its v0 arm. With COPULA "v0" none
+  of it runs and every arm is bit-identical to the code before it.
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -91,6 +98,13 @@ CONTEXT_EXT_DEFAULT = False
 CONTEXT_EXT_ENV = "COURTSIDE_CONTEXT_EXT"
 CONTEXT_EXT_SUFFIX = "_cx2"
 CONTEXT_EXT_MODEL_VERSION = "pathA-v0.4"
+# Path A copula v1 (T2.10). "v0" by default (env COURTSIDE_COPULA=v1 / v0 overrides; `set_copula`
+# at run time). v1 = a suffix on whatever context arm is active: bundle `<arm>_c1`, version
+# `<arm version>+c1`; seeds unchanged (common random numbers with the arm's v0 runs).
+COPULA_DEFAULT = "v0"                  # shipping v1 = "v1" here (env still overrides)
+COPULA_ENV = "COURTSIDE_COPULA"
+COPULA_V1_SUFFIX = "_c1"
+COPULA_V1_TAG = "+c1"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -102,21 +116,36 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return default
 
 
-def _versions(on: bool, ext: bool = False) -> tuple[str, str]:
-    """(bundle file suffix, MODEL_VERSION) for the context switch (+ the extended layer)."""
+def _copula_flag(name: str, default: str = "v0") -> str:
+    v = os.environ.get(name, "").strip().lower()
+    if v in ("v1", "1", "true", "yes", "on"):
+        return "v1"
+    if v in ("v0", "0", "false", "no", "off"):
+        return "v0"
+    return default
+
+
+def _versions(on: bool, ext: bool = False, copula: str = "v0") -> tuple[str, str]:
+    """(bundle file suffix, MODEL_VERSION) for the context switch (+ the extended layer) and
+    the copula version (v1 appends `_c1` / `+c1` to whichever arm is active)."""
     if not on:
-        return _VS_BASE, MODEL_VERSION_BASE
-    if ext:
+        vs, mv = _VS_BASE, MODEL_VERSION_BASE
+    elif ext:
         mv = (CONTEXT_EXT_MODEL_VERSION if MINUTES_VERSION == "v1"
               else f"{MODEL_VERSION_BASE}+cx2")
-        return _VS_BASE + CONTEXT_EXT_SUFFIX, mv
-    mv = CONTEXT_MODEL_VERSION if MINUTES_VERSION == "v1" else f"{MODEL_VERSION_BASE}+cx"
-    return _VS_BASE + CONTEXT_SUFFIX, mv
+        vs = _VS_BASE + CONTEXT_EXT_SUFFIX
+    else:
+        mv = CONTEXT_MODEL_VERSION if MINUTES_VERSION == "v1" else f"{MODEL_VERSION_BASE}+cx"
+        vs = _VS_BASE + CONTEXT_SUFFIX
+    if copula == "v1":
+        return vs + COPULA_V1_SUFFIX, mv + COPULA_V1_TAG
+    return vs, mv
 
 
 CONTEXT_ON = _env_flag(CONTEXT_ENV, CONTEXT_DEFAULT)
 CONTEXT_EXT = _env_flag(CONTEXT_EXT_ENV, CONTEXT_EXT_DEFAULT)
-_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT)
+COPULA = _copula_flag(COPULA_ENV, COPULA_DEFAULT)
+_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA)
 # Seeds use the base version in both states: ON and OFF runs of the same slate/day draw common
 # random numbers, so their difference is the layer, not Monte Carlo noise (OFF is unchanged).
 SEED_VERSION = MODEL_VERSION_BASE
@@ -131,7 +160,17 @@ def set_context(on: bool, ext: bool | None = None) -> None:
     CONTEXT_ON = bool(on)
     if ext is not None:
         CONTEXT_EXT = bool(ext)
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA)
+
+
+def set_copula(version: str) -> None:
+    """Flip the copula switch at run time ("v0" | "v1"): updates COPULA, the bundle suffix and
+    MODEL_VERSION together (the context switches are kept)."""
+    global COPULA, _VS, MODEL_VERSION
+    if version not in ("v0", "v1"):
+        raise ValueError(f"unknown copula version {version!r}")
+    COPULA = version
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA)
 
 
 def context_groups() -> tuple:
@@ -289,6 +328,7 @@ class Bundle:
     state: dict
     copula: C.CopulaParams
     context: CX.ContextModel | None = None      # Phase 2F layer (used only when CONTEXT_ON)
+    copula_v1: C.CopulaV1Params | None = None   # T2.10 v1 params (used only when COPULA v1)
 
     def to_json(self) -> str:
         d = {"season": self.season, "minutes": json.loads(self.minutes.to_json()),
@@ -296,15 +336,19 @@ class Bundle:
              "model_version": MODEL_VERSION}
         if self.context is not None:          # absent key: the pre-context format, byte for byte
             d["context"] = json.loads(self.context.to_json())
+        if self.copula_v1 is not None:        # absent key: the v0 format, byte for byte
+            d["copula_v1"] = json.loads(self.copula_v1.to_json())
         return json.dumps(d)
 
     @classmethod
     def from_json(cls, s: str) -> "Bundle":
         d = json.loads(s)
         cx = d.get("context")
+        c1 = d.get("copula_v1")
         return cls(season=d["season"], minutes=M.MinutesParams(**d["minutes"]),
                    state=d["state"], copula=C.CopulaParams(**d["copula"]),
-                   context=CX.ContextModel(**cx) if cx else None)
+                   context=CX.ContextModel(**cx) if cx else None,
+                   copula_v1=C.CopulaV1Params(**c1) if c1 else None)
 
 
 def fit_state_params(conn: sqlite3.Connection, season: str, log=None) -> dict:
@@ -338,7 +382,11 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
                 refit: bool = False, log=None) -> Bundle:
     """The fitted Bundle for season S (everything fit on seasons < S), cached on disk. With the
     context switch on: `bundle_<S>_v1_cx.json` = the OFF bundle of S (reused from disk when
-    present, so ON and OFF differ only by the layer) plus the context layer fit on seasons < S."""
+    present, so ON and OFF differ only by the layer) plus the context layer fit on seasons < S.
+    With COPULA v1: `<the arm's file>_c1.json` = the arm's v0 bundle (loaded or fitted the v0
+    way) plus `copula_v1` fit on seasons < S."""
+    if COPULA == "v1":
+        return _load_bundle_v1(conn, season, ctx, refit=refit, log=log)
     say = log or (lambda m: None)
     path = cache_dir() / f"bundle_{season}{_VS}.json"
     if path.exists() and not refit:
@@ -374,6 +422,27 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(b.to_json())
     say(f"bundle {season} fitted in {time.time() - t0:.0f}s -> {path}")
+    return b
+
+
+def _load_bundle_v1(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
+                    refit: bool, log) -> Bundle:
+    say = log or (lambda m: None)
+    path = cache_dir() / f"bundle_{season}{_VS}.json"
+    if path.exists() and not refit:
+        b = Bundle.from_json(path.read_text())
+        if b.copula_v1 is not None:
+            return b
+    set_copula("v0")
+    try:
+        b = load_bundle(conn, season, ctx, refit=refit, log=log)
+    finally:
+        set_copula("v1")
+    t0 = time.time()
+    b.copula_v1 = C.fit_copula_v1(conn, season, b.state, b.copula, log=say)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(b.to_json())
+    say(f"bundle {season} + copula v1 fitted in {time.time() - t0:.0f}s -> {path}")
     return b
 
 
@@ -491,6 +560,8 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
             pl["tier_state"] = r["tier"].to_numpy(int)
             pl["star"] = p["_star"].to_numpy(bool)
             pl["rotation"] = pl["mpg"].to_numpy() >= 15.0
+            if COPULA == "v1":                # position group for the T2.7 tier x position cells
+                pl["grp"] = r["grp"].to_numpy(int)
             sm = C.ScenarioMinutes(p.drop(columns=["_star"]), b.minutes, shares,
                                    starters=_team_starters(starters, p))
             teams[side] = C.TeamSpec(team=team, players=pl, minutes=sm,
@@ -588,6 +659,9 @@ def summarize_games(sims: list) -> tuple[pd.DataFrame, pd.DataFrame]:
         played = g.minutes > 0
         sd = C.summarize(g.fp, played)
         sm = C.summarize(g.minutes, played)
+        # v1: full per-stat summaries (sd, quantiles) from the component sims
+        sst = ({s: C.summarize_counts(g.stats[s], played) for s in C.PROP_STATS}
+               if g.stats is not None else None)
         info = g.info.reset_index(drop=True)
         for j in range(len(info)):
             r = info.iloc[j].to_dict()
@@ -610,6 +684,14 @@ def summarize_games(sims: list) -> tuple[pd.DataFrame, pd.DataFrame]:
                     row.update({"key": key, "stat": stat})
                     srows.append(row)
             for s in C.PROP_STATS:
+                if sst is not None:
+                    for cond in ("played", "all"):
+                        f = sst[s]
+                        row = f[(f["col"] == j) & (f["cond"] == cond)].iloc[0].to_dict()
+                        row.pop("col")
+                        row.update({"key": key, "stat": s})
+                        srows.append(row)
+                    continue
                 srows.append({"key": key, "stat": s, "cond": "all", "mean": r[f"{s}_all"]})
                 srows.append({"key": key, "stat": s, "cond": "played",
                               "mean": r[f"{s}_played"] if r["p_play"] > 0 else None})
@@ -619,8 +701,13 @@ def summarize_games(sims: list) -> tuple[pd.DataFrame, pd.DataFrame]:
 def run_games(specs: list, b: Bundle, n_sims: int, seed: int, day: date,
               log: Callable[[str], None] | None = None) -> DayResult:
     t0 = time.time()
-    sims = [C.simulate_game(gs, b.copula, b.minutes, b.state, n_sims, game_seed(seed, gs.game_id))
-            for gs in specs]
+    if COPULA == "v1":
+        v1 = b.copula_v1 or C.default_copula_v1_params(b.season, b.copula)
+        sims = [C.simulate_game_v1(gs, b.copula, v1, b.minutes, b.state, n_sims,
+                                   game_seed(seed, gs.game_id)) for gs in specs]
+    else:
+        sims = [C.simulate_game(gs, b.copula, b.minutes, b.state, n_sims,
+                                game_seed(seed, gs.game_id)) for gs in specs]
     t_sim = time.time() - t0
     players, stats = summarize_games(sims)
     teams = [dict(v, game_id=g.game_id) for g in sims for v in g.teams.values()]
@@ -836,6 +923,12 @@ def save_run(conn: sqlite3.Connection, res: DayResult, *, run_id: str, slate_id:
     gids = np.concatenate([np.full(len(g.player_id), g.game_id, dtype=object) for g in res.sims]) \
         if res.sims else []
     path = SO.save_sims(slate_id or res.day.isoformat(), run_id, pid, fp, dk_id=dk, game_id=gids)
+    if res.sims and all(g.stats is not None for g in res.sims):     # v1: per-stat sims too
+        SO.save_stat_sims(path, pid,
+                          {s: np.concatenate([g.stats[s] for g in res.sims], axis=1)
+                           for s in C.COMP_STATS},
+                          np.concatenate([g.minutes for g in res.sims], axis=1),
+                          dk_id=dk, game_id=gids)
     SO.record_run(conn, run_id, slate_id=slate_id, kind=kind, model_version=MODEL_VERSION,
                   sim_path=str(path), seconds=seconds,
                   detail={"n_sims": res.meta.get("n_sims"), "seed": res.meta.get("seed")})
