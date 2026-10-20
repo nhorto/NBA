@@ -930,6 +930,31 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX IF NOT EXISTS idx_dfs_portfolios_slate ON dfs_portfolios(slate_id, created_at);
     """,
+    # 14: prop_compare context + postgame grading (proj/props.py, T2.9). market = our stat key
+    # (pts | reb | ast | pra | fg3m); our_p_above = P(stat > line), our_p_push = P(stat == line)
+    # (0 on half lines), our_p_below the rest; mkt_p_above = no-vig over chance, hold = overround.
+    # result: above | below | push | void (did not play); went_above NULL on push / void.
+    """
+    ALTER TABLE prop_compare ADD COLUMN game_id TEXT;
+    ALTER TABLE prop_compare ADD COLUMN player_id INTEGER;
+    ALTER TABLE prop_compare ADD COLUMN run_id TEXT;
+    ALTER TABLE prop_compare ADD COLUMN run_created_at TEXT;
+    ALTER TABLE prop_compare ADD COLUMN provider TEXT;
+    ALTER TABLE prop_compare ADD COLUMN espn_athlete_id TEXT;
+    ALTER TABLE prop_compare ADD COLUMN player_name TEXT;
+    ALTER TABLE prop_compare ADD COLUMN over_odds INTEGER;
+    ALTER TABLE prop_compare ADD COLUMN under_odds INTEGER;
+    ALTER TABLE prop_compare ADD COLUMN hold REAL;
+    ALTER TABLE prop_compare ADD COLUMN our_p_push REAL;
+    ALTER TABLE prop_compare ADD COLUMN our_p_below REAL;
+    ALTER TABLE prop_compare ADD COLUMN our_mean REAL;
+    ALTER TABLE prop_compare ADD COLUMN built_at TEXT;
+    ALTER TABLE prop_compare ADD COLUMN actual REAL;
+    ALTER TABLE prop_compare ADD COLUMN result TEXT;
+    ALTER TABLE prop_compare ADD COLUMN went_above INTEGER;
+    ALTER TABLE prop_compare ADD COLUMN graded_at TEXT;
+    CREATE INDEX IF NOT EXISTS idx_prop_compare_game ON prop_compare(game_id, player_id);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",

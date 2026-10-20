@@ -627,8 +627,8 @@ def _dfs_step(conn: sqlite3.Connection, day: date, captured_at: str) -> dict:
 
 
 PREGAME_STEPS = ("schedule", "nba_scoreboard", "espn_scoreboard", "nba_odds", "espn_injuries",
-                 "official_injury_report", "props", "referees", "action_network",
-                 "dfs_salaries", "predict", "brief")
+                 "official_injury_report", "props", "prop_compare", "referees",
+                 "action_network", "dfs_salaries", "predict", "brief")
 
 
 def run_pregame(day: date, only: set[str] | list[str] | tuple[str, ...] | None = None) -> dict:
@@ -663,6 +663,8 @@ def run_pregame(day: date, only: set[str] | list[str] | tuple[str, ...] | None =
         # pre-tip archive sources (each isolated; a failure never touches the steps around it)
         if on("props"):
             run.step("props", _props_step, conn, run, day, captured_at)
+        if on("prop_compare"):
+            run.step("prop_compare", _prop_compare_step, conn, day)
         if on("referees"):
             run.step("referees", _referees_step, conn, day, captured_at)
         if on("action_network"):
@@ -891,6 +893,18 @@ def _predict_step(conn: sqlite3.Connection, day: date) -> dict:
             "with_market": sum(1 for r in rows if r["market_home_prob"] is not None)}
 
 
+def _prop_compare_step(conn: sqlite3.Connection, day: date) -> dict:
+    """Book props vs the newest pre-tip projection run (proj/props.py, T2.9)."""
+    from .proj import props
+    return props.pregame_step(conn, day)
+
+
+def _prop_grade_step(conn: sqlite3.Connection, day: date) -> dict:
+    """Final pre-tip prop comparison for `day`, then actual / result per row (proj/props.py)."""
+    from .proj import props
+    return props.postgame_step(conn, day)
+
+
 def _rate_state_step(conn: sqlite3.Connection, as_of: date) -> dict:
     """Nightly per-minute rate state (proj/state.py) as of the next NBA day."""
     from .proj import state
@@ -913,6 +927,7 @@ def run_postgame(day: date) -> dict:
         run.step("game_facts", _facts_step, conn, run, day)
         run.step("refresh_gamelogs", _refresh_gamelogs_step, conn, day)
         run.step("dfs_grade", _dfs_grade_step, conn, day)
+        run.step("prop_grade", _prop_grade_step, conn, day)
         run.step("rate_state", _rate_state_step, conn, day + timedelta(days=1))
         run.step("player_why", _player_why_step, conn, day)
         run.step("brief", _brief_step, conn, day + timedelta(days=1))

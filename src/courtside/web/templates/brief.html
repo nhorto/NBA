@@ -275,7 +275,7 @@
   <div class="tn-grid">
     {% for t in tn.games %}{{ m.tonight_row(t) }}{% endfor %}
   </div>
-  <p class="footnote">Bars show our win probability; the dark tick is the market&rsquo;s. Tap a game for lines and factors.</p>
+  <p class="footnote">Bars show our win probability; the dark tick is the market&rsquo;s. Tap a game for lines and factors. <a href="/players/{{ tn.day }}">Tonight&rsquo;s player cards</a></p>
   {% else %}
   {{ m.empty("No games tonight", "Enjoy the night off. The next Brief picks up when the schedule does.") }}
   {% endif %}

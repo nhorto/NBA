@@ -3,6 +3,7 @@
 Routes: `/` (latest Brief), `/brief/<day>`, `/archive`, `/game/<game_id>`, `/health` (model health),
 `/health/dfs` (DFS tab), `/healthz`, `/api/health`, `/dfs` (DFS slates, see dfs_view.py),
 `/dfs/results` (real contest results: uploads and the owner's entries, see dfs_results.py),
+`/players` (Tonight player cards + props vs the market, see players_view.py),
 `/api/brief/<day|latest>`. Run with `courtside serve`; see docs/WEB.md.
 """
 
@@ -22,7 +23,8 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import config
-from . import dfs_contest, dfs_results, dfs_swap, dfs_view, fmt, health, health_dfs, view
+from . import (dfs_contest, dfs_results, dfs_swap, dfs_view, fmt, health, health_dfs,
+               players_view, view)
 from .store import BriefStore
 from .teams import identity
 
@@ -184,6 +186,8 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
                       health_banner=health_banner)
     dfs_contest.register(app, store=store, render=render, not_found=not_found, today=_today,
                          health_banner=health_banner)
+    players_view.register(app, store=store, render=render, not_found=not_found, today=_today,
+                          health_banner=health_banner)
 
     @app.get("/health", response_class=HTMLResponse)
     def model_health():

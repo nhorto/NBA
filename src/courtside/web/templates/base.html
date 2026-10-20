@@ -24,8 +24,9 @@
     </a>
     <nav class="top-nav" aria-label="Site">
       {% block topnav %}{% endblock %}
+      <a href="/players" class="top-link{% if page == 'players' %} is-active{% endif %}">Players</a>
       <a href="/dfs" class="top-link{% if page == 'dfs' %} is-active{% endif %}">DFS</a>
-      <a href="/archive" class="top-link{% if page == 'archive' %} is-active{% endif %}">Archive</a>
+      <a href="/archive" class="top-link top-link-x{% if page == 'archive' %} is-active{% endif %}">Archive</a>
       <a href="/health" class="top-link{% if page == 'health' %} is-active{% endif %}"><span class="hide-xs">Model </span>Health</a>
       <button class="theme-toggle" type="button" aria-label="Switch colour theme" title="Switch colour theme">
         <svg class="ico-sun" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.6" fill="currentColor"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M10 1.8v2M10 16.2v2M1.8 10h2M16.2 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M4.2 15.8l1.4-1.4M14.4 5.6l1.4-1.4"/></g></svg>
@@ -49,7 +50,7 @@
 <footer class="site-foot">
   <div class="wrap foot-in">
     {% block foot %}{% endblock %}
-    <nav class="foot-links" aria-label="Footer"><a href="/dfs">DFS</a><a href="/archive">Archive</a><a href="/health">Model Health</a></nav>
+    <nav class="foot-links" aria-label="Footer"><a href="/players">Players</a><a href="/dfs">DFS</a><a href="/archive">Archive</a><a href="/health">Model Health</a></nav>
     <p class="foot-brand"><span class="brand-word">Courtside</span> &middot; The NBA Morning Brief. Numbers come from structured game data; win probabilities are model estimates, not advice.</p>
   </div>
 </footer>

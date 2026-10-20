@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{# Tonight player cards (web/players_view.py). Information only: props read
+   "Points 24.5: our model 58% / market 52%". Never advice words (STYLE.md). #}
+
+{% macro stat_cell(s) -%}
+<div class="pl-stat">
+  <dt>{{ s.label }}</dt>
+  <dd><span class="pl-mean">{{ s.mean|num(1) if s.mean is not none else DASH }}</span>
+  {%- if s.lo is not none and s.hi is not none %}<span class="pl-rng"><span class="sr">range </span>{{ s.lo|num(0) }}{{ DASH }}{{ s.hi|num(0) }}</span>{% endif %}</dd>
+</div>
+{%- endmacro %}
+
+{% block title %}Tonight&rsquo;s players &middot; {{ v.day|medium_date }} &middot; Courtside{% endblock %}
+{% block description %}Our projection for tonight's NBA rotation players, with the book's main player props shown as our chance vs the market's. Information only.{% endblock %}
+
+{% block content %}
+<section class="wrap dfs-hero" aria-labelledby="pl-title">
+  <div class="mast-kicker">
+    <span class="kicker">Players</span>
+    <time datetime="{{ v.day }}">{{ v.day_label }}</time>
+  </div>
+  <h1 class="dfs-h1" id="pl-title">Tonight&rsquo;s players</h1>
+  <nav class="daynav dfs-daynav" aria-label="Day">
+    {% if v.prev_day %}<a class="daynav-a" href="/players/{{ v.prev_day }}">{{ m.icon("back") }} {{ v.prev_day|short_date }}</a>{% else %}<span></span>{% endif %}
+    {% if v.next_day %}<a class="daynav-a" href="/players/{{ v.next_day }}">{{ v.next_day|short_date }} {{ m.icon("arrow") }}</a>{% else %}<span></span>{% endif %}
+  </nav>
+  <nav class="rs-links" aria-label="Related">
+    <a href="/brief/{{ v.day }}#tonight">Tonight&rsquo;s games</a><a href="/dfs/{{ v.day }}">DFS slates</a>
+  </nav>
+  {% if v.filters %}
+  <nav class="dfs-tabs" aria-label="Games">
+    {% for t in v.filters %}
+    <a href="{{ t.url }}" class="dfs-tab{% if t.active %} is-active{% endif %}"{% if t.active %} aria-current="page"{% endif %}><b>{{ t.label }}</b><span>{{ t.sub or (v.n_games ~ " games") }}</span></a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+</section>
+
+<div class="wrap dfs-body">
+{% if v.state == "no_db" %}
+  {{ m.empty("No data yet", "The database is not available on this server.") }}
+{% elif v.state == "no_games" %}
+  {{ m.empty("No games on " ~ v.day_label, "Player cards appear on game days once the projection runs.") }}
+{% else %}
+  <p class="caveat pl-disclaimer" role="note"><strong>{{ v.disclaimer }}</strong></p>
+
+  <div class="dfs-filters pl-sorts">
+    <span class="muted pl-sort-k">Sort</span>
+    <ul class="dfs-posf" aria-label="Sort players">
+      {% for s in v.sorts %}<li><a href="{{ s.url }}" class="dfs-pos{% if s.active %} is-active{% endif %}"{% if s.active %} aria-current="true"{% endif %}>{{ s.label }}</a></li>{% endfor %}
+    </ul>
+  </div>
+
+  {% for g in v.games %}
+  <section class="section pl-game" id="g-{{ g.game_id }}" aria-labelledby="g-{{ g.game_id }}-title">
+    <header class="sec-head pl-ghead">
+      <p class="sec-num" aria-hidden="true">{{ loop.index }}</p>
+      <h2 id="g-{{ g.game_id }}-title" class="pl-gtitle">{{ m.badge(g.away) }} <span>{{ g.away.nickname }} <span class="muted">at</span> {{ g.home.nickname }}</span> {{ m.badge(g.home) }}</h2>
+      <p class="sec-meta">
+        {% if g.tip %}{{ g.tip|tipoff }}{% endif %}
+        {% if g.run %} &middot; Projection from the {{ g.run.created_at|stamp }} run{% endif %}
+        {% if g.market_at %} &middot; Market as of {{ g.market_at|stamp }}{% endif %}
+      </p>
+    </header>
+    {% if g.listed %}
+    <p class="pl-listed"><span class="pl-listed-k">Not expected to play:</span>
+      {% for c in g.listed %}<span class="pl-listed-p">{{ c.name }} <span class="team-tag">{{ c.team }}</span> {{ m.status_pill(c.status) }}</span>{% endfor %}
+    </p>
+    {% endif %}
+    {% if not g.run %}
+    {{ m.empty("No projection yet", "Cards appear after the first projection run for this game.") }}
+    {% elif not g.cards %}
+    {{ m.empty("No rotation players projected", "") }}
+    {% else %}
+    <div class="pl-grid">
+      {% for c in g.cards %}
+      <article class="card pl-card" aria-label="{{ c.name }}">
+        <header class="pl-head">
+          <h3 class="pl-name">{{ c.name }}</h3>
+          <p class="pl-sub">
+            <span class="team-tag">{{ c.team }}</span>{% if c.opp %} <span class="muted">{{ c.opp }}</span>{% endif %}
+            {% if c.status %}{{ m.status_pill(c.status) }}{% if c.reason %} <span class="muted pl-reason">{{ c.reason }}</span>{% endif %}{% else %}<span class="muted pl-reason">Not on the injury report</span>{% endif %}
+          </p>
+          <p class="pl-play"><span class="pl-play-n">{{ c.p_play|pct if c.p_play is not none else DASH }}</span><span class="pl-play-k">chance he plays</span></p>
+        </header>
+        <dl class="pl-stats" aria-label="Projection if he plays">
+          {% for s in c.stats %}{{ stat_cell(s) }}{% endfor %}
+        </dl>
+        {% if c.props %}
+        <ul class="pl-props" aria-label="Book props: our chance vs the market's">
+          {% for p in c.props %}
+          <li class="pl-prop">
+            <span class="pl-pk"><span class="pl-pl">{{ p.label }}</span> <b class="num">{{ p.line }}</b></span>
+            <span class="pl-pv">our model <b>{{ p.ours|pct }}</b> / market <b>{{ p.mkt|pct }}</b>{% if p.push > 0.005 %} <span class="muted">(a push {{ p.push|pct }} in ours)</span>{% endif %}</span>
+            {% if p.ours is not none and p.mkt is not none %}
+            <span class="pl-meter" aria-hidden="true"><span class="pl-meter-f" style="width:{{ '%.1f'|format(p.ours * 100) }}%"></span><span class="pl-meter-t" style="left:{{ '%.1f'|format(p.mkt * 100) }}%"></span></span>
+            {% endif %}
+            <span class="sr">{{ p.text }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="pl-noprops muted">No main props posted for him.</p>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  <p class="footnote pl-foot">Numbers are our projection if he plays: the mean, then the 10th to 90th percentile range (simulated). DK is DraftKings points. The chance he plays comes from the injury report and our availability model. For each prop line, &ldquo;our model&rdquo; is our chance he finishes above the line and &ldquo;market&rdquo; is the book&rsquo;s chance with its margin removed; the bar fills to ours and the dark tick marks the market&rsquo;s. Props are DraftKings lines via ESPN. {{ v.disclaimer }}</p>
+{% endif %}
+</div>
+{% endblock %}

@@ -1330,3 +1330,45 @@ textarea.dfs-input { resize: vertical; min-height: 4.5rem; }
 .dfs-simdet { margin-top: 10px; font-size: .86rem; color: var(--ink-2); }
 .dfs-simdet > summary { cursor: pointer; font-weight: 600; color: var(--ink-2); padding: 4px 0; }
 .dfs-simdet p { margin-top: 4px; max-width: 80ch; }
+
+/* ---------------------------------------------------------------- tonight player cards (/players) */
+.pl-disclaimer { margin: 0 0 12px; }
+.pl-sorts { margin: 0; }
+.pl-sort-k { font-size: .8rem; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+.pl-game { padding-top: clamp(22px, 3.5vw, 40px); }
+.pl-gtitle { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pl-listed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: -8px 0 14px; font-size: .88rem; color: var(--ink-2); }
+.pl-listed-k { font-weight: 650; color: var(--ink-3); }
+.pl-listed-p { display: inline-flex; align-items: center; gap: 6px; }
+.pl-grid { display: grid; gap: 12px; }
+@media (min-width: 720px) { .pl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1080px) { .pl-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.pl-card { display: grid; gap: 10px; align-content: start; padding: 14px var(--pad); }
+.pl-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: start; }
+.pl-name { font-size: 1.05rem; font-weight: 700; letter-spacing: -.01em; line-height: 1.25; }
+.pl-sub { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .84rem; }
+.pl-reason { font-size: .8rem; }
+.pl-play { grid-column: 2; grid-row: 1 / span 2; display: grid; justify-items: end; text-align: right; }
+.pl-play-n { font-size: 1.15rem; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.pl-play-k { font-size: .68rem; color: var(--ink-3); letter-spacing: .02em; }
+.pl-stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid var(--line); padding-top: 8px; }
+.pl-stat { min-width: 0; padding-left: 8px; border-left: 1px solid var(--line); }
+.pl-stat:first-child { padding-left: 0; border-left: 0; }
+.pl-stat dt { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.pl-stat dd { display: grid; font-variant-numeric: tabular-nums; }
+.pl-mean { font-size: 1rem; font-weight: 700; }
+.pl-rng { font-size: .7rem; color: var(--ink-3); white-space: nowrap; }
+@media (max-width: 420px) { .pl-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 8px; } .pl-stat:nth-child(4) { padding-left: 0; border-left: 0; } }
+.pl-props { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.pl-prop { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; align-items: baseline; font-size: .86rem; }
+.pl-pk { color: var(--ink); white-space: nowrap; }
+.pl-pl { color: var(--ink-2); }
+.pl-pv { margin-left: auto; color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; }
+.pl-pv b { color: var(--ink); }
+.pl-meter { flex: 1 0 100%; position: relative; height: 5px; border-radius: 999px; background: var(--surface-3); }
+.pl-meter-f { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: color-mix(in srgb, var(--accent) 70%, var(--surface-3)); }
+.pl-meter-t { position: absolute; top: -3px; width: 2px; height: 11px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
+.pl-noprops { font-size: .82rem; border-top: 1px solid var(--line); padding-top: 8px; }
+.pl-foot { margin-top: 28px; max-width: 90ch; }
+/* the top bar carries Players, DFS, Archive, Health: Archive (also in the footer) drops on phones */
+@media (max-width: 520px) { .top-link-x { display: none; } .top-link { padding-inline: 8px; } }
