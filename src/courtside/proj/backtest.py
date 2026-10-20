@@ -109,7 +109,9 @@ def _rules_sig(rules) -> str:
 
 
 CODE_FILES = ("pipeline.py", "minutes.py", "state.py", "copula.py", "reconcile.py",
-              "availability.py", "evallite.py", "dfs/optimizer.py", "dfs/topn.py", "dfs/rules.py")
+              "availability.py", "evallite.py", "dfs/optimizer.py", "dfs/topn.py", "dfs/rules.py",
+              "context.py", *sorted(f"features/{q.name}" for q in
+                                    (Path(__file__).parent / "features").glob("*.py")))
 
 
 def code_fingerprint() -> str:
