@@ -159,7 +159,7 @@ def test_versions_differ_on_and_off(switch, monkeypatch):
     for v, on in (("", True), ("junk", True), ("0", False), ("off", False), ("1", True)):
         monkeypatch.setenv(P.CONTEXT_ENV, v)              # shipped default True: env still wins
         assert P._env_flag(P.CONTEXT_ENV, True) is on
-    assert P.CONTEXT_DEFAULT is False                       # not shipped yet
+    assert P.CONTEXT_DEFAULT is True                        # shipped 2026-10-21
 
 
 def test_on_multipliers_within_clip(conn, base_bundle, strong, switch):

@@ -615,8 +615,8 @@ def test_cli_build_topn_on_a_stored_slate(conn, capsys, monkeypatch):
     p = argparse.ArgumentParser()
     handlers = optimizer_cli.add_commands(p.add_subparsers(dest="c"))
     args = p.parse_args(["build", "--slate", "154575", "--mode", "topn", "--n", "3",
-                         "--proj", "fppg", "--save"])
-    assert handlers["build"](args) == 0
+                         "--proj", "fppg", "--save", "--now", "2026-10-20T12:00:00Z"])
+    assert handlers["build"](args) == 0           # (pinned before the slate's 19:00Z lock)
     out = capsys.readouterr().out
     assert "#1" in out and "#3" in out and "UTIL" in out
     assert conn.execute("SELECT COUNT(*) FROM dfs_lineups").fetchone()[0] == 3

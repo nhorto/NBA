@@ -87,7 +87,7 @@ MODEL_VERSION_BASE = C.MODEL_VERSION if MINUTES_VERSION == "v0.5" else "pathA-v0
 # it on with its own bundle file suffix and model version, so ON and OFF runs never share a
 # bundle, a backtest cache or a dfs_runs / player_projections model_version (they do share
 # seeds, see SEED_VERSION).
-CONTEXT_DEFAULT = False                # shipping the layer = True here (env still overrides)
+CONTEXT_DEFAULT = True                 # shipped 2026-10-21 (owner OK after opener grading; env still overrides)
 CONTEXT_ENV = "COURTSIDE_CONTEXT"      # "1"/"true"/"on" forces ON, "0"/"false"/"off" forces OFF
 CONTEXT_SUFFIX = "_cx"
 CONTEXT_MODEL_VERSION = "pathA-v0.3"

@@ -165,7 +165,7 @@ def test_seeds_reproducible(conn, ctx, bundle, hist):
     # a game's sims do not depend on the other games of the slate
     one = P.project_historical(conn, hist.day, n_sims=2000, ctx=ctx, bundle=bundle)
     g0 = hist.sims[0].game_id
-    seed = P.stable_seed(hist.day.isoformat(), "hist-avail", P.MODEL_VERSION)
+    seed = P.stable_seed(hist.day.isoformat(), "hist-avail", P.SEED_VERSION)
     games, panel, pa = P.historical_inputs(conn, ctx, hist.day, protocol="avail")
     env = {g0: P.environment(conn, g0, None, mode="closing")}
     specs = P.build_games(ctx, bundle, conn, hist.day, games[games["game_id"] == g0],
