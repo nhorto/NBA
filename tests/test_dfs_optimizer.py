@@ -622,7 +622,8 @@ def test_cli_build_topn_on_a_stored_slate(conn, capsys, monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM dfs_lineups").fetchone()[0] == 3
     # lock / ban by name
     name = R.build_pool(conn, 154575, rules=CLASSIC).players[40].name
-    args = p.parse_args(["build", "--slate", "154575", "--mode", "cash", "--lock", name])
+    args = p.parse_args(["build", "--slate", "154575", "--mode", "cash", "--lock", name,
+                         "--now", "2026-10-20T12:00:00Z"])
     assert handlers["build"](args) == 0
     assert name in capsys.readouterr().out
 
