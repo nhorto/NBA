@@ -22,6 +22,20 @@ TEAMGAMELOGS_URL = f"{BASE}/teamgamelogs"
 PLAYERGAMELOGS_URL = f"{BASE}/playergamelogs"
 
 SEASON_TYPES = ("Regular Season", "PlayIn", "Playoffs")
+# Preseason is fetched separately (courtside.backfill_preseason) into its own tables; it is not
+# in SEASON_TYPES so the regular backfill never writes preseason rows into team/player_games.
+PRESEASON = "Pre Season"
+
+# NBA franchise TEAM_IDs (1610612737..1610612766). Preseason logs also carry international
+# exhibition opponents (e.g. MAC Maccabi, GUA Guangzhou, ADL Adelaide) with other ids.
+NBA_TEAM_ID_MIN, NBA_TEAM_ID_MAX = 1610612737, 1610612766
+
+
+def is_nba_team_id(team_id: Any) -> bool:
+    try:
+        return NBA_TEAM_ID_MIN <= int(team_id) <= NBA_TEAM_ID_MAX
+    except (TypeError, ValueError):
+        return False
 
 # Franchises that changed tricode: stored as returned by the API for that season
 # (e.g. NJN/NOH/CHA in 2010-11); no remapping is done here.

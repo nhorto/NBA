@@ -75,6 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
     ij.add_argument("--find-earliest", action="store_true",
                     help="only binary-search and print the earliest available date")
 
+    ps = bf.add_parser("preseason",
+                       help="preseason team/player game logs from stats.nba.com (own tables)")
+    ps.add_argument("--from", dest="start", default="2010-11", help="first season, e.g. 2010-11")
+    ps.add_argument("--to", dest="end", default="2026-27", help="last season, e.g. 2026-27")
+    ps.add_argument("--force", action="store_true", help="re-fetch even if already archived")
+
     rgu = bf.add_parser("rotoguru", help="RotoGuru daily DraftKings salaries/points, 2014-10-29+")
     rgu.add_argument("--from", dest="start", type=_parse_day, default=None,
                      help="first game day (default 2014-10-29)")
@@ -408,6 +414,20 @@ def _backfill_rotoguru_cmd(args) -> int:
     return 1 if s["failed"] or s["aborted"] else 0
 
 
+def _backfill_preseason_cmd(args) -> int:
+    from . import backfill, backfill_preseason as bp
+    try:
+        seasons = backfill.seasons_range(args.start, args.end)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    s = bp.backfill_preseason(seasons, force=args.force)
+    print(f"fetched={s['fetched']} cached={s['cached']} failed={s['failed']} rows={s['rows']}")
+    for err in s["errors"]:
+        print(f"  error: {err}", file=sys.stderr)
+    return 1 if s["failed"] else 0
+
+
 def _backfill_players_cmd(args) -> int:
     from . import backfill, backfill_players as bp
     if not args.season_tables and not args.per_game:
@@ -507,6 +527,8 @@ def main(argv: list[str] | None = None) -> int:
         return _backfill_players_cmd(args)
     if args.cmd == "backfill" and args.what == "rotoguru":
         return _backfill_rotoguru_cmd(args)
+    if args.cmd == "backfill" and args.what == "preseason":
+        return _backfill_preseason_cmd(args)
     if args.cmd == "backfill":
         from . import backfill
         try:

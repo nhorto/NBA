@@ -955,6 +955,42 @@ MIGRATIONS: list[str] = [
     ALTER TABLE prop_compare ADD COLUMN graded_at TEXT;
     CREATE INDEX IF NOT EXISTS idx_prop_compare_game ON prop_compare(game_id, player_id);
     """,
+    # 15: historical preseason game logs (stats.nba.com leaguegamelog SeasonType='Pre Season',
+    # 2010-11+; courtside.backfill_preseason). Same columns as team_games / player_games plus
+    # flags. Kept in their OWN tables: many readers of player_games/team_games have no
+    # season_type filter, so preseason rows there would leak into rate state, minutes features
+    # and trends. scrimmage = 1 for games played after Jan 1 of the season's second year (the
+    # July 2020 bubble scrimmages filed under 2019-20 Pre Season). vs_non_nba = 1 when either
+    # side is not an NBA franchise (international exhibition opponents). No starter flag: the
+    # game logs have none. MIN in these logs is whole minutes.
+    """
+    CREATE TABLE IF NOT EXISTS preseason_team_games (
+        game_id TEXT NOT NULL, team TEXT NOT NULL, season TEXT, season_type TEXT,
+        game_date TEXT, opp TEXT, is_home INTEGER, wl TEXT, min REAL,
+        fgm INTEGER, fga INTEGER, fg3m INTEGER, fg3a INTEGER, ftm INTEGER, fta INTEGER,
+        oreb INTEGER, dreb INTEGER, reb INTEGER, ast INTEGER, stl INTEGER, blk INTEGER,
+        tov INTEGER, pf INTEGER, pts INTEGER, plus_minus REAL,
+        scrimmage INTEGER NOT NULL DEFAULT 0, vs_non_nba INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (game_id, team)
+    );
+    CREATE INDEX IF NOT EXISTS idx_preseason_team_games_season ON preseason_team_games(season);
+    CREATE INDEX IF NOT EXISTS idx_preseason_team_games_team_date
+        ON preseason_team_games(team, game_date);
+
+    CREATE TABLE IF NOT EXISTS preseason_player_games (
+        game_id TEXT NOT NULL, player_id INTEGER NOT NULL, player_name TEXT, team TEXT,
+        season TEXT, season_type TEXT, game_date TEXT, min REAL,
+        fgm INTEGER, fga INTEGER, fg3m INTEGER, fg3a INTEGER, ftm INTEGER, fta INTEGER,
+        oreb INTEGER, dreb INTEGER, reb INTEGER, ast INTEGER, stl INTEGER, blk INTEGER,
+        tov INTEGER, pf INTEGER, pts INTEGER, plus_minus REAL,
+        scrimmage INTEGER NOT NULL DEFAULT 0, vs_non_nba INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (game_id, player_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_preseason_player_games_season
+        ON preseason_player_games(season);
+    CREATE INDEX IF NOT EXISTS idx_preseason_player_games_player_date
+        ON preseason_player_games(player_id, game_date);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
