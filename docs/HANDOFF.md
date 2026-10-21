@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-20 ~07:50 ET (opener day; first lock 15:00 ET).*
+*Last updated 2026-10-21 ~10:30 ET (day 2; live model pathA-v0.3+p2).*
 
 ## 0. Where we are, in one paragraph
 
@@ -46,26 +46,19 @@ Operational notes:
 
 **Phase 1: complete (2026-10-19, a week early).** T1.0 gate PASSES on every line (full runs): 2024-25 DK MAE +5.54% vs season-to-date (SE 0.47), 80% coverage 0.825, minutes MAE 4.57, RotoGuru 2019-20/2020-21 player MAE +2.3% vs best salary-implied; lineups 0.68 of hindsight vs 0.47–0.52 for salary-implied (`var/reports/evallite_20261019.txt`). Live model `pathA-v0.1`. Postgame job now also writes `rate_state` and runs the post-game why.
 
-**Status at 2026-10-20 07:50 ET (opener day):**
-- **Live model `pathA-v0.2`** (minutes v1). Mac at f7a1b42; overnight pregame/postgame ran clean (new postgame steps: dfs_grade (skipped, no finals), rate_state, player_why). Official report for today is in (Tobias Harris SAS **Out**). Lineups on the page are from last night; the dfs-tick watcher rebuilds at lock−45/−10 (≈14:13 and 14:48 ET for the 15:00 main slate; also 19:00 and 21:30 locks).
-- Open warnings (non-blocking): `data:ids_dk` (camp/two-way players), `data:pregame.injury_match` (ESPN fringe names 80%), `dfs:recon_gap` (PHI: stacked stars' box rates exceed the market total; reconciliation scales them, as intended).
-- Mac disk freed by the owner (63 GB free). Per-game reparse into the Mac DB **done 07:46**: matchups 11,540 games / 2.17M rows, tracking 8,916 / 190k, hustle 8,916 / 180k.
-- **Shipped to the Mac today (live default model unchanged, still `pathA-v0.2`):**
-  - T2.14 late swap (`/dfs/<day>/<slate>/swap`, `courtside dfs swap`), T2.15 Showdown = pydfs on 33/33 slates (13ccd24).
-  - P+F2 context layer behind `COURTSIDE_CONTEXT` (default off; ON = `pathA-v0.3`, +5.5–9.5 SE every season) (b1697c7). Bundle `var/proj/bundle_2026-27_v1_cx.json` prefit on the Mac.
-  - F3 tracking + F6 schedule on top (opt-in `COURTSIDE_CONTEXT_EXT=1`, `pathA-v0.4`; F5 matchups dropped) (93f7a5b). Bundle `_v1_cx2.json` prefit on the Mac.
-  - Brief "Player stories" from the post-game why (1e7e60b). First real one: the 2026-10-21 Brief.
-  - T2.12 GPP portfolio + T2.16 contest builder (`/dfs/<day>/<slate>/contest`, `courtside dfs portfolio`; migration 13 `dfs_portfolios`). Calibrated live-like field, chances shown as bands, no ROI headlines until ≥ 10 uploaded standings (7be6967). Acceptance (greedy beats top-individual at 2 SE) NOT met: +13.6 ± 13.4.
-  - Injury match check: rookies/camp players on the official roster with no NBA minutes no longer count as misses.
-- **Pending decision after the opener is graded (2026-10-21 03:00):** switch on P+F2 (`pathA-v0.3`), or P+F2+F3+F6 (`pathA-v0.4`). Steps: set `CONTEXT_DEFAULT`/`CONTEXT_EXT_DEFAULT = True` in `proj/pipeline.py` (or the env vars in the launchd plists), deploy, `courtside proj live-path-eval`.
-- **Owner decision 2026-10-20: keep building today.** Don't change the live model before tonight's games are graded (2026-10-21 03:00); build + test in parallel.
+**Status at 2026-10-21 10:30 ET (day 2 of the season):**
+- **Live model `pathA-v0.3+p2`** (owner approved 2026-10-21 after opener grading): P+F2 context layer (`CONTEXT_DEFAULT = True`) + P(play) v2 (`PPLAY_DEFAULT = "v2"`: listed players use the calibrated report cell; fringe pool players get a fitted P(play)). Rollback: `COURTSIDE_CONTEXT=0` / `COURTSIDE_PPLAY=v1` or flip the constants in `proj/pipeline.py`. Tests pin `COURTSIDE_PPLAY=v1` in `tests/conftest.py`.
+- Opt-in, not shipped: F3+F6 (`COURTSIDE_CONTEXT_EXT=1`, `v0.4`: no gain over v0.3 on the T2.4 live slice); copula v1 (`COURTSIDE_COPULA=v1`, `+c1`: CRPS −0.9 SE in 2024-25, ranges too wide; needs residual-fit variance + blowout-minutes fix). Dropped: F1, F4 (xFG), F5 (matchups).
+- **Opener graded** (main-slate lock10, n=49): DK MAE 7.33 vs DK FPPG 7.25, minutes MAE 4.63, cov80 0.857 — within the T2.4 live baselines (`mlops/live_like_baseline.json`). Lineups lost to the FPPG/salary baselines on night 1 (noise: one 3-game night).
+- **Fixed 2026-10-21:** first run of a NEW slate projected before its DK ids were mapped (optimizer: no legal lineup) — `project_slate` now maps first. Brief "teammates not playing" used last season's teams (traded players) — now current roster only. Adaptive lock10 window (Mac CI load made builds take 10 min).
+- Shipped 2026-10-20: late swap, Showdown check, contest builder (banded chances, no ROI headlines until ≥ 10 uploaded standings), Tonight player cards + prop_compare + grading, Brief Player stories, T2.4 live slice + baselines.
 
 **Next (in order):**
-1. Watch the opener: lock45/lock10 runs succeed (`courtside dfs capture-status`, dfs_runs), page updates; after 03:00 check `courtside dfs report --window 1d` and `/health/dfs`.
-2. Wire **P + F2** (context layer, `proj/context.py` docstring has the exact steps) into the pipeline behind a switch → `courtside proj live-path-eval` + DK gate (`proj/evallite.py`) + T2.1 harness → ship after grading confirms nothing odd.
-3. **T2.12 GPP portfolio + T2.16 contest builder UI** (uses `proj/dfs/field.py`), **T2.14 late-swap re-solver + UI**, **T2.15 Showdown pydfs check**.
-4. **F3 tracking, F4 shot quality/xFG, F5 matchups** (data now downloaded; load into Mac DB pending the reparse) — each ablation-gated.
-5. Brief: wire `why_v0.top_stories` into the Morning Brief; usage v1 decision; T2.4 live-like slice; Path B sim (T2.6) from `research/sim_step0_targets.json`.
+1. Watch tonight's lock runs (first lock 19:00 ET) and tomorrow's 03:00 grading under `pathA-v0.3+p2`; add a `+p2` block to `live_like_baseline.json` once it has a few nights.
+2. Lock−10 Questionable cell runs high (0.66 vs 0.53 played on the slice): refit that bucket.
+3. Blowout minutes (stars don't lose enough minutes in simulated blowouts), then retune copula v1 variance on the context arm's residuals → re-evaluate `+c1` (per-stat sims for props).
+4. After ~3 weeks of props: F9 market prop lines as features; prop calibration report. After ≥ 10 uploaded standings: ownership refit + calibrated payout display.
+5. Later: Path B sim (T2.6), T2.17 backtest extension, T3.3 weekly DFS report, Phase 4 (why engine, referees, player pages), FanDuel.
 
 **Phase 2 / 2F / 3 summary (2026-10-19):** done — T2.1 harness, T2.2 minutes v1 (+ live-path fix), T2.3 usage v1 (not live), T2.5 sim step-0, T2.7 causal correlations, T2.11 ownership proxy + simulated field (P(cash)/P(top1)/E[payout]/dupes per lineup, labelled proxy/optimistic), T3.0 grading, T3.1 `/health/dfs`, T3.2 `/dfs/results`, lineup sim ranges, `courtside proj live-path-eval`, F0–F2 feature store (P + F2 pass, F1 fails; not live). Use `TMPDIR=~/Documents/NBA/var/tmp` for tests; never `git commit -a` with agents running.
 
