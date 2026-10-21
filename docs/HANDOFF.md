@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-21 ~10:30 ET (day 2; live model pathA-v0.3+p2).*
+*Last updated 2026-10-21 ~17:40 ET (day 2; live model pathA-v0.3+p2).*
 
 ## 0. Where we are, in one paragraph
 
@@ -52,6 +52,11 @@ Operational notes:
 - **Opener graded** (main-slate lock10, n=49): DK MAE 7.33 vs DK FPPG 7.25, minutes MAE 4.63, cov80 0.857 — within the T2.4 live baselines (`mlops/live_like_baseline.json`). Lineups lost to the FPPG/salary baselines on night 1 (noise: one 3-game night).
 - **Fixed 2026-10-21:** first run of a NEW slate projected before its DK ids were mapped (optimizer: no legal lineup) — `project_slate` now maps first. Brief "teammates not playing" used last season's teams (traded players) — now current roster only. Adaptive lock10 window (Mac CI load made builds take 10 min).
 - Shipped 2026-10-20: late swap, Showdown check, contest builder (banded chances, no ROI headlines until ≥ 10 uploaded standings), Tonight player cards + prop_compare + grading, Brief Player stories, T2.4 live slice + baselines.
+
+**Added 2026-10-21 afternoon:**
+- **X factor (`xf-v1`, live, commit 099e370/8a05151).** DFS pool tag + "Big-night chance" column: chance of DK ≥ 6 × salary/$1k from the run's sims, recalibrated per tier (`proj/dfs/xfactor.py`, `docs/research/xfactor.md`). Tag = bench/role, P(play) ≥ 0.85, proxy band Low, chance ≥ 1 in 3, not among the slate's 10 best projections per $1k, max 5. Contest builder shows how many lineups carry one. UI: the pool defaults to the top 40 by projection, so some tagged players need "Show all" or the Big-night sort; on phones the column needs a sideways scroll.
+- **#3 minutes after injury (research, a73d9f9; `docs/research/return-minutes.md`).** No return multiplier: the real issue is a general per-minute bias tied to projected vs recent minutes (the f(min/mpg) adjustment applied to planned changes). The re-key fix (`COURTSIDE_MINRATIO`, `+mr`) is being finished behind a switch, default OFF. Smaller follow-ups: a "returning" split in the lock−45 Questionable cell (with the lock−10 Q refit); reason parser files "Return to Competition Reconditioning" as G League; parse ESPN full comments for minutes-restriction flags (~January; raw snapshots archived).
+- **Owner's build order after X factor:** #3 fix → #2 preseason minutes + early-season weighting (stats.nba.com `SeasonType='Pre Season'` works; minutes but no starters; 2019-20 includes bubble scrimmages) → #1 prop lines as features → #5 contest builder "how many lineups" curve (chances vs entries from the same sims; bands until calibrated; no spend advice). #5 is in progress alongside the #3 fix, since it doesn't touch the minutes model.
 
 **Next (in order):**
 1. Watch tonight's lock runs (first lock 19:00 ET) and tomorrow's 03:00 grading under `pathA-v0.3+p2`; add a `+p2` block to `live_like_baseline.json` once it has a few nights.
