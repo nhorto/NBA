@@ -327,6 +327,7 @@ def test_pre_t24_cache_keys_are_unchanged_and_pplay_is_keyed(monkeypatch):
     st = B.Settings()
     s = asdict(st)
     s.pop("pplay")
+    s.pop("tails")                  # optional tail output (xfactor): off = not in the key
     want = "v1-" + B._hash({"s": s, "model": P.MODEL_VERSION,
                             "bundle": __import__("hashlib").sha1(b"{}").hexdigest(),
                             "rules": "none", "code": "tag:x"})

@@ -10,7 +10,7 @@ Routes
   /dfs/<day>/<slate_id>/export.csv      ?mode=topn|cash &n=10 &fmt=id|name_id   (DK upload CSV)
   /dfs/<day>/<slate_id>/lineup.txt      ?mode=topn|cash &rank=1                 (copyable text)
 
-Pool query params: sort=proj|value|salary|pplay|name, dir=asc|desc, pos=PG|SG|SF|PF|C, q=<name>,
+Pool query params: sort=proj|value|salary|pplay|big|name, dir=asc|desc, pos=PG|SG|SF|PF|C, q=<name>,
 hide=out, all=1. Top N: n=1..50 (default 10).
 
 Data contract (see docs/PLAYERS.md §6) for what the page reads and tolerates:
@@ -24,6 +24,8 @@ Data contract (see docs/PLAYERS.md §6) for what the page reads and tolerates:
   player_projections(+stats)  per-player 'dk' mean (cond 'all') and range (cond 'played'), 'min',
                               p_play, inputs_json (keys documented in proj/dfs/why.py); matched to
                               DK ids through player_ids(source='dk')
+  dfs_runs.sim_path (npz)     big-night chance and the X factor tag (`proj/dfs/xfactor.py`, read
+  dfs_ownership_proxy         time, cached per run); none when the run has no sims
   dfs_runs.late_news_json     a list (or {"players": [...]}) of {name | player, player_id?, team?,
                               reason | why | change}
 """
@@ -44,6 +46,7 @@ from markupsafe import Markup, escape
 from ..proj.dfs import export as dfs_export
 from ..proj.dfs import portfolio as dfs_portfolio
 from ..proj.dfs import why as dfs_why
+from ..proj.dfs import xfactor as dfs_xfactor
 from . import fmt
 
 TAG_ORDER = {"main": 0, "early": 1, "late": 2, "turbo": 3, "showdown": 9}
@@ -52,7 +55,7 @@ TAG_LABEL = {"main": "Main", "early": "Early", "late": "Late", "turbo": "Turbo",
 RUN_LABEL = {"lock45": "45-minute run", "lock10": "10-minute run", "swap": "Late-swap run",
              "manual": "Manual run", "topn": "Manual run", "cash": "Manual run"}
 POS_FILTERS = ("PG", "SG", "SF", "PF", "C")
-SORTS = ("proj", "value", "salary", "pplay", "name")
+SORTS = ("proj", "value", "salary", "pplay", "big", "name")
 POOL_DEFAULT_ROWS = 40
 TOPN_DEFAULT, TOPN_MAX = 10, 50
 STATUS_LABEL = {"OUT": "Out", "O": "Out", "Q": "Q", "GTD": "GTD", "D": "D"}
@@ -437,10 +440,32 @@ def _pool_view(pool: list[dict], proj: dict, nba_ids: dict[str, int]) -> list[di
     return rows
 
 
+def _attach_xfactor(conn: sqlite3.Connection, rows: list[dict], proj: dict,
+                    run: dict | None) -> int:
+    """Add ``big_p`` / ``big_text`` / ``xf`` to the pool rows from the projection run's sims
+    (`xfactor.run_table`; the shown run when the projection run has no sims). Returns the
+    number of X factor players. Never fails the page."""
+    try:
+        table = dfs_xfactor.run_table(conn, proj.get("run_id"))
+        if not table and run and run.get("run_id") != proj.get("run_id"):
+            table = dfs_xfactor.run_table(conn, run["run_id"])
+    except Exception:  # noqa: BLE001 - an optional column must not break the page
+        table = {}
+    n = 0
+    for r in rows:
+        x = table.get(r["id"]) if r.get("src") == "model" else None
+        if x is None or r["status"] in ("OUT", "O"):
+            r.update(big_p=None, big_text="", xf=False)
+            continue
+        r.update(big_p=x["chance"], big_text=x["text"], xf=bool(x["x"]))
+        n += r["xf"]
+    return n
+
+
 def _sort_pool(rows: list[dict], sort: str, desc: bool) -> list[dict]:
     key = {"proj": lambda r: r["proj"], "value": lambda r: r["value"],
            "salary": lambda r: r["salary"], "pplay": lambda r: r["p_play"],
-           "name": lambda r: _norm_name(r["name"])}[sort]
+           "big": lambda r: r.get("big_p"), "name": lambda r: _norm_name(r["name"])}[sort]
     have = [r for r in rows if key(r) is not None]
     miss = [r for r in rows if key(r) is None]
     have.sort(key=lambda r: (key(r), r["salary"], r["name"]), reverse=desc)
@@ -546,6 +571,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
     nba_ids = dk_to_nba(conn) if proj["by_nba_id"] else {}
     rows = _pool_view(pool, proj, nba_ids)
     by_id = {r["id"]: r for r in rows}
+    xf_n = _attach_xfactor(conn, rows, proj, run) if not is_showdown else 0
 
     mv = proj["model_version"] if proj["by_nba_id"] else None
     if mv is None and run and run.get("model_version") and not proj["by_nba_id"]:
@@ -677,6 +703,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
     has_model_range = any(r.get("q10") is not None for r in rows)
     has_pplay = any(r.get("p_play") is not None for r in rows)
     has_starter = any(r.get("starter") is not None for r in rows)
+    has_big = any(r.get("big_p") is not None for r in rows)
     base = f"/dfs/{day}/{sid}"
     defaults = {"sort": "proj", "dir": "desc"}
     cur = {"sort": sort, "dir": direction, "pos": pos, "q": q,
@@ -696,8 +723,13 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
                               ("salary", "Salary", "Sort by salary"),
                               ("proj", "Proj", "Sort by projected DK points"),
                               ("value", "Per $1k", "Sort by projected points per $1,000"),
-                              ("pplay", "P(play)", "Sort by chance to play")):
+                              ("pplay", "P(play)", "Sort by chance to play"),
+                              ("big", "Big-night chance",
+                               f"Sort by chance of {dfs_xfactor.BIG_K:g}x salary/1000 DK points "
+                               "or more")):
         if key == "pplay" and not has_pplay:
+            continue
+        if key == "big" and not has_big:
             continue
         active = sort == key
         nxt = ("asc" if direction == "desc" else "desc") if active else \
@@ -717,6 +749,8 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
         else "", "less_url": url(all="") if show_all and total > POOL_DEFAULT_ROWS else "",
         "heads": heads, "sort": sort, "dir": direction, "pos": pos, "q": q, "hide_out": hide_out,
         "has_range": has_model_range, "has_pplay": has_pplay, "has_starter": has_starter,
+        "has_big": has_big, "xf_count": xf_n, "xf_label": dfs_xfactor.LABEL,
+        "big_k": f"{dfs_xfactor.BIG_K:g}", "big_eg": f"{dfs_xfactor.big_mark(4500):g}", "xf_min": dfs_xfactor.chance_text(dfs_xfactor.P_MIN),
         "source": "model" if proj["by_nba_id"] else "fppg",
         "pos_chips": [{"label": "All", "url": url(pos="", all=""), "active": not pos}] + [
             {"label": p, "url": url(pos=p, all=""), "active": pos == p} for p in POS_FILTERS],

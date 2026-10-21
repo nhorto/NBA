@@ -90,6 +90,11 @@ PLAYER_COLS = ("date", "season", "rg_id", "player_id", "game_id", "team", "pos",
                "b_season_avg", "b_fppg", "b_last10",
                # player-level (box) rows only; additive, so older caches load with NaN here
                "min_played", "p_avail", "status", "env_source")
+# optional upper-tail output (Settings.tails; docs/research/xfactor.md): per-player sim q95/q99
+# and, on RotoGuru rows, P(DK >= k * salary/1000) for k in TAIL_KS. Off by default; when off the
+# frame, the cache and the config hash are exactly as before.
+TAIL_KS = (5, 6, 7)
+TAIL_COLS = ("q95", "q99", *(f"p_ge_{k}x" for k in TAIL_KS))
 
 
 # ====================================================================== settings and cache
@@ -107,6 +112,7 @@ class Settings:
     n_random: int = 2_000
     crps_sub: int = 2_000
     pplay: str = ""          # live protocols: PPLAY_MODES ("" = not used; kept out of the hash)
+    tails: bool = False      # add TAIL_COLS to the player rows (False = kept out of the hash)
 
     def lineups(self) -> bool:
         return bool(self.modes)
@@ -158,6 +164,8 @@ def config_key(settings: Settings, bundle_json: str, rules) -> str:
     s = asdict(settings)
     if not s.get("pplay"):          # field added with T2.4: absent = the pre-T2.4 key, unchanged
         s.pop("pplay", None)
+    if not s.get("tails"):          # optional tail output: off = the earlier key, unchanged
+        s.pop("tails", None)
     if settings.protocol in LIVE_OFFSETS:
         s["live_inputs"] = LIVE_INPUTS_VERSION
     return f"v{HARNESS_VERSION}-" + _hash({"s": s, "model": P.MODEL_VERSION,
@@ -663,7 +671,12 @@ class SeasonRun:
                 if c is not None:
                     row["crps"], row["pit"] = c
             rows.append(row)
-        return _frame(rows), proj, pool_rows
+        frame = _frame(rows)
+        if self.settings.tails:
+            sal = {int(r.player_id): float(r.salary) for r in pool_rows.itertuples(index=False)
+                   if not pd.isna(r.player_id)}
+            frame = _with_tails(frame, sim_tails(res, sal))
+        return frame, proj, pool_rows
 
     def _players_box(self, day, res, pl, rng):
         """Player-level rows for a season without salaries: every simulated player."""
@@ -698,7 +711,8 @@ class SeasonRun:
             if c is not None:
                 row["crps"], row["pit"] = c
             rows.append(row)
-        return _frame(rows)
+        frame = _frame(rows)
+        return _with_tails(frame, sim_tails(res, {})) if self.settings.tails else frame
 
     def _lineups(self, day, pool_rows, proj):
         from . import pipeline as P
@@ -770,6 +784,34 @@ class SeasonRun:
                  "n_random": [int(len(ref.any)), int(len(ref.spend))],
                  "seconds_solve": round(time.time() - t_solve, 2)}
         return pd.DataFrame(rows), extra
+
+
+def sim_tails(res, salary: dict) -> dict:
+    """{player_id: {q95, q99, p_ge_<k>x}} from the per-game sims (`res.sims`: fp (S, n) and
+    player_id); P(FP >= k * salary/1000) only for players in `salary` (RotoGuru rows)."""
+    out = {}
+    for g in res.sims:
+        X = np.asarray(g.fp, float)
+        if not X.size:
+            continue
+        q = np.quantile(X, [0.95, 0.99], axis=0)
+        for j, pid in enumerate(np.asarray(g.player_id)):
+            pid = int(pid)
+            d = {"q95": float(q[0, j]), "q99": float(q[1, j])}
+            sal = salary.get(pid)
+            if sal is not None and np.isfinite(sal):
+                col = X[:, j]
+                for k in TAIL_KS:
+                    d[f"p_ge_{k}x"] = float((col >= k * sal / 1000.0).mean())
+            out[pid] = d
+    return out
+
+
+def _with_tails(frame: pd.DataFrame, tails: dict) -> pd.DataFrame:
+    for c in TAIL_COLS:
+        frame[c] = [tails.get(int(p), {}).get(c, np.nan) if pd.notna(p) else np.nan
+                    for p in frame["player_id"]]
+    return frame
 
 
 def _frame(rows: list[dict]) -> pd.DataFrame:
@@ -1125,7 +1167,7 @@ def run(conn: sqlite3.Connection, seasons: Sequence[str] | None = None, *,
         n_random: int = 2_000, topn_baselines: Sequence[str] = ("fppg_proxy",),
         workers: int = 1, force: bool = False, leak_probe_dates: int = 0,
         date_lo: str | None = None, date_hi: str | None = None, pplay: str = "",
-        log: Callable[[str], None] = print) -> dict:
+        tails: bool = False, log: Callable[[str], None] = print) -> dict:
     """The backtest. `seasons` default 2014-15 .. 2020-21 plus 2024-25 (player level only).
     Walk-forward: season S uses a bundle fit on seasons < S and salary lines from RotoGuru
     seasons < S. Cached per date, so a rerun only does what is missing."""
@@ -1147,7 +1189,7 @@ def run(conn: sqlite3.Connection, seasons: Sequence[str] | None = None, *,
         pplay = ""                   # only the live protocols read P(play) params
     st = Settings(protocol=protocol, n_sims=sims, modes=tuple(modes), n_topn=n_topn,
                   baselines=tuple(baselines), topn_baselines=tuple(topn_baselines),
-                  n_random=n_random, pplay=pplay)
+                  n_random=n_random, pplay=pplay, tails=bool(tails))
     pls, lus, metas = [], [], {}
     for s in seasons:
         p, ln, m = run_season(conn, s, st, n_dates=n_dates, workers=workers, force=force, log=log,
@@ -1725,6 +1767,9 @@ def add_commands(sub) -> dict:
     p.add_argument("--leak-probe", type=int, default=0, metavar="N",
                    help="also run the leak probe on N dates per season")
     p.add_argument("--force", action="store_true", help="ignore and overwrite the date cache")
+    p.add_argument("--tails", action="store_true",
+                   help="also store per-player sim q95/q99 and P(DK >= k x salary/1000), k = "
+                        f"{'/'.join(map(str, TAIL_KS))} (own cache key; off = unchanged)")
     p.add_argument("--out", default=None, help="report directory (default var/reports)")
     return {"backtest-dfs": _cmd}
 
@@ -1737,7 +1782,7 @@ def _cmd(args) -> int:
               sims=args.sims, n_dates=args.dates, n_random=args.random, workers=args.workers,
               force=args.force, leak_probe_dates=args.leak_probe,
               date_lo=args.date_lo or lo, date_hi=args.date_hi or hi, pplay=args.pplay,
-              log=lambda m: print(m, flush=True))
+              tails=args.tails, log=lambda m: print(m, flush=True))
     jp, tp = write_reports(rep, Path(args.out) if args.out else None)
     print(format_report(rep))
     print(f"\nwrote {jp}\nwrote {tp}")

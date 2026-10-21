@@ -1030,9 +1030,32 @@ def build_for_slate(conn: sqlite3.Connection, slate_id, contest_id, s: Settings,
     max_user = int(r["max_per_user"] or MAX_ENTRIES) if r is not None else MAX_ENTRIES
     s.n = max(1, min(int(s.n), max_user, MAX_ENTRIES, contest.field_size - 1))
     pool = ctx["pool"]
-    return build_portfolio(pool, ctx["inputs"], ctx["sims"], contest, s,
-                           now=now or datetime.now(timezone.utc), slate_id=str(slate_id),
-                           run_id=ctx["info"]["run_id"], progress=progress)
+    pf = build_portfolio(pool, ctx["inputs"], ctx["sims"], contest, s,
+                         now=now or datetime.now(timezone.utc), slate_id=str(slate_id),
+                         run_id=ctx["info"]["run_id"], progress=progress)
+    pf.summary["xfactor"] = xfactor_summary(conn, pf)
+    return pf
+
+
+def xfactor_summary(conn: sqlite3.Connection, pf: Portfolio) -> dict | None:
+    """How many of the portfolio's lineups include at least one X factor player of the run
+    (`xfactor.py`; reporting only, the selection does not use it). None when the run has no
+    sims or the table cannot be read."""
+    from . import xfactor as XF
+    try:
+        table = XF.run_table(conn, pf.run_id)
+    except Exception:  # noqa: BLE001 - a report line must not fail a build
+        log.exception("xfactor summary failed for run %s", pf.run_id)
+        return None
+    if not table:
+        return None
+    ids = XF.xfactor_ids(table)
+    slots = pf.slots()
+    names = sorted({str(x.get("name")) for sl in slots for x in sl
+                    if str(x.get("player_id")) in ids})
+    return {"version": XF.VERSION, "n_players": len(ids),
+            "lineups_with": XF.lineup_count(slots, ids), "entries": len(slots),
+            "players_used": names}
 
 
 def contest_options(conn: sqlite3.Connection, slate_id) -> list[dict]:
@@ -1129,6 +1152,7 @@ def _cmd(args) -> int:
     except PortfolioError as e:
         print(f"error: {e}")
         return 1
+    pf.summary["xfactor"] = xfactor_summary(conn, pf)
     _print(pf)
     if args.baselines and "baselines" in pf.info:
         print("\nBASELINES on the same sims (simulated):")
@@ -1171,6 +1195,11 @@ def _print(pf: Portfolio) -> None:
         st = sm["strengths"]
         print("  details: E[payout] by field strength (proxy): " + ", ".join(
             f"{k} ${v['e_payout']:,.0f}" for k, v in st.items()))
+    xf = sm.get("xfactor")
+    if xf:
+        print(f"  X factor players (estimate; reporting only): {xf['lineups_with']} of "
+              f"{xf['entries']} lineups include at least one of the slate's {xf['n_players']}"
+              + (f" ({', '.join(xf['players_used'])})" if xf["players_used"] else ""))
     print(f"\n  {'#':>3} {'mean':>6} {'cash':>10} {'top 1%':>10} {'dupes':>6}  players")
     for lu in pf.lineups:
         names = ", ".join(x["name"].split()[-1] for x in json.loads(lu["slots_json"]))
