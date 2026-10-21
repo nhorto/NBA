@@ -2,6 +2,14 @@
 
     courtside proj backtest-dfs [--seasons 2019-20 2020-21 ...] [--dates N] [--protocol avail]
                                 [--sims 4000] [--topn 20] [--workers 1] [--leak-probe N]
+    courtside proj backtest-dfs --seasons 2025-26 --protocol live|live10 --slice --modes
+                                                                  (T2.4 live-like slice)
+
+Protocols: ``avail`` (known availability, §7.1 L4), ``reports`` (official report at the day's
+first tip - 45), ``live`` / ``live10`` (T2.4: the live lock path per game at its own tip - 45 /
+- 10: `live_like_day`, `LiveInputs`; out-of-month P(play) params; lock-10 with actual starters).
+The slice tables and the monitor's baseline file come from `slice_report` /
+`live_baseline_json` (driver: ``research/t24_slice.py``).
 
 Register by adding ``"courtside.proj.backtest"`` to ``PROJ_MODULES`` in ``proj/cli.py``.
 
@@ -46,7 +54,7 @@ import os
 import sqlite3
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -62,6 +70,16 @@ BASELINES = ("salary", "season_avg", "fppg_proxy", "last10")
 ROTOGURU_SEASONS = ("2014-15", "2015-16", "2016-17", "2017-18", "2018-19", "2019-20", "2020-21")
 DEFAULT_SEASONS = ROTOGURU_SEASONS + ("2024-25",)
 REPORTS_FIRST = "2025-12-22"            # first day with rescued official injury reports
+SLICE = ("2025-12-22", "2026-04-12")    # T2.4 live-like slice: rescued reports, regular season
+# Live-like protocols (T2.4): minutes before EACH GAME'S OWN TIP at which the official report is
+# read (DK runs a Showdown slate per game, so the graded live run of a game is its own lock run).
+# 'live' = lock-45 (no starters, §7.1 L5); 'live10' = lock-10 with the actual starters as the
+# proxy for DK's announced starters (L5).
+LIVE_OFFSETS = {"live": 45, "live10": 10}
+PROTOCOLS = ("avail", "reports", *LIVE_OFFSETS)
+PPLAY_MODES = ("loo_month", "shipped")  # P(play) params for live protocols (see LiveInputs)
+LIVE_INPUTS_VERSION = 2                 # DK-pool stand-in rules (LiveInputs); keys the live caches
+NEW_PLAYER_DAYS = 2                     # a player's first game of S within this many days: in pool
 CASH_LAMBDA = E.CASH_LAMBDA
 LEAK_TOL = 0.005                        # §8 T2.1: leak probe < 0.5% (mean abs relative)
 SPEND_FRAC = 0.96
@@ -69,7 +87,9 @@ SOLVE_LIMIT_S = 20.0
 PLAYER_COLS = ("date", "season", "rg_id", "player_id", "game_id", "team", "pos", "salary", "y",
                "minutes", "has_proj", "mean", "q10", "q25", "q50", "q75", "q90", "exp_min",
                "p_play", "tier", "crps", "pit", "sal_all", "sal_prev", "sal_played", "sal_fixed",
-               "b_season_avg", "b_fppg", "b_last10")
+               "b_season_avg", "b_fppg", "b_last10",
+               # player-level (box) rows only; additive, so older caches load with NaN here
+               "min_played", "p_avail", "status", "env_source")
 
 
 # ====================================================================== settings and cache
@@ -86,6 +106,7 @@ class Settings:
     topn_baselines: tuple = ("fppg_proxy",)
     n_random: int = 2_000
     crps_sub: int = 2_000
+    pplay: str = ""          # live protocols: PPLAY_MODES ("" = not used; kept out of the hash)
 
     def lineups(self) -> bool:
         return bool(self.modes)
@@ -134,7 +155,12 @@ def code_fingerprint() -> str:
 def config_key(settings: Settings, bundle_json: str, rules) -> str:
     """Hash of everything that changes a per-date result (cache directory name)."""
     from . import pipeline as P
-    return f"v{HARNESS_VERSION}-" + _hash({"s": asdict(settings), "model": P.MODEL_VERSION,
+    s = asdict(settings)
+    if not s.get("pplay"):          # field added with T2.4: absent = the pre-T2.4 key, unchanged
+        s.pop("pplay", None)
+    if settings.protocol in LIVE_OFFSETS:
+        s["live_inputs"] = LIVE_INPUTS_VERSION
+    return f"v{HARNESS_VERSION}-" + _hash({"s": s, "model": P.MODEL_VERSION,
                                            "bundle": hashlib.sha1(bundle_json.encode()).hexdigest(),
                                            "rules": _rules_sig(rules), "code": code_fingerprint()})
 
@@ -163,6 +189,9 @@ class DateCache:
         _write_atomic(self.root / f"{day}.players.parquet", lambda p: players.to_parquet(p))
         _write_atomic(self.root / f"{day}.lineups.parquet", lambda p: lineups.to_parquet(p))
         _write_atomic(self.meta_path(day), lambda p: p.write_text(json.dumps(E._clean(meta))))
+
+    def load_meta(self, day: str) -> dict:
+        return json.loads(self.meta_path(day).read_text())
 
     def load(self, day: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
         meta = json.loads(self.meta_path(day).read_text())
@@ -277,6 +306,212 @@ class RandomReference:
         return (MT.percentile_rank(value, self.any), MT.percentile_rank(value, self.spend))
 
 
+# ====================================================================== live-like inputs (T2.4)
+
+class LiveInputs:
+    """What a live lock run knows about a past day that the box-score history alone does not.
+
+    * **DK pool stand-in** (`team_at`, `pool_extras`): live runs force every DK-pool player onto
+      his CURRENT team (`pipeline.merge_extras`) and drop candidates whose current roster team
+      differs (`drop_moved_players`). There is no DK pool for 2025-26, so a player's team on day
+      d is the team of his next game of season S on or after d (a trade is known to the pool the
+      day it happens). In the stand-in: players with a game of S before d AND a game of S on or
+      after d (a player who never plays again is either on the report as Out, handled there, or
+      off a roster), plus players without an earlier game of S whose first one is within
+      NEW_PLAYER_DAYS of d (a fresh signing or a debut: the pool lists him once he is signed).
+      Without that guard a player signed in March sat in December's pool on his old history
+      (v1 of the stand-in: ~11 such rows per night, P(play) 0.52 vs 4% played). This is the
+      mid-season generalisation of `live_path_eval.opening_panel` (first team of S) and uses
+      the future only for roster membership, which the real pool knows at lock.
+    * **P(play) params** (`params`): the shipped `availability_params.json` was fit on exactly
+      the slice (2025-12-22 .. 2026-04-12), so the slice uses out-of-block params by default
+      ('loo_month': fit on the other regular-season months of the rescued reports); 'shipped'
+      reproduces the live params (in-sample here).
+    * **Starters** (`starters`, lock-10 only): the actual starters (`player_starts`), the §7.1
+      L5 proxy for DK's announced starters.
+    * **Environment** (`environment`): the books' `line_snapshots` at the run time when any is
+      archived for the game, else the closing line (never the gbm_market fallback: the slice's
+      prediction rows are a replay, not what was known). `source` records which one."""
+
+    def __init__(self, conn: sqlite3.Connection, season: str, pplay: str = "loo_month",
+                 log: Callable[[str], None] = print):
+        from . import availability as AV
+        if pplay not in PPLAY_MODES:
+            raise ValueError(f"unknown pplay mode {pplay!r}")
+        self.conn, self.season, self.pplay, self.log = conn, season, pplay, log
+        lo, hi = E.season_start(season), E.season_start(E.next_season(season))
+        pg = pd.read_sql_query(
+            "SELECT player_id, team, game_date FROM player_games WHERE game_date>=? AND "
+            "game_date<? AND min>0 ORDER BY game_date", conn, params=(lo, hi))
+        self.by: dict[int, tuple[list[str], list[str]]] = {
+            int(p): (list(g["game_date"]), list(g["team"])) for p, g in pg.groupby("player_id")}
+        self.hist = AV.load_history(conn, date.fromisoformat(lo))
+        self._params: dict[str, object] = {}
+        self._samples: pd.DataFrame | None = None
+
+    # ---- roster stand-in -----------------------------------------------------------------
+    def team_at(self, day) -> dict[int, str]:
+        """{player_id: team} of the DK-pool stand-in on `day` (see the class docstring)."""
+        import bisect
+        d = str(day)[:10]
+        soon = (P_date(d) + timedelta(days=NEW_PLAYER_DAYS)).isoformat()
+        out = {}
+        for pid, (dts, teams) in self.by.items():
+            i = bisect.bisect_left(dts, d)
+            if i < len(dts) and (i > 0 or dts[i] <= soon):
+                out[pid] = teams[i]
+        return out
+
+    @staticmethod
+    def pool_extras(current: dict[int, str], games: pd.DataFrame) -> dict:
+        """{(game_id, team): [player_id]} for the teams of `games` (the DK pool as extras)."""
+        by_team: dict[str, list[int]] = {}
+        for pid, t in current.items():
+            by_team.setdefault(t, []).append(int(pid))
+        out = {}
+        for g in games.itertuples(index=False):
+            for t in (g.home, g.away):
+                if by_team.get(t):
+                    out[(g.game_id, t)] = sorted(by_team[t])
+        return out
+
+    # ---- P(play) params --------------------------------------------------------------------
+    def params(self, day):
+        """AvailabilityParams for `day`: shipped, or fit on the regular-season report days of
+        every OTHER calendar month (cached per month)."""
+        from . import availability as AV
+        if self.pplay == "shipped":
+            if "shipped" not in self._params:
+                self._params["shipped"] = AV.load_params()
+            return self._params["shipped"]
+        d = P_date(day)
+        month = d.strftime("%Y-%m")
+        if month not in self._params:
+            if self._samples is None:
+                t0 = time.time()
+                s = AV.build_samples(self.conn, AV.TRAIN_LO, AV.RS_END, mode="bucket",
+                                     hist=self.hist)
+                s = s[s["season_type"] == "Regular Season"] if len(s) else s
+                self._samples = s
+                self.log(f"P(play) training rows {len(s)} built in {time.time() - t0:.0f}s")
+            s = self._samples
+            keep = np.array([x.strftime("%Y-%m") != month for x in s["day"]], bool) \
+                if len(s) else np.zeros(0, bool)
+            train = s[keep]
+            meta = {"fit": "leave-one-month-out", "held_out_month": month,
+                    "rows": int(len(train)), "games": int(train["game_id"].nunique())
+                    if len(train) else 0}
+            self._params[month] = AV.fit_from_samples(train, m1=20.0, m=AV.DEFAULT_M, meta=meta)
+        return self._params[month]
+
+    def params_tag(self) -> str:
+        return self.pplay
+
+    # ---- starters / environment ------------------------------------------------------------
+    def starters(self, game_ids) -> set[int]:
+        ids = list(game_ids)
+        if not ids:
+            return set()
+        ph = ",".join("?" * len(ids))
+        return {int(r[0]) for r in self.conn.execute(
+            f"SELECT player_id FROM player_starts WHERE game_id IN ({ph})", ids)}
+
+    def environment(self, game_id: str, at: datetime) -> dict:
+        from . import pipeline as P
+        n = self.conn.execute(
+            "SELECT COUNT(*) FROM line_snapshots WHERE game_id=? AND captured_at<=? AND "
+            "book!='open'", (game_id, P._iso(at))).fetchone()[0]
+        if n:
+            return P.environment(self.conn, game_id, at, mode="live")
+        return P.environment(self.conn, game_id, None, mode="closing")
+
+
+def P_date(day) -> date:
+    return day if isinstance(day, date) and not isinstance(day, datetime) else \
+        date.fromisoformat(str(day)[:10])
+
+
+def report_inputs(av: pd.DataFrame) -> tuple[dict, dict, dict]:
+    """`pipeline.report_avail` on an already computed `availability.p_play_slate` frame:
+    (P(available) {player_id: p} for listed statuses, report players to force (listed, not
+    out) {(game_id, team): [player_id]}, {player_id: report status} for every row)."""
+    from . import pipeline as P
+    p_avail, extras, status = {}, {}, {}
+    for r in av.itertuples(index=False):
+        status[int(r.player_id)] = r.status
+        if r.status in P.LISTED:
+            p_avail[int(r.player_id)] = float(r.p_play)
+        if r.status in P.LISTED and r.status != "out":
+            extras.setdefault((r.game_id, r.team), []).append(int(r.player_id))
+    return p_avail, extras, status
+
+
+def live_like_day(conn: sqlite3.Connection, ctx, bundle, live: LiveInputs, day, *,
+                  offset_min: int = 45, n_sims: int = 4_000, seed: int | None = None,
+                  use_starters: bool = False):
+    """Project a past day the way the live lock runs did (T2.4): for each tip time, the
+    official report at tip - `offset_min` (P(play) cells from `live.params(day)`), the DK-pool
+    stand-in forced in (`merge_extras`, pool first), report-listed players forced in,
+    `candidate_panel` + `drop_moved_players`, the environment of `live.environment`, then
+    `build_games` / `run_games` exactly as `pipeline.project_games`. Every game draws from
+    SeedSequence([seed, crc32(game_id)]), so grouping by tip does not change the draws.
+    Returns a `pipeline.DayResult` whose players frame also carries `status` (the report status
+    at the run, '' when the player was not among the report's candidates) and `env_source`."""
+    from . import availability as AV
+    from . import pipeline as P
+    d = P_date(day)
+    games = P._home_away(conn, d)
+    if seed is None:
+        seed = P.stable_seed(d.isoformat(), f"hist-live{offset_min}", P.SEED_VERSION)
+    tips = AV.day_games(conn, d)
+    tip_of = dict(zip(tips["game_id"], tips["tip"]))
+    games = games.assign(tip=[tip_of.get(g, AV._default_tip(d)) for g in games["game_id"]])
+    current = live.team_at(d)
+    params = live.params(d)
+    sims, players, teams = [], [], []
+    env_all: dict = {}
+    info = {"groups": 0, "n_report_rows": 0, "n_listed": 0, "n_forced_pool": 0,
+            "n_forced_report": 0, "n_dropped_moved": 0, "tip_unknown": int((~tips["tip_known"])
+                                                                          .sum()) if len(tips) else 0}
+    for tip, gg in games.groupby("tip", sort=True):
+        gg = gg[["game_id", "home", "away"]].reset_index(drop=True)
+        at = tip - timedelta(minutes=offset_min)
+        starters = live.starters(gg["game_id"]) if use_starters else None
+        av = AV.p_play_slate(conn, d, at, params, starters=starters, hist=live.hist)
+        av = av[av["game_id"].isin(set(gg["game_id"]))]
+        p_avail, rep_extras, status = report_inputs(av)
+        pool = live.pool_extras(current, gg)
+        ex = P.merge_extras(pool, rep_extras)
+        panel = P.candidate_panel(ctx, d, gg, ex)
+        n0 = len(panel)
+        panel = P.drop_moved_players(panel, current, ex)
+        pa = {(k, int(pid)): float(p_avail[int(pid)])
+              for k, pid in zip(panel["key"], panel["player_id"]) if int(pid) in p_avail}
+        env = {g: live.environment(g, at) for g in gg["game_id"]}
+        specs = P.build_games(ctx, bundle, conn, d, gg, panel, pa, env, starters)
+        r = P.run_games(specs, bundle, n_sims, seed, d)
+        pl = r.players.copy()
+        pl["status"] = [status.get(int(p), "") for p in pl["player_id"]]
+        pl["env_source"] = [env[g].get("source", "") for g in pl["game_id"]]
+        pl["at"] = P._iso(at)
+        sims += r.sims
+        players.append(pl)
+        teams += r.teams
+        env_all.update(r.meta.get("env", {}))
+        info["groups"] += 1
+        info["n_report_rows"] += int(len(av))
+        info["n_listed"] += int(av["status"].isin(list(P.LISTED)).sum()) if len(av) else 0
+        info["n_forced_pool"] += sum(len(v) for v in pool.values())
+        info["n_forced_report"] += sum(len(v) for v in rep_extras.values())
+        info["n_dropped_moved"] += n0 - len(panel)
+    pl = pd.concat(players, ignore_index=True) if players else pd.DataFrame()
+    src = pd.Series([e.get("source", "") for e in env_all.values()]).str.split(":").str[0]
+    meta = {"protocol": f"live{offset_min}", "seed": seed, "n_sims": n_sims, "env": env_all,
+            "env_sources": {k: int(v) for k, v in src.value_counts().items()},
+            "pplay": live.params_tag(), "starters": bool(use_starters), **info}
+    return P.DayResult(day=d, sims=sims, players=pl, stats=pd.DataFrame(), teams=teams, meta=meta)
+
+
 # ====================================================================== one season
 
 class SeasonRun:
@@ -299,6 +534,7 @@ class SeasonRun:
         self.rg = None
         self.lines: dict = {}
         self.salary_fit = None
+        self.live: LiveInputs | None = None
         if need_context:
             self.load()
 
@@ -308,6 +544,9 @@ class SeasonRun:
             return self
         self.ctx = P.Context(self.conn, self.season, log=self.log)
         self.box = BoxBaselines(self.conn, self.season)
+        if self.settings.protocol in LIVE_OFFSETS:
+            self.live = LiveInputs(self.conn, self.season, self.settings.pplay or "loo_month",
+                                   log=self.log)
         if self.rg_season:
             self.rg = E.load_rotoguru(self.conn)
             try:
@@ -327,7 +566,7 @@ class SeasonRun:
             days = [d for d in O.hist_dates(self.conn) if lo <= d < hi]
         else:
             days = [d.isoformat() for d in E.usable_dates(self.conn, self.season)[0]]
-            if self.settings.protocol == "reports":
+            if self.settings.protocol == "reports" or self.settings.protocol in LIVE_OFFSETS:
                 days = [d for d in days if d >= REPORTS_FIRST]
         return E._pick(days, n)
 
@@ -341,8 +580,13 @@ class SeasonRun:
         from . import pipeline as P
         t0 = time.time()
         s = self.settings
-        res = P.project_historical(self.conn, day, protocol=s.protocol, n_sims=s.n_sims,
-                                   ctx=self.ctx, bundle=self.bundle)
+        if s.protocol in LIVE_OFFSETS:
+            off = LIVE_OFFSETS[s.protocol]
+            res = live_like_day(self.conn, self.ctx, self.bundle, self.live, day, offset_min=off,
+                                n_sims=s.n_sims, use_starters=off <= 10)
+        else:
+            res = P.project_historical(self.conn, day, protocol=s.protocol, n_sims=s.n_sims,
+                                       ctx=self.ctx, bundle=self.bundle)
         pl = res.players.drop_duplicates("player_id").set_index("player_id")
         rng = np.random.default_rng(P.stable_seed(day, "backtest-pit", HARNESS_VERSION))
         if self.rg_season:
@@ -352,6 +596,10 @@ class SeasonRun:
         lineups = pd.DataFrame()
         meta = {"date": day, "n_games": len(res.sims), "n_proj": int(players["has_proj"].sum()),
                 "n_rows": int(len(players))}
+        for k in ("env_sources", "groups", "n_report_rows", "n_listed", "n_forced_pool",
+                  "n_forced_report", "n_dropped_moved", "tip_unknown", "pplay", "starters"):
+            if k in res.meta:
+                meta[k] = res.meta[k]
         if self.rg_season and s.lineups():
             lineups, extra = self._lineups(day, pool_rows, proj)
             meta.update(extra)
@@ -421,6 +669,7 @@ class SeasonRun:
                 v = act.get((g.game_id, int(pid)))
                 y_of[int(pid)] = v[0] if v else 0.0
         sc = self._sim_scores(res, lambda p: y_of.get(p, np.nan), rng)
+        env = {g: (e or {}).get("source", "") for g, e in res.meta.get("env", {}).items()}
         rows = []
         for pid, q in pl.iterrows():
             pid = int(pid)
@@ -434,7 +683,12 @@ class SeasonRun:
                    "q50": float(q["dk_q50"]), "q75": float(q["dk_q75"]),
                    "q90": float(q["dk_q90"]), "exp_min": float(q["min_mean"]),
                    "p_play": float(q["p_play"]), "tier": q["tier"],
-                   "b_season_avg": savg, "b_fppg": fppg, "b_last10": l10}
+                   "b_season_avg": savg, "b_fppg": fppg, "b_last10": l10,
+                   "min_played": float(q["min_played"]) if "min_played" in q else np.nan,
+                   "p_avail": float(q["p_avail"]) if "p_avail" in q else np.nan,
+                   "status": q["status"] if "status" in q else None,
+                   "env_source": q["env_source"] if "env_source" in q
+                   else env.get(q["game_id"], "")}
             c = sc.get(pid)
             if c is not None:
                 row["crps"], row["pit"] = c
@@ -558,14 +812,18 @@ def _run_days(sr: SeasonRun, days: list[str], cache: DateCache, log) -> list[str
 
 
 def run_season(conn: sqlite3.Connection, season: str, settings: Settings, *, n_dates: int = 0,
-               workers: int = 1, force: bool = False, log: Callable[[str], None] = print
+               workers: int = 1, force: bool = False, log: Callable[[str], None] = print,
+               date_lo: str | None = None, date_hi: str | None = None
                ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """Run (or load from the cache) every date of `season`; returns the concatenated player and
-    lineup frames and a meta dict (seconds, skipped dates, cache directory, salary fit)."""
+    """Run (or load from the cache) every date of `season` (within [date_lo, date_hi] when
+    given; `n_dates` evenly spaced among those); returns the concatenated player and lineup
+    frames and a meta dict (seconds, skipped dates, cache directory, salary fit)."""
     t0 = time.time()
     sr = SeasonRun(conn, season, settings, log=log, need_context=False)
     cache = sr.cache()
-    days = sr.dates(n_dates)
+    days = sr.dates(0)
+    days = [d for d in days if (date_lo is None or d >= date_lo) and (date_hi is None or d <= date_hi)]
+    days = E._pick(days, n_dates)
     if force:
         for d in days:
             for suffix in (".json", ".players.parquet", ".lineups.parquet"):
@@ -598,6 +856,14 @@ def run_season(conn: sqlite3.Connection, season: str, settings: Settings, *, n_d
             "wall_seconds": round(time.time() - t0, 1), "cache": str(cache.root),
             "dates_first_last": [days[0], days[-1]] if days else None,
             "salary_fit": _salary_fit_label(conn, season)}
+    if settings.protocol in LIVE_OFFSETS:
+        envs: dict[str, int] = {}
+        for d in days:
+            if cache.has(d):
+                for k, v in (cache.load_meta(d).get("env_sources") or {}).items():
+                    envs[k] = envs.get(k, 0) + int(v)
+        meta["env_sources"] = envs
+        meta["pplay"] = settings.pplay or "loo_month"
     return players, lineups, meta
 
 
@@ -853,26 +1119,34 @@ def run(conn: sqlite3.Connection, seasons: Sequence[str] | None = None, *,
         baselines: Sequence[str] = BASELINES, sims: int = 4_000, n_dates: int = 0,
         n_random: int = 2_000, topn_baselines: Sequence[str] = ("fppg_proxy",),
         workers: int = 1, force: bool = False, leak_probe_dates: int = 0,
+        date_lo: str | None = None, date_hi: str | None = None, pplay: str = "",
         log: Callable[[str], None] = print) -> dict:
     """The backtest. `seasons` default 2014-15 .. 2020-21 plus 2024-25 (player level only).
     Walk-forward: season S uses a bundle fit on seasons < S and salary lines from RotoGuru
     seasons < S. Cached per date, so a rerun only does what is missing."""
     t0 = time.time()
     seasons = list(seasons) if seasons else list(DEFAULT_SEASONS)
-    if protocol not in ("avail", "reports"):
+    if protocol not in PROTOCOLS:
         raise ValueError(f"unknown protocol {protocol!r}")
     for s in seasons:
-        if protocol == "reports" and is_rotoguru(s):
-            raise ValueError("protocol 'reports' needs the rescued official reports (2025-26)")
+        if protocol != "avail" and is_rotoguru(s):
+            raise ValueError(f"protocol {protocol!r} needs the rescued official reports (2025-26)")
     bad = [m for m in modes if m not in ("cash", "topn")]
     if bad:
         raise ValueError(f"unknown mode(s) {bad}")
+    if pplay and pplay not in PPLAY_MODES:
+        raise ValueError(f"unknown pplay mode {pplay!r}")
+    if protocol in LIVE_OFFSETS:
+        pplay = pplay or "loo_month"
+    else:
+        pplay = ""                   # only the live protocols read P(play) params
     st = Settings(protocol=protocol, n_sims=sims, modes=tuple(modes), n_topn=n_topn,
                   baselines=tuple(baselines), topn_baselines=tuple(topn_baselines),
-                  n_random=n_random)
+                  n_random=n_random, pplay=pplay)
     pls, lus, metas = [], [], {}
     for s in seasons:
-        p, ln, m = run_season(conn, s, st, n_dates=n_dates, workers=workers, force=force, log=log)
+        p, ln, m = run_season(conn, s, st, n_dates=n_dates, workers=workers, force=force, log=log,
+                              date_lo=date_lo, date_hi=date_hi)
         metas[s] = m
         if len(p):
             pls.append(p)
@@ -892,6 +1166,336 @@ def run(conn: sqlite3.Connection, seasons: Sequence[str] | None = None, *,
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss      # KB on Linux, bytes on macOS
     rep["peak_rss_mb"] = rss / (1024 * 1024 if sys.platform == "darwin" else 1024)
     return rep
+
+
+# ====================================================================== live-like slice (T2.4)
+#
+# Metric definitions follow the live grader (`dfs/grade.player_snapshot_rows`) and the monitor
+# (`mlops/dfs_monitor`), so the slice is the expected range of exactly what is graded at night:
+#   U  (DK points, unconditional): every projected player with E[min] >= 10, DNP scored 0
+#      dk_mae |mean - y|, dk_bias, dk_crps (sims), cov80 / cov50 (q10-q90 / q25-q75),
+#      min_mae |E[min] - minutes| (the grader's 'min_mae')
+#   M  (minutes when playing): played and E[min | plays] >= 15: min_mae_played15, min_bias_played15
+#      (the monitor's dfs:live_min_mae population)
+#   S  starters: played and E[min | plays] >= 26 (the monitor's dfs:min_bias population)
+#   Q  report-uncertain: 0.015 < P(available from the report) < 0.985 (D/Q/P and most Available
+#      rows; no status needed, so the same rule can run on live rows): pplay_cal_err =
+#      mean P(play) - share played
+# SEs are two-way clustered by day and player (Cameron-Gelbach-Miller), day clusters nest games.
+
+UNCERTAIN_PAVAIL = (0.015, 0.985)
+STATUS_ORDER = ("out", "doubtful", "questionable", "probable", "available", "removed",
+                "daytoday", "unlisted", "unlisted_noreport", "")
+STATUS_LABEL = {"out": "Out", "doubtful": "Doubtful (D)", "questionable": "Questionable (Q)",
+                "probable": "Probable (P)", "available": "Available", "removed": "removed from report",
+                "daytoday": "Day-to-day / GTD (ESPN)", "unlisted": "not on report (team filed)",
+                "unlisted_noreport": "no report on file", "": "not a report candidate"}
+SLICE_METRICS = ("dk_mae", "dk_crps", "cov80", "cov50", "dk_bias", "min_mae",
+                 "min_mae_played15", "min_bias_played15", "min_bias_starters", "pplay_cal_err")
+DAILY_METRICS = ("dk_mae", "dk_crps", "cov80", "min_mae", "min_mae_played15", "pplay_cal_err")
+PCTS = (2.5, 5, 10, 25, 50, 75, 90, 95, 97.5)
+WINDOW_N = 300                     # the monitor's "last 300 rows"
+
+
+def slice_rows(players: pd.DataFrame) -> pd.DataFrame:
+    """Per-row metric contributions of a box-path players frame: the populations U / M / S / Q
+    as boolean columns and the per-row error columns (see the section comment)."""
+    d = players[players["has_proj"].astype(bool)].copy().reset_index(drop=True)
+    y = d["y"].to_numpy(float)
+    mins = d["minutes"].to_numpy(float)
+    played = mins > 0
+    mp = d["min_played"].to_numpy(float) if "min_played" in d else np.full(len(d), np.nan)
+    pa = d["p_avail"].to_numpy(float) if "p_avail" in d else np.full(len(d), np.nan)
+    d["played"] = played.astype(float)
+    d["U"] = d["exp_min"].to_numpy(float) >= 10
+    d["M"] = played & (mp >= 15)
+    d["S"] = played & (mp >= 26)
+    d["Q"] = (pa > UNCERTAIN_PAVAIL[0]) & (pa < UNCERTAIN_PAVAIL[1])
+    d["dk_mae"] = np.abs(d["mean"].to_numpy(float) - y)
+    d["dk_bias"] = d["mean"].to_numpy(float) - y
+    d["dk_crps"] = d["crps"].to_numpy(float)
+    d["cov80"] = MT.interval_hits(d["q10"], d["q90"], y).astype(float)
+    d["cov50"] = MT.interval_hits(d["q25"], d["q75"], y).astype(float)
+    d["min_mae"] = np.abs(d["exp_min"].to_numpy(float) - mins)
+    d["min_mae_played15"] = np.abs(mp - mins)
+    d["min_bias_played15"] = mp - mins
+    d["min_bias_starters"] = mp - mins
+    d["pplay_cal_err"] = d["p_play"].to_numpy(float) - played
+    if "status" in d:
+        d["status"] = d["status"].fillna("").astype(str)
+    else:
+        d["status"] = ""
+    return d
+
+
+METRIC_POP = {"dk_mae": "U", "dk_crps": "U", "cov80": "U", "cov50": "U", "dk_bias": "U",
+              "min_mae": "U", "min_mae_played15": "M", "min_bias_played15": "M",
+              "min_bias_starters": "S", "pplay_cal_err": "Q"}
+
+
+def _cl_var(z: np.ndarray, cl: np.ndarray) -> float:
+    s = pd.Series(z).groupby(cl).sum().to_numpy()
+    g = len(s)
+    return float(g / (g - 1) * (s ** 2).sum()) if g > 1 else float("nan")
+
+
+def _two_way_var(z: np.ndarray, day: np.ndarray, player: np.ndarray) -> float:
+    """Var of sum(z) two-way clustered by day and player (CGM: V_day + V_player - V_both)."""
+    both = pd.Series(day).astype(str) + "|" + pd.Series(player).astype(str)
+    v = _cl_var(z, day) + _cl_var(z, player) - _cl_var(z, both.to_numpy())
+    return v if v > 0 else _cl_var(z, day)
+
+
+def _pop(d: pd.DataFrame, metric: str) -> pd.DataFrame:
+    x = d[d[METRIC_POP[metric]]]
+    return x[np.isfinite(x[metric].to_numpy(float))]
+
+
+def metric_se(d: pd.DataFrame, metric: str) -> dict:
+    """Mean of `metric` over its population with the two-way clustered SE."""
+    x = _pop(d, metric)
+    if x.empty:
+        return {"value": None, "se": None, "n": 0}
+    v = x[metric].to_numpy(float)
+    m = float(v.mean())
+    var = _two_way_var((v - m) / len(v), x["date"].to_numpy(), x["player_id"].to_numpy())
+    return {"value": m, "se": float(np.sqrt(var)) if np.isfinite(var) else None, "n": int(len(v))}
+
+
+def metric_diff(a: pd.DataFrame, b: pd.DataFrame, metric: str) -> dict:
+    """mean_a - mean_b of `metric` (each over its own population; the populations may differ,
+    e.g. live vs avail) with the delta-method SE two-way clustered by day and player over the
+    stacked rows of both frames (same days and players -> the covariance is counted)."""
+    xa, xb = _pop(a, metric), _pop(b, metric)
+    if xa.empty or xb.empty:
+        return {"diff": None, "se": None, "z": None}
+    va, vb = xa[metric].to_numpy(float), xb[metric].to_numpy(float)
+    ma, mb = float(va.mean()), float(vb.mean())
+    z = np.concatenate([(va - ma) / len(va), -(vb - mb) / len(vb)])
+    day = np.concatenate([xa["date"].to_numpy(), xb["date"].to_numpy()])
+    pl = np.concatenate([xa["player_id"].to_numpy(), xb["player_id"].to_numpy()])
+    se = float(np.sqrt(_two_way_var(z, day, pl)))
+    return {"diff": ma - mb, "se": se, "z": (ma - mb) / se if se > 0 else None,
+            "n_a": int(len(va)), "n_b": int(len(vb))}
+
+
+def pplay_by_status(d: pd.DataFrame) -> list[dict]:
+    """P(play) calibration per report status at the run (every projected candidate, no minutes
+    filter): mean projected P(play), the report's P(available), the share that played, the gap
+    with its SE (clustered by day and player) and the Brier score."""
+    out = []
+    for st in STATUS_ORDER:
+        x = d[d["status"] == st]
+        if x.empty:
+            continue
+        p = x["p_play"].to_numpy(float)
+        y = x["played"].to_numpy(float)
+        e = p - y
+        var = _two_way_var((e - e.mean()) / len(e), x["date"].to_numpy(), x["player_id"].to_numpy())
+        pa = x["p_avail"].to_numpy(float) if "p_avail" in x else np.full(len(x), np.nan)
+        out.append({"status": st, "label": STATUS_LABEL.get(st, st), "n": int(len(x)),
+                    "p_play": float(p.mean()), "p_avail": float(np.nanmean(pa))
+                    if np.isfinite(pa).any() else None,
+                    "played": float(y.mean()), "gap": float(e.mean()),
+                    "gap_se": float(np.sqrt(var)) if np.isfinite(var) else None,
+                    "brier": float((e ** 2).mean())})
+    return out
+
+
+def tier_bias(d: pd.DataFrame) -> list[dict]:
+    """DK bias / MAE (population U) and minutes bias (population M) per projection tier."""
+    out = []
+    for t in sorted(d["tier"].dropna().unique()):
+        x = d[d["tier"] == t]
+        row = {"tier": str(t)}
+        for m in ("dk_bias", "dk_mae", "cov80", "min_bias_played15", "min_mae_played15"):
+            row[m] = metric_se(x, m)
+        out.append(row)
+    return out
+
+
+def daily_values(d: pd.DataFrame, metrics=DAILY_METRICS) -> pd.DataFrame:
+    """One row per date: each metric over that night's population (+ n per metric)."""
+    rows = []
+    for day, x in d.groupby("date"):
+        r = {"date": day}
+        for m in metrics:
+            p = _pop(x, m)
+            r[m] = float(p[m].mean()) if len(p) else np.nan
+            r[f"n_{m}"] = int(len(p))
+        rows.append(r)
+    return pd.DataFrame(rows)
+
+
+def window_values(d: pd.DataFrame, n: int = WINDOW_N) -> pd.DataFrame:
+    """The monitor's rolling 'last n rows' metrics as of the end of every date: cov80 (U),
+    minutes MAE (M) and starter minutes bias (S), newest rows first."""
+    d = d.sort_values(["date", "game_id", "player_id"])
+    days = sorted(d["date"].unique())
+    rows = []
+    for day in days:
+        upto = d[d["date"] <= day]
+        r = {"date": day}
+        for m, pop in (("cov80", "U"), ("min_mae_played15", "M"), ("min_bias_starters", "S")):
+            x = upto[upto[pop]]
+            x = x[np.isfinite(x[m].to_numpy(float))].iloc[::-1].head(n)
+            r[m] = float(x[m].mean()) if len(x) >= n else np.nan
+        rows.append(r)
+    return pd.DataFrame(rows)
+
+
+def ranges(values: pd.DataFrame, metrics, n_cols: bool = True) -> dict:
+    """Percentiles (PCTS) of each metric's per-date values + mean, sd, number of dates and the
+    median rows per date (the n the band refers to)."""
+    out = {}
+    for m in metrics:
+        if m not in values:
+            continue
+        v = values[m].to_numpy(float)
+        v = v[np.isfinite(v)]
+        if not len(v):
+            continue
+        r = {f"p{str(p).replace('.', '_')}": float(np.percentile(v, p)) for p in PCTS}
+        r.update({"mean": float(v.mean()), "sd": float(v.std(ddof=1)) if len(v) > 1 else None,
+                  "n_days": int(len(v))})
+        if n_cols and f"n_{m}" in values:
+            nn = values[f"n_{m}"].to_numpy(float)
+            r["rows_median"] = float(np.median(nn[nn > 0])) if (nn > 0).any() else None
+        out[m] = r
+    return out
+
+
+def slice_report(frames: dict, *, reference: str = "avail", primary: str = "live",
+                 base_arm: str | None = None) -> dict:
+    """The T2.4 tables from {(arm, protocol): players frame}: per arm and protocol every
+    SLICE_METRICS value with its SE, the loss vs `reference` (same arm, same dates), each arm
+    vs `base_arm` within a protocol, tier bias, P(play) by status, and the daily / rolling-window
+    ranges of every (arm, protocol)."""
+    rows = {k: slice_rows(v) for k, v in frames.items()}
+    arms = sorted({a for a, _ in rows})
+    base_arm = base_arm or arms[0]
+    days = {k: set(v["date"]) for k, v in rows.items()}
+    common = set.intersection(*days.values()) if days else set()
+    rows = {k: v[v["date"].isin(common)].reset_index(drop=True) for k, v in rows.items()}
+    rep: dict = {"dates": sorted(common), "n_dates": len(common), "arms": arms,
+                 "protocols": sorted({p for _, p in rows}), "base_arm": base_arm,
+                 "reference": reference, "primary": primary, "cells": {}, "vs_reference": {},
+                 "vs_base_arm": {}, "tiers": {}, "pplay_status": {}, "daily": {}, "window": {}}
+    for (arm, proto), d in rows.items():
+        k = f"{arm}|{proto}"
+        rep["cells"][k] = {m: metric_se(d, m) for m in SLICE_METRICS}
+        rep["tiers"][k] = tier_bias(d)
+        if d["status"].ne("").any():
+            rep["pplay_status"][k] = pplay_by_status(d)
+        dv = daily_values(d)
+        rep["daily"][k] = ranges(dv, DAILY_METRICS)
+        rep["window"][k] = ranges(window_values(d), ("cov80", "min_mae_played15",
+                                                    "min_bias_starters"), n_cols=False)
+        if proto != reference and (arm, reference) in rows:
+            rep["vs_reference"][k] = {m: metric_diff(d, rows[(arm, reference)], m)
+                                      for m in SLICE_METRICS if m != "pplay_cal_err"}
+        if arm != base_arm and (base_arm, proto) in rows:
+            rep["vs_base_arm"][k] = {m: metric_diff(d, rows[(base_arm, proto)], m)
+                                     for m in SLICE_METRICS}
+    return rep
+
+
+def live_baseline_json(rep: dict, *, arm: str, protocol: str = "live", note: str = "") -> dict:
+    """The monitor's thresholds file (`<data>/proj/live_like_baseline.json`, shipped default
+    `mlops/live_like_baseline.json`) from a slice report: `min_mae` (dfs:live_min_mae) of the
+    live arm, plus the nightly and last-300-row ranges of every arm in `per_model`."""
+    from . import pipeline as P
+
+    def block(a):
+        k = f"{a}|{protocol}"
+        c = rep["cells"][k]
+        return {"min_mae": c["min_mae_played15"]["value"],
+                "means": {m: c[m]["value"] for m in SLICE_METRICS},
+                "daily": rep["daily"][k], "window300": rep["window"][k]}
+
+    main = block(arm)
+    out = {"min_mae": main["min_mae"], "model": arm, "protocol": protocol,
+           "slice": [rep["dates"][0], rep["dates"][-1]] if rep["dates"] else None,
+           "n_dates": rep["n_dates"], "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+           "source": "T2.4 live-like slice (docs/PLAYERS.md); proj/backtest.py "
+                     "slice_report / live_baseline_json",
+           "definitions": {
+               "dk_mae": "|proj_dk - actual_dk|, proj_min >= 10, DNP = 0 (grader 'dk_mae')",
+               "cov80": "actual DK inside the stored q10..q90, same rows (grader 'dk_cov80')",
+               "min_mae_played15": "|E[min | plays] - actual min|, played, E[min | plays] >= 15",
+               "min_mae": "|E[min] - actual min|, proj_min >= 10 (grader 'min_mae')",
+               "pplay_cal_err": "mean P(play) - share played over rows with "
+                                f"{UNCERTAIN_PAVAIL[0]} < p_avail < {UNCERTAIN_PAVAIL[1]}",
+               "daily": "percentiles of the per-night values over the slice; rows_median = the "
+                        "median rows per night the percentiles refer to",
+               "window300": "percentiles of the monitor's rolling last-300-row values"},
+           "daily": main["daily"], "window300": main["window300"], "means": main["means"],
+           "per_model": {a: block(a) for a in rep["arms"] if f"{a}|{protocol}" in rep["cells"]},
+           "seed_version": P.SEED_VERSION}
+    if note:
+        out["note"] = note
+    return out
+
+
+def format_slice_report(rep: dict) -> str:
+    def f(c, nd=3):
+        if not c or c.get("value") is None:
+            return "-"
+        se = c.get("se")
+        return f"{c['value']:.{nd}f}" + (f" ({se:.{nd}f})" if se is not None else "")
+
+    def g(c, nd=3):
+        if not c or c.get("diff") is None:
+            return "-"
+        return f"{c['diff']:+.{nd}f} ({c['se']:.{nd}f})"
+
+    L = [f"T2.4 live-like slice: {rep['n_dates']} dates "
+         f"{rep['dates'][0] if rep['dates'] else '-'} .. {rep['dates'][-1] if rep['dates'] else '-'}"
+         f"; SEs two-way clustered by day and player", ""]
+    hdr = f"  {'arm|protocol':<26}" + "".join(f"{m:>18}" for m in
+                                              ("min_mae_played15", "dk_mae", "dk_crps", "cov80",
+                                               "dk_bias", "min_mae"))
+    L.append(hdr)
+    for k, c in rep["cells"].items():
+        L.append(f"  {k:<26}" + "".join(f"{f(c[m]):>18}" for m in
+                                        ("min_mae_played15", "dk_mae", "dk_crps", "cov80",
+                                         "dk_bias", "min_mae")))
+    L.append("")
+    L.append(f"  loss vs {rep['reference']} (same arm, same dates): value - reference (SE)")
+    for k, c in rep["vs_reference"].items():
+        L.append(f"  {k:<26}" + "".join(f"{g(c[m]):>18}" for m in
+                                        ("min_mae_played15", "dk_mae", "dk_crps", "cov80",
+                                         "dk_bias", "min_mae")))
+    if rep["vs_base_arm"]:
+        L.append("")
+        L.append(f"  arm vs {rep['base_arm']} (same protocol): value - base (SE)")
+        for k, c in rep["vs_base_arm"].items():
+            L.append(f"  {k:<26}" + "".join(f"{g(c[m]):>18}" for m in
+                                            ("min_mae_played15", "dk_mae", "dk_crps", "cov80",
+                                             "dk_bias", "min_mae")))
+    for k, t in rep["tiers"].items():
+        L.append("")
+        L.append(f"  bias by tier, {k}: DK bias / DK MAE / cov80 (U); minutes bias / MAE (M)")
+        for r in t:
+            L.append(f"    {r['tier']:<6} n={r['dk_bias']['n']:<6} " + "  ".join(
+                f"{m} {f(r[m], 2)}" for m in ("dk_bias", "dk_mae", "cov80",
+                                              "min_bias_played15", "min_mae_played15")))
+    for k, t in rep["pplay_status"].items():
+        L.append("")
+        L.append(f"  P(play) by report status at the run, {k}")
+        for r in t:
+            L.append(f"    {r['label']:<30} n={r['n']:<6} P(play) {r['p_play']:.3f}  "
+                     f"report P {'-' if r['p_avail'] is None else format(r['p_avail'], '.3f')}  "
+                     f"played {r['played']:.3f}  gap {r['gap']:+.3f} "
+                     f"({'-' if r['gap_se'] is None else format(r['gap_se'], '.3f')})  "
+                     f"Brier {r['brier']:.3f}")
+    for k, dd in rep["daily"].items():
+        L.append("")
+        L.append(f"  nightly ranges, {k}: p10 / p50 / p90 (rows per night, median)")
+        for m, r in dd.items():
+            L.append(f"    {m:<18} {r['p10']:.3f} / {r['p50']:.3f} / {r['p90']:.3f}  "
+                     f"(n_days {r['n_days']}, rows {r.get('rows_median')})")
+    return "\n".join(L)
 
 
 # ====================================================================== leak probe
@@ -1097,7 +1701,17 @@ def add_commands(sub) -> dict:
     p.add_argument("--seasons", nargs="+", default=None,
                    help=f"default: {' '.join(DEFAULT_SEASONS)} (<= 2020-21 = RotoGuru lineups)")
     p.add_argument("--dates", type=int, default=0, help="evenly spaced dates per season (0 = all)")
-    p.add_argument("--protocol", choices=("avail", "reports"), default="avail")
+    p.add_argument("--protocol", choices=PROTOCOLS, default="avail",
+                   help="avail = known availability; reports = official report at the first "
+                        "tip - 45; live / live10 = the live lock-45 / lock-10 path per game "
+                        "(T2.4, 2025-26 only)")
+    p.add_argument("--from", dest="date_lo", default=None, help="first date (ISO)")
+    p.add_argument("--to", dest="date_hi", default=None, help="last date (ISO)")
+    p.add_argument("--slice", action="store_true",
+                   help=f"the T2.4 live-like slice {SLICE[0]} .. {SLICE[1]} (sets --from/--to)")
+    p.add_argument("--pplay", choices=PPLAY_MODES, default="",
+                   help="live protocols: P(play) params (default loo_month = fit without the "
+                        "date's month; shipped = in-sample on the slice)")
     p.add_argument("--sims", type=int, default=4_000)
     p.add_argument("--topn", type=int, default=20, help="N for the Top-N lineups")
     p.add_argument("--modes", nargs="+", default=["cash", "topn"], choices=("cash", "topn"))
@@ -1113,9 +1727,11 @@ def add_commands(sub) -> dict:
 def _cmd(args) -> int:
     from .. import db
     conn = db.connect()
+    lo, hi = (SLICE if args.slice else (None, None))
     rep = run(conn, args.seasons, protocol=args.protocol, modes=args.modes, n_topn=args.topn,
               sims=args.sims, n_dates=args.dates, n_random=args.random, workers=args.workers,
               force=args.force, leak_probe_dates=args.leak_probe,
+              date_lo=args.date_lo or lo, date_hi=args.date_hi or hi, pplay=args.pplay,
               log=lambda m: print(m, flush=True))
     jp, tp = write_reports(rep, Path(args.out) if args.out else None)
     print(format_report(rep))

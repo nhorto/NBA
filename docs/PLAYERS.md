@@ -95,6 +95,7 @@ No review item is rejected outright. Three are accepted with a different option 
 | **GPP portfolio + contest builder (T2.12 / T2.16, `proj/dfs/portfolio.py`, `web/dfs_contest.py`)**: candidates per §5.5.1 (150/100/50 + Top-max(50, N) by mean, scaled by N/50 above 50); field + scoring reuse `field.py` (`evaluate(per_sim=True, own_entries=N)`); the greedy maximises the portfolio's marginal E[payout] with **our entries occupying ranks jointly**. Caps exact: γ = 5 (≥ #locks), max 60 % **from N ≥ 5**, a player's own minimum raises his default cap, locks in every lineup; refills under no-good cuts. Stored in `dfs_portfolios` (migration 13) + `dfs_lineups` mode `gpp` (run_id = portfolio id), **kept out of `dfs_runs`**. **Scoring truth is calibrated**: the sims assumed our projection was exact and beat the field by construction (live page showed "ROI +634 % simulated"). On the T2.1 harness rows (~46k player-games) (actual − ours) regresses on (FPPG − ours) with β = 0.16 ± 0.02 / 0.20 ± 0.01, and residual sd exceeds the sims' sd by ~0.18 sd, so each sim is scored on fp + β(FPPG − ours) + 0.18·sd·z (β = 0.18, only when the player plays). **Strength = information, not mix**: §5.5.3's mix strengths did not order (70 % optimizer field = 4.4k unique lineups from 200 resampled solves, a lower top tail: soft 748 / medium 563 / sharp 658 for a fixed set); now the field projection is 25 / 50 / 75 % ours at mix 0.4 → soft $845 > medium $594 > sharp $393. **Display:** no dollar E[payout] / ROI headlines until ≥ 10 slates of uploaded standings; headline = relative score vs the Top-N-by-projection set (+28 % ± 3 % on the opener $60K Zone) and P(cash) / P(top 1 %) bands; raw numbers in a "details (simulated, uncalibrated)" toggle and `/contest/<id>.json`; the slate page's chance to cash is banded too. | **T2.12 acceptance NOT met.** RotoGuru 2019-20/2020-21, N = 20, preset 5k GPP, realised = actual points vs the field proxy (`research/portfolio_backtest.py`). Original (season-average field, uncalibrated): **108 slates, greedy − top-N-by-individual-E[payout] = +2.9 ± 18.8 fees (0.15 SE)**. Calibrated, live-like field (public = ½ ours + ½ season average), same 108 slates: greedy − top-individual +13.6 ± 13.4 (1.0 SE), − capped top-individual +6.3 ± 4.2 (1.5 SE), − Top-N-by-mean +15.0 ± 13.2 (1.1 SE); the uncapped joint-marginal greedy − top-individual +10.9 ± 4.8 (2.25 SE). Greedy stays the default (it enforces the caps). Calibration, simulated / realised E[payout], before → after (same slates, field and sets): greedy 1.07 → 0.79 [0.63, 1.05], top-individual 1.55 → 1.08, Top-N-by-mean 1.46 → 0.99, all five sets pooled 0.93; τ barely matters (greedy 0.79 at τ = 0). Timing on geekom1 (2 threads, 25k sims, 14k-entry GPP): N = 20 in 22 s (37 s with strengths), N = 150 in 146 s. |
 | **Slate-page P(cash) / P(top 1 %) use the calibrated truth** (`field.score_run(truth=True)`, the runner's lock45/lock10 hook; `score_run_safe` still never raises): same β-shift + model-error truth as the contest builder, live-like field (½ ours + ½ DK FPPG, cash archetype for double-ups). **P(cash) is off the slate-page headline** (owner decision 2026-10-20): it sits in a collapsed "Details (simulated vs a modelled field, uncalibrated)" toggle on the cash and Top N cards as the estimate ± 3 pp (field sampling); the headline returns once ≥ 10 slates of standings are uploaded, through the same gate as the contest page's dollar numbers (`portfolio.payout_calibrated`). Opener slate 154575, $5 Double Up (459): cash lineup 0.80 → 0.77 (seed spread ± 0.6 pp), GPP P(top 1 %) 0.066 → 0.055. | **T2.13 bar met against the proxy line** (`research/cash_calibration.py`, 108 RotoGuru slates, 500-entry double-up, realised = actual points vs the proxy field): cash lineup simulated − realised P(cash), medium field +4.4 ± 4.1 pp before → **−2.7 ± 4.1 after**; sharp field +6.5 ± 4.4 → **+1.0 ± 4.4**. Our cash lineup really beats the proxy cash line 73 % (medium) / 67 % (sharp) of the time, so the remaining gap to real double-up rates (~50–65 %) is the proxy field being weaker than real cash fields, not the sims: it needs real cash lines from uploaded standings (§9: bands until ≥ 10 slates). |
 | **Path A copula v1 (T2.10) behind a switch, default OFF, not shipped as the DFS default (2026-10-20).** `copula.simulate_game_v1` draws the box components (pts, fg3m, reb, ast, stl, blk, tov) per player and sim: NB2 count marginals given the sim's minutes and environment, with the dispersion fit by level per stat on seasons < S (the v1 CV-by-level fit); a 7 x 7 within-player latent correlation per role tier, fit by simulated moments (pts–fg3m 0.57–0.70); across players the T2.7 causal PM tier x position matrices (`corr_<S>.json`) on each player's latent DK direction; a winner/loser per-minute shift by signed margin and tier (losers' tov up to +17 %, big winners' fg3m / ast +8…20 %; points only move between tiers, so the market total still holds); DK scored exactly from the counts (real DD/TD jumps). Same environment, reconciliation, availability and minutes draws as v0 (common random numbers). Per-stat sims stored as `<run>.stats.npz` (uint8, first 5,000 sims, 7.2 MB per 15-game run); `props.py` reads them, with the NB-given-minutes approximation as the fallback. Switch: `COURTSIDE_COPULA=v1` (or `pipeline.COPULA_DEFAULT`), versions compose as suffixes: `pathA-v0.2+c1` / `v0.3+c1` / `v0.4+c1`, bundle `<arm>_c1.json`. | On top of `pathA-v0.4` (T2.1 harness rows, 2023-24 / 2024-25, paired, date-clustered SE): DK CRPS (exp min ≥ 10) −0.0003 (−0.3 SE) / −0.0011 (−0.9 SE), all rows +1.0 / +0.1 SE, MAE +0.4 / +0.1 SE. 80 % coverage 0.820 → 0.825 / 0.824 → 0.829 (+0.4…0.5 pp, ~7 SE: slightly wider), PIT max deviation 0.007 → 0.008 / 0.011 → 0.012. Per-stat sims calibrated: points PIT max deviation 0.020 vs 0.031–0.033 for the props approximation; reb / ast / 3PM ≤ 0.006 both ways. Blowout curve: stars miss ±1.0 DK in both arms (minutes-driven; v1 fixes the losing side of the signed curve, overshoots big winners). Runtime 15 games x 25k sims on geekom1: 11.7 s warm / 19.0 s cold (v0 5.7 / 11.5). Every arm with the switch off is bit-identical to HEAD (c402c4a). **Ship bar not met** (2024-25 CRPS −0.9 SE, coverage and PIT a little worse); results block under the Phase 2 table |
+| **T2.4 live-like slice (2026-10-21):** each game is run at its own tip − 45 on the live candidate path, with the report of the time, P(play) cells fit leaving the month out, and closing lines (no 2025-26 snapshots). The monitor's thresholds come from the slice: `mlops/live_like_baseline.json` (live-like minutes MAE 4.457, nightly p10–p90 ranges, new info rule `dfs:live_range:<metric>`). Found: listed players' DNP is counted twice (report cell × minutes-engine P(plays∣available)) | live − avail on 104 dates: minutes MAE +0.054 (0.016), DK MAE +0.216 (0.048), CRPS +0.147 (0.032); lock−10 recovers nearly all (+0.04 DK MAE). Listed Q/P/Available: P(play) 0.69 vs 0.79 played, DK bias −1.33 (0.39). Opener inside every band. Results block under Phase 2 |
 
 ## 1. Scope and design in one paragraph
 
@@ -689,6 +690,78 @@ On the Mac harness at 4,000 sims, sim time per date is 0.72 → 1.05–1.28 s. E
 2. Fix the stars' blowout minutes in the minutes engine.
 
 Then re-run `research/copula_v1_eval.py`. Turning it on (owner decision) is described in the T2.10 deliverable notes: `COURTSIDE_COPULA=v1` in the launchd plists, or `COPULA_DEFAULT = "v1"`; prefit `bundle_2026-27_v1_cx2_c1.json` with `corr_2026-27.json` present; then `courtside proj live-path-eval`.
+
+**T2.4 results: live-like slice (2026-10-21).** `courtside proj backtest-dfs --seasons 2025-26 --protocol live|live10 --slice` (`proj/backtest.py` `live_like_day` / `LiveInputs`; driver `research/t24_slice.py`, Mac scratch, 4,000 sims). 104 regular-season dates 2025-12-22 → 2026-04-12, 808 games.
+
+How it was run:
+- **Run time:** each game was run the way the live lock runs see it, at its **own tip − 45** (DK has a Showdown slate per game, so a game's graded run is its own lock run). The official report was the one published by then.
+- **Candidate path:** live (`merge_extras` with a DK-pool stand-in first, report-listed players forced, `candidate_panel` + `drop_moved_players`).
+- **DK-pool stand-in:** each player's team of his next game; players with no earlier game in the season only within 2 days of their debut.
+- **P(play) cells:** fit **leaving the date's month out**. The shipped cells were fit on exactly these days. In-sample cells change nothing material: P(play) gaps within 0.01, DK MAE −0.009.
+- **Lines:** no 2025-26 `line_snapshots` exist, so the closing line was used for all 808 games (recorded per game).
+- **`live10`:** the same at tip − 10, with the actual starters as the announced-starter proxy (§7.1 L5).
+- **SEs:** two-way clustered by day and player.
+
+Results by arm and protocol: value (SE).
+
+| arm / protocol | minutes MAE (played, E[min∣plays] ≥ 15) | DK MAE (E[min] ≥ 10, DNP = 0) | DK CRPS | 80% cov | DK bias | minutes MAE (unconditional) |
+|---|---|---|---|---|---|---|
+| v0.2 avail | 4.403 (0.064) | 7.998 (0.094) | 5.648 (0.064) | 0.833 | +0.14 | 4.998 |
+| v0.2 **live (lock−45)** | **4.457 (0.065)** | **8.214 (0.101)** | **5.796 (0.069)** | 0.836 | +0.08 | 5.248 |
+| v0.2 live10 | 4.387 (0.063) | 8.039 (0.094) | 5.685 (0.065) | 0.835 | +0.08 | 4.993 |
+| v0.3 avail / live / live10 | 4.403 / 4.457 / 4.387 | 7.978 / 8.193 / 8.015 | 5.638 / 5.785 / 5.673 | 0.833 / 0.836 / 0.834 | | |
+| v0.4 avail / live / live10 | 4.403 / 4.457 / 4.387 | 7.980 / 8.198 / 8.019 | 5.637 / 5.786 / 5.674 | 0.835 / 0.835 / 0.835 | | |
+
+What not knowing who plays costs (live − avail, same arm and dates; every arm within 0.004):
+- **Lock−45:**
+  - minutes MAE **+0.054 (0.016)**;
+  - DK MAE **+0.216 (0.048)**, +2.7%;
+  - DK CRPS **+0.147 (0.032)**, +2.6%;
+  - unconditional minutes MAE +0.25 (0.06);
+  - coverage and bias unchanged.
+- **Lock−10:** nearly all of it is recovered. Minutes MAE −0.016 (0.016), DK MAE +0.04 (0.04), CRPS +0.04 (0.03).
+- **Context arms** keep their gains on the live path: v0.3 − v0.2 DK MAE −0.021 (0.004), CRPS −0.011 (0.003); v0.4 −0.016 (0.006) / −0.010 (0.003).
+- **Tiers (v0.2, lock−45):**
+  - DK bias: bench −0.67 (0.23), role +0.52 (0.13), star −0.52 (0.27).
+  - Under avail it is −0.27 / +0.45 / −0.19: the live path moves stars and bench down.
+  - Minutes bias, played ≥ 15: −0.20 / +0.38 / −0.10.
+
+P(play) by report status at lock−45 (v0.2; the arms are identical). Columns: projection P(play) / report cell P / share that played.
+- Out 0.003 / 0.005 / 0.002 (n 4,980).
+- Doubtful 0.004 / 0.005 / 0.000 (111).
+- **Questionable** 0.474 / 0.541 / 0.539 (514), gap −0.065 (0.026).
+- **Probable** 0.845 / 0.939 / 0.947 (207), gap −0.102 (0.019).
+- **Available** 0.753 / 0.871 / 0.865 (1,315), gap −0.111 (0.012).
+- Not listed (team filed) 0.811 / – / 0.835 (18,590), gap −0.025 (0.005).
+- At lock−10: Q 0.621 / 0.702 / 0.597 (gap +0.024 (0.033)), P −0.054, Available −0.099.
+- GTD: no rows. The official reports have no GTD status, and no ESPN rows are archived for the slice.
+
+Two findings for the pipeline owner (not changed here: `pipeline.py` / `copula.py`):
+1. **DNP is counted twice for listed players.**
+   - The report cells are fit on *played* (min > 0), so they already contain coach's-decision DNPs. They are calibrated: Q/P/Available pooled 0.795 vs 0.791 played.
+   - `build_games` multiplies them by the minutes engine's P(plays | available) (0.52 bench / 0.90 rotation / 0.99 starter by E[min∣plays]). Listed bench players come out at 0.29 vs 0.45 played, rotation 0.72 vs 0.85; starters are fine (0.82 vs 0.85).
+   - DK bias of listed Q/P/Available players: **−1.33 (0.39)** at lock−45, −0.61 (0.33) at lock−10.
+   - Unlisted bench players (the engine alone) are only mildly low: 0.50 vs 0.55, rotation 0.93 vs 0.95.
+   - Hook: for a listed, not-Out player, use the report cell as P(play) and the engine's played-minutes distribution, i.e. P(plays | available) = 1, or refit the cells on "active".
+2. **Forced pool players outside the rotation are over-played.** These are players forced in from the pool who are neither on the report nor in the team's last 10 games: about 8 a night, P(play) 0.69 vs 0.24 played. Live forces the whole DK pool the same way.
+
+**Live alert baselines (M6)**, written to `src/courtside/mlops/live_like_baseline.json`. It ships with the code; `<data>/proj/live_like_baseline.json` overrides it, and `$COURTSIDE_LIVE_LIKE_MIN_MAE` overrides `min_mae`.
+- `min_mae` = **4.457**, the lock−45 v0.2 value. It wakes `dfs:live_min_mae`, which fires at > 4.96 over the last 300 rows, n ≥ 150.
+- Nightly ranges are percentiles of the slice nights (median 144 rows), as p10 / p50 / p90:
+  - DK MAE 7.37 / 8.10 / 9.15;
+  - coverage 0.800 / 0.835 / 0.880;
+  - minutes MAE, played ≥ 15: 3.93 / 4.42 / 5.26;
+  - unconditional minutes MAE 4.43 / 5.10 / 6.18;
+  - CRPS 5.23 / 5.69 / 6.39;
+  - P(play) calibration error on report-uncertain rows (0.015 < report P < 0.985, about 16 a night): −0.24 / −0.12 / +0.05. It is centred below 0 because of finding 1.
+- Last-300-row windows, p5–p95: coverage 0.797–0.876, minutes MAE 3.96–5.11, starter minutes bias −0.55…+0.86 (inside the ±1.0 `dfs:min_bias` limit).
+- The file also has per-model blocks for v0.3 / v0.4 and a lock−10 reference (minutes MAE 4.39, DK MAE 7.23 / 7.94 / 8.88).
+- New rule `dfs:live_range:<metric>`, **info** severity: last night outside p10–p90, widened by √(144 / rows tonight). It is high-side only for the MAEs. Existing alerts are unchanged.
+- These are Dec–Apr nights. October nights (prior-heavy rates) may run worse.
+
+**Opener check (2026-10-20, graded 03:00).** Graded on a clone of the prod DB.
+- Night as the monitor sees it: newest lock10 per game, 60 rows. DK MAE 8.71, coverage 0.817, minutes MAE (played ≥ 15) 3.16–3.27, unconditional minutes MAE 6.16. The main-slate lock10 alone (n = 49): DK MAE 7.33, minutes 4.63, coverage 0.857.
+- Every value is inside its band, widened ×1.55 for 60 rows, or below it on the good side. No `live_range` alert fires, and `live_min_mae` waits for 150 rows.
 
 ### Phase 2F: feature program (owner request 2026-10-19: use the depth of the data)
 

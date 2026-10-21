@@ -19,6 +19,9 @@ D0 = date(2026, 10, 21)
 def conn(tmp_path, monkeypatch):
     monkeypatch.setattr(dfs_monitor, "_now", lambda: NOW)
     monkeypatch.delenv("COURTSIDE_LIVE_LIKE_MIN_MAE", raising=False)
+    # no T2.4 baseline unless a test sets one (neither the data dir nor the shipped copy)
+    monkeypatch.setenv("COURTSIDE_DATA", str(tmp_path / "data"))
+    monkeypatch.setattr(dfs_monitor, "PACKAGE_BASELINE", tmp_path / "no_baseline.json")
     return db.connect(tmp_path / "t.db")
 
 
@@ -166,6 +169,7 @@ def test_live_minutes_mae_needs_baseline(conn, monkeypatch):
 
 def test_live_baseline_from_file(data_dir, monkeypatch):
     monkeypatch.delenv("COURTSIDE_LIVE_LIKE_MIN_MAE", raising=False)
+    monkeypatch.setattr(dfs_monitor, "PACKAGE_BASELINE", data_dir / "none.json")
     assert dfs_monitor.live_like_baseline() is None
     (data_dir / "proj").mkdir(parents=True)
     (data_dir / "proj" / "live_like_baseline.json").write_text('{"min_mae": 4.65}')

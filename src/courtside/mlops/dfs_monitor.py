@@ -26,8 +26,16 @@ Nightly, after ``dfs_grade`` wrote its snapshots (`monitor.run_after_job` calls 
                                 total reconciliation residual > 0.5, or pre-reconciliation gap > 6)
   ``dfs:live_min_mae``          live minutes MAE (played, projected >= 15, last 300 rows, n >= 150)
                                 exceeds the live-like baseline + 0.5. The baseline is set by T2.4:
-                                ``$COURTSIDE_LIVE_LIKE_MIN_MAE`` or ``<data>/proj/live_like_baseline.json``
-                                (``{"min_mae": 4.7}``); until then the rule is dormant
+                                ``$COURTSIDE_LIVE_LIKE_MIN_MAE``, else ``<data>/proj/live_like_baseline.json``,
+                                else the shipped ``mlops/live_like_baseline.json`` (key ``min_mae``);
+                                without any of them the rule is dormant
+  ``dfs:live_range:<metric>``   (info) the newest graded night (within 2 days) is outside the
+                                live-like slice's nightly p10-p90 range for DK MAE (high side),
+                                80% coverage, minutes MAE (played, projected >= 15; high side) or
+                                P(play) calibration error (report-uncertain rows). The band is
+                                widened by sqrt(rows per slice night / rows tonight) for small
+                                nights (never narrowed); about 1 night in 10 per metric lands
+                                outside by chance, so it is information, not a warning
   ``dfs:fallback``              a lock run of the last 3 days used DK's FPPG instead of our projections
   ============================  =====================================================================
 
@@ -48,6 +56,7 @@ import math
 import os
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -66,6 +75,19 @@ MIN_BIAS_MIN_N = 100
 STARTER_MIN = 26.0               # E[min | plays]: the top two minute tiers
 COV_TARGET, COV_SE_K, COV_MIN_N = 0.80, 3.0, 200
 LIVE_MAE_MARGIN, LIVE_MAE_MIN_N = 0.5, 150
+# T2.4 live-like baselines: data-dir file (written by research/t24_slice.py report) wins over the
+# copy shipped with the code (so a deploy carries the thresholds to the Mac).
+BASELINE_NAME = "live_like_baseline.json"
+PACKAGE_BASELINE = Path(__file__).with_name(BASELINE_NAME)
+RANGE_METRICS = ("dk_mae", "cov80", "min_mae_played15", "pplay_cal_err")
+RANGE_SIDE = {"dk_mae": "high", "min_mae_played15": "high", "cov80": "both",
+              "pplay_cal_err": "both"}
+RANGE_MIN_N = {"dk_mae": 20, "cov80": 20, "min_mae_played15": 15, "pplay_cal_err": 8}
+RANGE_LABEL = {"dk_mae": "DK points MAE", "cov80": "80% range coverage",
+               "min_mae_played15": "minutes MAE (players projected 15+ who played)",
+               "pplay_cal_err": "P(play) calibration error (report-uncertain players)"}
+RANGE_LOOKBACK_DAYS = 2
+UNCERTAIN_PAVAIL = (0.015, 0.985)
 LOCK_GRACE_MIN = 15
 LOCK_LOOKBACK_DAYS = 4
 RECON_LOOKBACK_DAYS = 2
@@ -183,21 +205,43 @@ def _player_rows(conn, as_of: date):
                           ).reset_index(drop=True)
 
 
+def live_like_file() -> dict | None:
+    """The T2.4 baseline file: ``<data>/proj/live_like_baseline.json`` if present, else the copy
+    shipped next to this module; None when neither parses."""
+    for p in (config.data_dir() / "proj" / BASELINE_NAME, PACKAGE_BASELINE):
+        try:
+            v = json.loads(Path(p).read_text())
+        except (OSError, ValueError, TypeError):
+            continue
+        return v if isinstance(v, dict) else {"min_mae": v}
+    return None
+
+
 def live_like_baseline() -> float | None:
-    """The live-like minutes MAE T2.4 measured (env or var/proj/live_like_baseline.json)."""
+    """The live-like minutes MAE T2.4 measured (env, else the baseline file's ``min_mae``)."""
     env = os.environ.get("COURTSIDE_LIVE_LIKE_MIN_MAE")
     if env:
         try:
             return float(env)
         except ValueError:
             return None
-    p = config.data_dir() / "proj" / "live_like_baseline.json"
+    v = live_like_file()
     try:
-        v = json.loads(p.read_text())
-        x = v.get("min_mae") if isinstance(v, dict) else v
+        x = v.get("min_mae") if v else None
         return float(x) if x is not None else None
-    except (OSError, ValueError, TypeError):
+    except (ValueError, TypeError):
         return None
+
+
+def live_like_daily(model_version: str | None = None) -> dict | None:
+    """{metric: {p10, p50, p90, rows_median, ...}} nightly ranges of the slice, for the model
+    version's own arm when the file has it (``per_model``), else the file's main arm."""
+    v = live_like_file()
+    if not v:
+        return None
+    pm = (v.get("per_model") or {}).get(model_version or "")
+    d = (pm or {}).get("daily") or v.get("daily")
+    return d if isinstance(d, dict) and d else None
 
 
 def _clustered_se(values: np.ndarray, clusters: np.ndarray) -> float | None:
@@ -274,6 +318,96 @@ def _rule_live_min_mae(conn, as_of: date, df) -> list[dict]:
                f"games), more than {LIVE_MAE_MARGIN:g} above the live-like backtest's "
                f"{base:.2f}",
                {"mae": mae, "baseline": base, "margin": LIVE_MAE_MARGIN, "n": n})]
+
+
+def range_band(r: dict, n: int) -> tuple[float, float, float] | None:
+    """(lo, hi, k): the slice's p10..p90 around its median, widened by
+    k = sqrt(rows per slice night / n) when tonight has fewer rows (k >= 1)."""
+    try:
+        p10, p50, p90 = float(r["p10"]), float(r["p50"]), float(r["p90"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    ref = r.get("rows_median")
+    k = math.sqrt(max(1.0, float(ref) / n)) if ref and n > 0 else 1.0
+    return p50 - (p50 - p10) * k, p50 + (p90 - p50) * k, k
+
+
+def nightly_values(conn, rows) -> tuple[dict[str, tuple[float, int]], str | None]:
+    """({metric: (value, n)}, model_version) of one night's graded rows (one per game x player),
+    with the live grader's definitions (see `proj/backtest.py` slice section)."""
+    out: dict[str, tuple[float, int]] = {}
+    u = rows[(rows["proj_min"] >= 10) & rows["proj_dk"].notna() & rows["actual_dk"].notna()]
+    if len(u):
+        out["dk_mae"] = (float((u["proj_dk"] - u["actual_dk"]).abs().mean()), len(u))
+    c = u[u["in80"].notna()]
+    if len(c):
+        out["cov80"] = (float(c["in80"].astype(float).mean()), len(c))
+    m = rows[(rows["played"] == 1) & (rows["proj_min_played"] >= 15) & rows["actual_min"].notna()]
+    if len(m):
+        out["min_mae_played15"] = (float((m["proj_min_played"] - m["actual_min"]).abs().mean()),
+                                   len(m))
+    ids = [int(x) for x in rows["projection_id"]] if "projection_id" in rows else []
+    mv = None
+    if ids:
+        info = {}
+        for k in range(0, len(ids), 500):
+            chunk = ids[k:k + 500]
+            for r in conn.execute(f"SELECT id, p_play, inputs_json, model_version FROM "
+                                  f"player_projections WHERE id IN ({','.join('?' * len(chunk))})",
+                                  chunk):
+                info[int(r[0])] = (r[1], r[2], r[3])
+        vers = [v[2] for v in info.values() if v[2]]
+        mv = max(set(vers), key=vers.count) if vers else None
+        pp, pl = [], []
+        for pid, played in zip(ids, rows["played"]):
+            x = info.get(pid)
+            if not x or x[0] is None:
+                continue
+            try:
+                pa = (json.loads(x[1]) if x[1] else {}).get("p_avail")
+            except (ValueError, AttributeError):
+                pa = None
+            if pa is not None and UNCERTAIN_PAVAIL[0] < float(pa) < UNCERTAIN_PAVAIL[1]:
+                pp.append(float(x[0]))
+                pl.append(float(played or 0))
+        if pp:
+            out["pplay_cal_err"] = (float(np.mean(pp) - np.mean(pl)), len(pp))
+    return out, mv
+
+
+def _rule_live_range(conn, as_of: date, df) -> list[dict]:
+    if df is None or df.empty or not live_like_file():
+        return []
+    day = max(str(d) for d in df["day"])
+    if date.fromisoformat(day[:10]) < as_of - timedelta(days=RANGE_LOOKBACK_DAYS):
+        return []
+    vals, mv = nightly_values(conn, df[df["day"] == day])
+    spec = live_like_daily(mv) or {}
+    out = []
+    for m in RANGE_METRICS:
+        if m not in vals or m not in spec:
+            continue
+        v, n = vals[m]
+        if n < RANGE_MIN_N[m]:
+            continue
+        band = range_band(spec[m], n)
+        if band is None:
+            continue
+        lo, hi, k = band
+        side = "above" if v > hi else "below" if v < lo else None
+        if side is None or (side == "below" and RANGE_SIDE[m] == "high"):
+            continue
+        fmt_v = (lambda x: f"{100 * x:.1f}%") if m == "cov80" else \
+            (lambda x: f"{x:+.3f}") if m == "pplay_cal_err" else (lambda x: f"{x:.2f}")
+        wid = f", widened x{k:.1f} for a {n}-row night" if k > 1.0 + 1e-9 else ""
+        out.append(_a(f"dfs:live_range:{m}", "info",
+                      f"{RANGE_LABEL[m]} on {day} was {fmt_v(v)} ({n} rows), {side} the "
+                      f"live-like range {fmt_v(lo)} to {fmt_v(hi)} (Dec-Apr slice p10-p90{wid}). "
+                      f"One night in ten is outside by chance; early-season nights run worse.",
+                      {"day": day, "metric": m, "value": v, "n": n, "lo": lo, "hi": hi, "k": k,
+                       "slice": {x: spec[m].get(x) for x in ("p10", "p50", "p90", "rows_median")},
+                       "model_version": mv}))
+    return out
 
 
 def _et(ts: str) -> str:
@@ -370,6 +504,7 @@ def _rule_fallback(conn, as_of: date, now: datetime) -> list[dict]:
 
 RULES = (("dfs:min_bias", "rows", _rule_min_bias), ("dfs:cov80", "rows", _rule_cov80),
          ("dfs:live_min_mae", "rows", _rule_live_min_mae),
+         ("dfs:live_range", "rows", _rule_live_range),
          ("dfs:missed_lock", "now", _rule_missed_lock), ("dfs:recon_gap", "now", _rule_recon_gap),
          ("dfs:fallback", "now", _rule_fallback))
 
