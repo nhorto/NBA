@@ -164,8 +164,32 @@ def _relative_text(r: float | None) -> str:
     return "about the same" if abs(pct) < 0.5 else fmt.signed(pct, 0) + "%"
 
 
+def curve_view(cv: Mapping | None, calibrated: bool, cal_slates: int = 0) -> dict | None:
+    """The "chances by number of entries" table: one row per entry count, chances as ranges
+    (rare ones as "~1 in X") until payouts are calibrated, and the fees. No expected payout."""
+    if not cv or not cv.get("points"):
+        return None
+    rows = []
+    for r in cv["points"]:
+        n_sims = r.get("n_sims")
+        ch = lambda k: PF.chance_text(r.get(k), calibrated, n_sims)  # noqa: E731
+        rows.append({"entries": r["entries"], "requested": r.get("requested", r["entries"]),
+                     "short": r["entries"] < r.get("requested", r["entries"]),
+                     "this_set": r.get("source") == "build",
+                     "extended": r.get("source") == "extended",
+                     "cost": _money(r.get("cost"), cents=float(r.get("cost") or 0) % 1 != 0),
+                     "cash": ch("p_any_cash"), "top1": ch("p_any_top1"),
+                     "top01": ch("p_any_top01"), "first": ch("p_first")})
+    return {"rows": rows, "calibrated": calibrated, "cal_slates": cal_slates,
+            "cal_needed": PF.MIN_CAL_SLATES, "n_build": cv.get("n_build"),
+            "has_extended": any(r["extended"] for r in rows),
+            "has_subset": any(not r["this_set"] and not r["extended"] for r in rows),
+            "short": next((r for r in rows if r["short"]), None),
+            "incomplete": not cv.get("complete", True)}
+
+
 def _portfolio_view(d: dict, contests: dict[str, dict], now: datetime, builds: Builds,
-                    calibrated: bool = False) -> dict:
+                    calibrated: bool = False, cal_slates: int = 0) -> dict:
     data = d.get("data") or {}
     sm = data.get("summary") or {}
     info = data.get("info") or {}
@@ -186,7 +210,8 @@ def _portfolio_view(d: dict, contests: dict[str, dict], now: datetime, builds: B
         st, t0 = stage or ("queued", time.time())
         names = {"starting": "Starting", "field": "Building the field proxy",
                  "candidates": "Solving candidate lineups", "scoring": "Scoring against the field",
-                 "selection": "Choosing the portfolio", "strengths": "Checking soft and sharp fields"}
+                 "selection": "Choosing the portfolio", "strengths": "Checking soft and sharp fields",
+                 "curve": "Working out chances by number of entries"}
         out["stage"] = names.get(st, st[:1].upper() + st[1:])
         out["elapsed"] = int(time.time() - t0)
         return out
@@ -218,6 +243,7 @@ def _portfolio_view(d: dict, contests: dict[str, dict], now: datetime, builds: B
                    "ordered": st["soft"]["e_payout"] >= sm.get("e_payout", 0) >= st["sharp"]["e_payout"]}
                   if st.get("soft") and st.get("sharp") else None),
         "base_e": _money(base.get("e_payout")) if base else None}
+    out["curve"] = curve_view(sm.get("curve"), calibrated, cal_slates)
     out["exposure"] = [{
         "name": r["name"], "team": r.get("team"), "positions": r.get("positions"),
         "count": r["count"], "share": fmt.pct(r["share"]), "share_v": r["share"],
@@ -315,8 +341,9 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str, *, now:
         if d is None or str(d.get("slate_id")) != slate_id:
             v["state"] = "no_such_portfolio"
             return v
+        cal_n = PF.calibration_slates(conn)
         pv = _portfolio_view(d, by_cid, now, builds,
-                             calibrated=PF.payout_calibrated(conn))
+                             calibrated=PF.payout_calibrated(conn), cal_slates=cal_n)
         pv["csv"] = f"{v['action']}/{portfolio_id}.csv"
         pv["json"] = f"{v['action']}/{portfolio_id}.json"
         v["portfolio"] = pv
@@ -471,6 +498,7 @@ def register(app, *, store, render: Callable, not_found: Callable, today: Callab
                          "results", "contest": data.get("contest"), "settings": d["settings"],
                 "summary": data.get("summary"), "exposure": data.get("exposure"),
                 "truth": (data.get("info") or {}).get("truth"),
+                "curve": (data.get("summary") or {}).get("curve"),
                 "lineups": [{k: lu.get(k) for k in ("rank", "salary", "mean", "p10", "p50",
                                                     "p90", "p_cash", "p_top1", "e_payout",
                                                     "dupes")} | {"slots": lu["slots"]}

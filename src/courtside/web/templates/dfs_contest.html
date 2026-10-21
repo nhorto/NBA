@@ -71,6 +71,26 @@
       </ul>
     </div>
   </details>
+  {% set cv = pf.curve %}
+  {% if cv %}
+  <h3 class="mini-head dfc-h3" id="curve-title">Chances by number of entries</h3>
+  <div class="card dfc-curvecard">
+    <table class="table dfc-curve" aria-labelledby="curve-title">
+      <caption class="sr">Simulated chance that at least one entry finishes in each range, by number of entries in this contest, with the entry fees</caption>
+      <thead><tr><th scope="col">Entries</th><th scope="col" class="num">In the money</th><th scope="col" class="num">Top 1%</th><th scope="col" class="num">Top 0.1%</th><th scope="col" class="num">1st</th></tr></thead>
+      <tbody>
+      {% for r in cv.rows %}
+      <tr{% if r.this_set %} class="is-this"{% endif %}>
+        <th scope="row"><span class="dfc-cn">{{ r.entries }}</span>{% if r.short %}<small> of {{ r.requested }}</small>{% endif %}<span class="dfs-psub">{{ r.cost }}</span>{% if r.this_set %}<span class="dfs-psub">this set</span>{% endif %}</th>
+        <td class="num">{{ r.cash }}</td><td class="num">{{ r.top1 }}</td><td class="num">{{ r.top01 }}</td><td class="num">{{ r.first }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted dfc-note">Chance that at least one entry finishes in each range; fees under each count. Every row is scored on the same simulated nights: when the core players have a bad night, all the entries suffer together, so the chances climb more slowly than separate tries would.{% if cv.has_subset %} Smaller rows are picked from this set{% if cv.has_extended %}; larger rows add lineups that are not in its CSV{% endif %}.{% elif cv.has_extended %} Larger rows add lineups that are not in this set&rsquo;s CSV.{% endif %}{% if cv.short %} Only {{ cv.short.entries }} lineups fit the limits for {{ cv.short.requested }} entries.{% endif %}</p>
+  {% if not cv.calibrated %}<p class="caveat dfc-note">These chances are against our modelled field, which is much weaker than a real DraftKings field, so real chances are far lower. Use the table to see how the chances grow with more entries, not as real odds. Rough ranges until real standings from {{ cv.cal_needed }} slates are uploaded to check the payout model ({{ cv.cal_slates }} so far).</p>{% endif %}
+  {% endif %}
   {% if sm.stopped %}<p class="caveat">Only {{ sm.entries }} of {{ sm.requested }} lineups fit the exposure and shared-player limits. Loosen them to get more.</p>{% endif %}
   <div class="dfs-actions dfc-dl">
     <a class="btn" href="{{ pf.csv }}" download>Download DK CSV</a>

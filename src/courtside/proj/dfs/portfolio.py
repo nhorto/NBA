@@ -43,6 +43,11 @@ Pipeline (`build_portfolio`):
    **Display policy:** until `calibration_slates` >= 10 (uploaded standings), pages and the CLI
    lead with the relative score and probability bands (`prob_band`); dollar E[payout] and ROI
    are "details (simulated, uncalibrated)" only.
+5. **Entries curve** (`entries_curve`, `summary["curve"]`): chances that at least one entry is in
+   the money / top 1 % / top 0.1 % / 1st, and the fees, for N = 1, 3, 5, 10, 20, 50, 150 (up to
+   the contest's max entries) on the SAME sims, so entries that bust together count once.
+   Points are nested sets under their own N's caps (smaller: subsets of the build; larger: the
+   build plus more greedy picks). E[payout] per dollar is stored but never headlined.
 
 Storage (migration 13): `dfs_portfolios` (one row per build, status building | ok | error,
 settings and summary JSON) and the lineups in `dfs_lineups` with ``run_id`` = the portfolio id
@@ -63,7 +68,7 @@ import sqlite3
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field as dc_field
+from dataclasses import asdict, dataclass, field as dc_field, replace as dc_replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -133,6 +138,10 @@ class Settings:
     beta: float = None                     # truth shift toward the public number (TRUTH_BETA)
     tau: float = None                      # per-sim model error, x player sd (TRUTH_TAU)
     seed: int = 0
+    curve: bool = True                     # the "how many entries" curve (entries_curve)
+    curve_to: int | None = None            # its largest entry count (None: up to N only)
+    curve_refills: int = 2                 # refill batches for curve points above N
+    curve_select_sims: int | None = 8_000  # sims used to PICK curve lineups above N (all score)
 
     def __post_init__(self):
         if self.beta is None:
@@ -502,6 +511,29 @@ def prob_band(p: float | None) -> str:
     return "n/a"
 
 
+def one_in(p: float, sig: int = 1) -> str:
+    """'~1 in 3,000': a rare chance as odds, rounded to `sig` significant figures."""
+    x = (1.0 / p) * (1 + 1e-9)                          # 1 / 0.00004 is 24999.999...
+    d = max(0, int(math.floor(math.log10(x))) + 1 - sig)
+    x = int(math.floor(x / 10 ** d + 0.5)) * 10 ** d          # half up, not to even
+    return f"~1 in {x:,}"
+
+
+def chance_text(p: float | None, calibrated: bool = False, n_sims: int | None = None) -> str:
+    """A chance for display: from 1 % up, `prob_band` until payouts are calibrated (a plain
+    percentage after); below 1 %, odds ('~1 in 3,000', 1 significant figure until calibrated,
+    2 after). Never seen in `n_sims` sims: 'under 1 in {n_sims}'."""
+    if p is None or not np.isfinite(p):
+        return "n/a"
+    if p <= 0:
+        return f"under 1 in {n_sims:,}" if n_sims else "not seen"
+    if p >= 0.01:
+        if not calibrated:
+            return prob_band(p)
+        return "above 99%" if p > 0.99 else f"{p * 100:.0f}%"
+    return one_in(p, 2 if calibrated else 1)
+
+
 def payout_calibrated(conn: sqlite3.Connection | None) -> bool:
     """The one display gate for simulated payout numbers (contest builder: dollar E[payout] /
     ROI; slate page: P(cash)): headline only once >= MIN_CAL_SLATES slates of real standings are
@@ -674,15 +706,21 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     low = np.array([low_d.get(p, 0) for p in pids])
     gamma = max(int(s.gamma), len(s.locks))
     cset = CandSet(P, inc)
-    state = {"cands": cands, "single": single, "refills": 0}
+    state = {"cands": cands, "single": single, "refills": 0, "curve_refills": 0}
 
-    def on_empty(chosen: list[int], counts: np.ndarray) -> bool:
+    def refiller(n_to: int, cap: np.ndarray, low: np.ndarray, key: str, budget: int):
+        """`greedy`'s on_empty for a set of `n_to` entries under (cap, low); `key` counts the
+        refill batches against `budget`."""
+        return lambda chosen, counts: on_empty(chosen, counts, n_to, cap, low, key, budget)
+
+    def on_empty(chosen: list[int], counts: np.ndarray, n: int, cap: np.ndarray,
+                 low: np.ndarray, key: str = "refills", budget: int = s.refills) -> bool:
         """Refill: new scenario solves that satisfy the overlap cap against every chosen lineup
         (no-good cuts) with capped players banned and urgent minimums locked."""
-        if state["refills"] >= s.refills:
+        if state[key] >= budget:
             return False
-        state["refills"] += 1
-        say(f"refill {state['refills']}")
+        state[key] += 1
+        say(f"refill {state[key]}" if key == "refills" else f"curve refill {state[key]}")
         full = {pids[i] for i in np.flatnonzero(counts >= cap)}
         need = {pids[i] for i in np.flatnonzero(low - counts >= n - len(chosen))}
         cur = state["cands"]
@@ -718,7 +756,8 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
                        np.concatenate([cset.P.tied, P2.tied], 1))
         return True
 
-    chosen, ginfo = greedy(lad, cset, n, gamma=gamma, cap=cap, low=low, on_empty=on_empty)
+    chosen, ginfo = greedy(lad, cset, n, gamma=gamma, cap=cap, low=low,
+                           on_empty=refiller(n, cap, low, "refills", s.refills))
     timing["selection"] = time.perf_counter() - t
     cands, single, inc, P = state["cands"], state["single"], cset.inc, cset.P
 
@@ -756,6 +795,15 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         ranges["medium"] = {"e_payout": summ["e_payout"], "roi": summ["roi"]}
         timing["strengths"] = time.perf_counter() - t
     summ["strengths"] = ranges
+    summ["curve"] = None
+    if s.curve and chosen:
+        say("curve")
+        t = time.perf_counter()
+        summ["curve"] = entries_curve(lad, cset, chosen, s, pids, contest, m_o=m_o, gamma=gamma,
+                                      built_stopped=ginfo["stopped"],
+                                      refill=lambda k, c, lo: refiller(k, c, lo, "curve_refills",
+                                                                       s.curve_refills))
+        timing["curve"] = time.perf_counter() - t
     info = {"version": VERSION, "label": LABEL, "candidates": cinfo, "refills": state["refills"],
             "candidates_total": len(cands), "gamma": gamma,
             "field": fld.summary(), "field_label": F.LABEL, "ownership_version": op.version,
@@ -770,6 +818,204 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         info["greedy_pairs"] = [cands[j].slot_pairs() for j in chosen]
     return Portfolio(slate_id, contest, s, lineups, summ, exposure, info, run_id, field=fld,
                      fp=fp, fp_raw=fp_raw)
+
+
+# ============================================================================== entries curve
+
+CURVE_POINTS = (1, 3, 5, 10, 20, 50, 150)
+CURVE_VERSION = "entries-curve-1.0"
+
+
+def curve_points(n_built: int, top: int | None) -> list[int]:
+    """Entry counts of the curve: CURVE_POINTS up to `top` (the contest's max entries, at most
+    MAX_ENTRIES) and `top` itself, plus the build's own N. `top` None: up to the build's N."""
+    n_built = max(1, int(n_built))
+    top = n_built if top is None else max(n_built, min(int(top), MAX_ENTRIES))
+    return sorted({k for k in CURVE_POINTS if k <= top} | {n_built, top})
+
+
+def _caps_for(s: Settings, k: int, pids: Sequence[str]) -> tuple[np.ndarray, np.ndarray]:
+    cap_d, low_d = exposure_limits(dc_replace(s, n=int(k)), pids)
+    return (np.array([cap_d.get(p, k) for p in pids]), np.array([low_d.get(p, 0) for p in pids]))
+
+
+def _rescaled(x: np.ndarray, f: float) -> np.ndarray:
+    return x.astype(np.int64) if f == 1.0 else np.rint(x * f).astype(np.int64)
+
+
+def curve_stats(lad: Ladder, P: _Pool, idx: Sequence[int], contest: F.Contest, *,
+                m_o: int) -> dict:
+    """Chances of a set of our entries `idx` (columns of P) on the same sims, scored jointly:
+    in every sim our entries push each other down, so the chances of "at least one" come from
+    the sims themselves, not from 1 - prod(1 - p). `P` was scored with `m_o` other entries; a
+    set of k entries has M - k others, so the counts above / tied are rescaled by
+    (M - k) / m_o (exactly 1 for the build's own N)."""
+    k = len(idx)
+    M = int(contest.field_size)
+    f = max(1, M - k) / max(1, m_o)
+    sc = P.score[:, idx]
+    ab, td = _rescaled(P.above[:, idx], f), _rescaled(P.tied[:, idx], f)
+    pay, rank = joint_payouts(lad, sc, ab, td)
+    best = rank.min(1)
+    top01 = max(1, int(math.ceil(0.001 * M)))
+    fee = float(contest.entry_fee or 0.0)
+    e = float(pay.sum(1).mean())
+    alone = ab + 1                                     # each entry's rank if it were our only one
+    indep = {name: float(1 - np.prod(1 - (alone <= r).mean(0)))
+             for name, r in (("p_any_cash", lad.paid), ("p_any_top1", lad.top1))}
+    return {"entries": k, "cost": fee * k,
+            "p_any_cash": float((best <= lad.paid).mean()),
+            "p_any_top1": float((best <= lad.top1).mean()),
+            "p_any_top01": float((best <= top01).mean()),
+            "p_first": float((best <= 1).mean()),
+            "e_payout": e, "e_payout_per_dollar": (e / (fee * k)) if fee else None,
+            "if_independent": indep, "top01_rank": top01, "n_sims": int(sc.shape[0])}
+
+
+def _cap_subset(parent: Sequence[int], first: Sequence[int], k: int, inc: np.ndarray,
+                cap: np.ndarray, low: np.ndarray, time_s: float = 2.0) -> list[int] | None:
+    """A k-subset of `parent` that meets the caps (CP-SAT), keeping as many of the greedy's own
+    picks `first` and as early (in the parent's pick order) as it can; None if none exists."""
+    from ortools.sat.python import cp_model
+    L = len(parent)
+    sub = inc[list(parent)].astype(np.int64)
+    m = cp_model.CpModel()
+    x = [m.NewBoolVar(f"x{i}") for i in range(L)]
+    m.Add(sum(x) == k)
+    for p in np.flatnonzero(sub.sum(0) > cap):
+        m.Add(sum(x[i] for i in np.flatnonzero(sub[:, p])) <= int(cap[p]))
+    for p in np.flatnonzero(low > 0):
+        m.Add(sum(x[i] for i in np.flatnonzero(sub[:, p])) >= int(low[p]))
+    keep = set(first)
+    m.Maximize(sum(((L - i) + (L if parent[i] in keep else 0)) * x[i] for i in range(L)))
+    sv = cp_model.CpSolver()
+    sv.parameters.max_time_in_seconds = time_s
+    sv.parameters.num_workers = 1
+    st = sv.Solve(m)
+    if st not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return None
+    return [parent[i] for i in range(L) if sv.Value(x[i])]
+
+
+def _fill_least_over(pick: list[int], parent: Sequence[int], k: int, inc: np.ndarray,
+                     cap: np.ndarray) -> list[int]:
+    """Complete a subset whose caps cannot all be met: add, one at a time, the parent lineup
+    that pushes the players' counts least above their caps (ties: earlier pick)."""
+    pick = list(pick)
+    counts = inc[pick].sum(0).astype(np.int64) if pick else np.zeros(inc.shape[1], np.int64)
+    while len(pick) < k:
+        rest = [j for j in parent if j not in pick]
+        over = [int(np.maximum(0, counts + inc[j] - cap).sum()) for j in rest]
+        j = rest[int(np.argmin(over))]
+        pick.append(j)
+        counts += inc[j]
+    return pick
+
+
+def entries_curve(lad: Ladder, cs: CandSet, chosen: Sequence[int], s: Settings,
+                  pids: Sequence[str], contest: F.Contest, *, m_o: int, gamma: int,
+                  built_stopped: str | None = None,
+                  refill: Callable[[int, np.ndarray, np.ndarray], Callable] | None = None) -> dict:
+    """The "how many entries" curve: chances of at least one entry in the money / top 1 % /
+    top 0.1 % / 1st and the entry cost for N = 1, 3, 5, 10, 20, 50, 150 (up to `s.curve_to`)
+    and the build's own N, all on the SAME simulated nights as the build.
+
+    Nesting. The greedy marginal depends only on the chosen set, but its constraints do not:
+    the default exposure cap is floor(max * N) from N >= exposure_from and minimum exposures are
+    ceil(min * N), so the first k picks of an N-entry build can break the k-entry caps (and an
+    independent k-entry build can differ from them). Each point is therefore the greedy
+    selection under ITS OWN N's caps, constrained to nest:
+      * k < N: picked from the next larger point's set (top down from the build), so every
+        smaller set is a subset of the build (`build_ranks` says which lineups);
+      * k = N: the build itself (same numbers as its summary);
+      * k > N: the build plus greedy picks from the candidates under k's caps (refilled with
+        new solves if the pool runs dry; `refill` makes the on_empty callback), picked on the
+        first `s.curve_select_sims` sims to keep the web build fast (a 20-entry build extended
+        to 150 spent 34 s here on all 25,000 sims) and scored on all of them. These extra
+        lineups are not part of the build or its CSV.
+    Nested sets make every "at least one" chance non-decreasing in N on the same sims: an entry
+    added above one of ours takes a rank no worse than the one it pushes down (the best rank
+    of a set is 1 + the fewest other entries above any of its lineups). If the greedy gets
+    stuck on a subset's caps, a CP-SAT subset meets them keeping the earliest picks; if no
+    subset can, the least-overage fill is used (`caps_relaxed`)."""
+    t0 = time.perf_counter()
+    chosen = [int(j) for j in chosen]
+    N = len(chosen)
+    if not N:
+        return {"version": CURVE_VERSION, "points": [], "n_build": 0}
+    pts = curve_points(N, s.curve_to if built_stopped is None else N)
+    sets: dict[int, list[int]] = {N: chosen}
+    meta: dict[int, dict] = {N: {"source": "build", "caps_relaxed": False}}
+    pos = {j: r + 1 for r, j in enumerate(chosen)}          # candidate -> rank in the build
+    # ---- k < N: top down, each a subset of the next larger set
+    parent = chosen
+    for k in sorted((p for p in pts if p < N), reverse=True):
+        try:
+            cap, low = _caps_for(s, k, pids)
+        except PortfolioError:
+            cap, low = np.full(len(pids), k), np.zeros(len(pids), int)
+        sub = CandSet(_Pool(cs.P.score[:, parent], cs.P.above[:, parent], cs.P.tied[:, parent]),
+                      cs.inc[parent])
+        got, _ = greedy(lad, sub, k, gamma=gamma, cap=cap, low=low)
+        pick = [parent[i] for i in got]
+        relaxed = False
+        if len(pick) < k:                  # greedy painted itself into a corner: exact subset
+            pick = _cap_subset(parent, pick, k, cs.inc, cap, low)
+            if pick is None:               # no subset meets the caps: least overage
+                relaxed = True
+                pick = _fill_least_over([parent[i] for i in got], parent, k, cs.inc, cap)
+        sets[k] = sorted(pick, key=lambda j: pos[j])
+        meta[k] = {"source": "subset", "caps_relaxed": relaxed}
+        parent = sets[k]
+    # ---- k > N: bottom up from the build, picked on the first `curve_select_sims` sims (the
+    # greedy step costs ~S x k; the sims are exchangeable) and scored on all of them below
+    S = cs.P.score.shape[0]
+    rows = slice(0, min(S, int(s.curve_select_sims or S)))
+    sel = CandSet(_Pool(cs.P.score[rows], cs.P.above[rows], cs.P.tied[rows]), cs.inc)
+
+    def on_empty_for(k, cap, low):
+        inner = refill(k, cap, low) if refill else None
+        if inner is None:
+            return None
+
+        def go(ch, counts):
+            ok = inner(ch, counts)
+            if ok:                                           # new candidates: refresh the view
+                sel.P = _Pool(cs.P.score[rows], cs.P.above[rows], cs.P.tied[rows])
+                sel.inc = cs.inc
+            return ok
+        return go
+
+    cur = chosen
+    for k in sorted(p for p in pts if p > N):
+        try:
+            cap, low = _caps_for(s, k, pids)
+        except PortfolioError:
+            break
+        got, gi = greedy(lad, sel, k, gamma=gamma, cap=cap, low=low, start=cur,
+                         on_empty=on_empty_for(k, cap, low))
+        sets[k] = list(got)
+        meta[k] = {"source": "extended", "caps_relaxed": False, "stopped": gi["stopped"]}
+        cur = sets[k]
+        if gi["stopped"]:
+            break
+    points = []
+    for k in sorted(sets):
+        idx = sets[k]
+        row = {"requested": k, **curve_stats(lad, cs.P, idx, contest, m_o=m_o), **meta[k]}
+        if meta[k]["source"] != "extended":
+            row["build_ranks"] = [pos[j] for j in idx]
+            row["is_prefix"] = row["build_ranks"] == list(range(1, len(idx) + 1))
+        else:
+            row["build_lineups"] = N
+        points.append(row)
+    top = pts[-1]
+    return {"version": CURVE_VERSION, "label": LABEL, "n_build": N, "points": points,
+            "select_sims": rows.stop if any(p > N for p in pts) else None,
+            "requested_points": pts, "complete": max(sets) >= top and
+            len(sets[max(sets)]) >= top,
+            "nested_prefix": all(p.get("is_prefix", True) for p in points),
+            "curve_to": s.curve_to, "seconds": round(time.perf_counter() - t0, 2)}
 
 
 def _relative(lad: Ladder, P: _Pool, pay: np.ndarray, n_top: int, n: int,
@@ -1029,6 +1275,8 @@ def build_for_slate(conn: sqlite3.Connection, slate_id, contest_id, s: Settings,
         raise PortfolioError(f"contest {contest_id} is not on slate {slate_id}")
     max_user = int(r["max_per_user"] or MAX_ENTRIES) if r is not None else MAX_ENTRIES
     s.n = max(1, min(int(s.n), max_user, MAX_ENTRIES, contest.field_size - 1))
+    if s.curve and s.curve_to is None:
+        s.curve_to = max(1, min(max_user, MAX_ENTRIES, contest.field_size - 1))
     pool = ctx["pool"]
     pf = build_portfolio(pool, ctx["inputs"], ctx["sims"], contest, s,
                          now=now or datetime.now(timezone.utc), slate_id=str(slate_id),
@@ -1145,6 +1393,7 @@ def _cmd(args) -> int:
         if s.n > mx:
             print(f"N capped at the contest's max entries per user: {mx}")
         s.n = max(1, min(s.n, mx, MAX_ENTRIES))
+        s.curve_to = max(1, min(mx, MAX_ENTRIES, contest.field_size - 1))
         pf = build_portfolio(ctx["pool"], ctx["inputs"], ctx["sims"], contest, s,
                              now=datetime.now(timezone.utc), slate_id=str(args.slate),
                              run_id=ctx["info"]["run_id"], baselines=args.baselines,
@@ -1200,6 +1449,21 @@ def _print(pf: Portfolio) -> None:
         print(f"  X factor players (estimate; reporting only): {xf['lineups_with']} of "
               f"{xf['entries']} lineups include at least one of the slate's {xf['n_players']}"
               + (f" ({', '.join(xf['players_used'])})" if xf["players_used"] else ""))
+    cv = sm.get("curve")
+    if cv and cv.get("points"):
+        print("\n  CHANCES BY NUMBER OF ENTRIES (same simulated nights, nested sets; simulated, "
+              "uncalibrated)")
+        print(f"  {'N':>4} {'fees':>9} {'in the money':>13} {'top 1%':>10} {'top 0.1%':>12} "
+              f"{'1st':>13}  set")
+        for r in cv["points"]:
+            n_txt = (f"{r['entries']}" if r["entries"] == r["requested"]
+                     else f"{r['entries']}/{r['requested']}")
+            print(f"  {n_txt:>4} {'$' + format(r['cost'], ',.0f'):>9} "
+                  f"{chance_text(r['p_any_cash']):>13} {chance_text(r['p_any_top1']):>10} "
+                  f"{chance_text(r['p_any_top01']):>12} {chance_text(r['p_first']):>13}  "
+                  f"{r['source']}{' (caps relaxed)' if r.get('caps_relaxed') else ''}")
+        print(f"  curve built in {cv['seconds']:.1f}s; first k of the build = the k-entry set: "
+              f"{'yes' if cv['nested_prefix'] else 'no (exposure caps differ by N)'}")
     print(f"\n  {'#':>3} {'mean':>6} {'cash':>10} {'top 1%':>10} {'dupes':>6}  players")
     for lu in pf.lineups:
         names = ", ".join(x["name"].split()[-1] for x in json.loads(lu["slots_json"]))

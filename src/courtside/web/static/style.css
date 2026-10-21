@@ -1324,6 +1324,22 @@ textarea.dfs-input { resize: vertical; min-height: 4.5rem; }
   .dfc-contests th.num, .dfc-contests td.num { display: none; }
   .dfc-mmeta { display: block; }
 }
+.dfc-curvecard { padding: 6px var(--pad) 4px; margin-bottom: 8px; }
+.dfc-curve { table-layout: fixed; font-size: .86rem; }
+.dfc-curve th, .dfc-curve td { padding: 8px 4px; }
+.dfc-curve thead th { white-space: normal; vertical-align: bottom; line-height: 1.25; }
+.dfc-curve thead th:first-child { width: 19%; }
+.dfc-curve td.num { font-variant-numeric: tabular-nums; }
+.dfc-curve .dfc-cn { font-weight: 700; font-variant-numeric: tabular-nums; }
+.dfc-curve .dfs-psub { display: block; }
+.dfc-curve tr.is-this th, .dfc-curve tr.is-this td { background: var(--surface-2, transparent); font-weight: 650; }
+@media (max-width: 480px) {
+  .dfc-curvecard { padding: 4px 10px 2px; }
+  .dfc-curve { font-size: .78rem; }
+  .dfc-curve th, .dfc-curve td { padding: 7px 2px; }
+  .dfc-curve thead th { font-size: .6rem; letter-spacing: .04em; }
+  .dfc-curve thead th:first-child { width: 17%; }
+}
 .dfc-details { padding: 0; margin-top: 10px; }
 .dfc-details > summary { padding: 10px var(--pad); font-weight: 600; cursor: pointer; font-size: .92rem; }
 .dfc-details-body { padding: 0 var(--pad) var(--pad); font-size: .9rem; }
