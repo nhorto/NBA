@@ -869,7 +869,13 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
     game_ids = json.loads(row[1]) if row and row[1] else sorted(
         {p.game_id for p in pool.players if p.game_id})
     day = _as_date(row[0]) if row else _slate_day(pool)
-    dk2nba = IDS.nba_ids(conn, "dk", [p.dk_player_id for p in pool.players])
+    dk_ids = [p.dk_player_id for p in pool.players]
+    dk2nba = IDS.nba_ids(conn, "dk", dk_ids)
+    if len(dk2nba) < 0.9 * len(dk_ids):
+        # a new slate's draftables are not mapped yet: map them BEFORE projecting (2026-10-21: the
+        # first run of a new slate projected with no DK ids and the optimizer found no lineup)
+        IDS.resolve_dk(conn, since=pool.captured_at, write_check=False)
+        dk2nba = IDS.nba_ids(conn, "dk", dk_ids)
     extras: dict = {}
     starters: set = set()
     for p in pool.players:

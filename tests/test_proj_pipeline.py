@@ -367,3 +367,43 @@ def test_season_of_bubble_2020():
         assert f(date(2021, 5, 16)) == "2020-21"
         assert f(date(2020, 3, 11)) == "2019-20"
         assert f(date(2026, 10, 20)) == "2026-27"
+
+
+def test_project_slate_maps_new_draftables_before_projecting(monkeypatch):
+    """2026-10-21: the first run of a new slate projected before its DK ids were mapped (the
+    runner mapped them later, in availability), so every dk_id was NaN and the optimizer found
+    no lineup. project_slate now maps them first when < 90 % are known."""
+    import types
+    from courtside.proj import ids as IDS
+    from courtside.proj.dfs import rules as R
+    pool = types.SimpleNamespace(
+        players=[types.SimpleNamespace(dk_player_id=str(i), game_id="g", team="T", starter=0,
+                                       salary=5000) for i in range(10)],
+        captured_at="2026-10-21T14:00:00Z", game_type_id=70)
+    monkeypatch.setattr(R, "build_pool", lambda conn, sid: pool)
+    state = {"mapped": False, "resolved": []}
+
+    def nba_ids(conn, source, ids_=None):
+        return {str(i): 1000 + i for i in range(10)} if state["mapped"] else {"0": 1000}
+
+    def resolve_dk(conn, since=None, write_check=True):
+        state["resolved"].append(since)
+        state["mapped"] = True
+    monkeypatch.setattr(IDS, "nba_ids", nba_ids)
+    monkeypatch.setattr(IDS, "resolve_dk", resolve_dk)
+
+    class Stop(Exception):
+        pass
+
+    def project_day(conn, day, at, **kw):
+        assert len(kw["extras"][("g", "T")]) == 10      # every pool player is mapped
+        raise Stop
+    monkeypatch.setattr(P, "project_day", project_day)
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE dfs_slates (slate_id TEXT, nba_day TEXT, game_ids_json TEXT)")
+    conn.execute("INSERT INTO dfs_slates VALUES ('S', '2026-10-21', '[\"g\"]')")
+    conn.execute("CREATE TABLE dfs_runs (run_id TEXT, kind TEXT)")
+    with pytest.raises(Stop):
+        P.project_slate(conn, "S", datetime(2026, 10, 21, 14, tzinfo=timezone.utc), run_id="r",
+                        kind="manual", store=False)
+    assert state["resolved"] == ["2026-10-21T14:00:00Z"]
