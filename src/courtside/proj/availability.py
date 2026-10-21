@@ -759,9 +759,169 @@ def p_play(conn: sqlite3.Connection, player_id: int, game_id: str, at: datetime 
     return params.p("unlisted", "gt6h", "none", "bench")
 
 
+# --- P(play) v2: fringe pool players (opt-in, pipeline.PPLAY == "v2") ------------------------
+#
+# Live runs force every DK-pool player onto his team. A forced player who is neither on the
+# report nor in the team's last 10 games ("fringe": two-way / deep bench / long absences /
+# offseason movers) has no honest P(play) in the minutes engine: v1 scores forced extras as
+# active roster players (`minutes.forced_as_roster`), P(plays) ~0.7 vs ~0.24 played on the
+# T2.4 slice. `fringe_p` replaces it with a logistic model on box history only (strictly
+# before the day), fit on the slice's fringe rows (`research/p2_rows.py`, `research/p2_fit.py`).
+
+FRINGE_PATH = Path(__file__).with_name("fringe_params.json")
+# Two regimes. "mid": the team has played >= EARLY_GP games of the season, or the player has
+# appeared this season; fit on the T2.4 slice's fringe rows (real reports, DK-pool stand-in).
+# "early": the season's first EARLY_GP team games and no appearance yet (every opener player):
+# fit on the RotoGuru DK pools of 2015-16 .. 2020-21 (real pools with salaries; no reports exist
+# there, so injured pool players stay in and the rates are conservative). "early" uses the DK
+# salary when it is known (live), "early_nosal" when not (backtests).
+FRINGE_FEATURES = {
+    "mid": ("one", "avg10", "l_app_season0"),
+    "early": ("one", "avg10", "l_app365", "l_sal", "min_sal"),
+    "early_nosal": ("one", "avg10", "l_app365"),
+}
+EARLY_GP = 5
+# Season start: a player DK prices at or above this (Classic) keeps the minutes engine's
+# P(plays | available) (which scores him as an active roster player). The RotoGuru fit cannot
+# remove pool players a report would have listed; for priced players those DNPs are almost all
+# such unlisted-in-RotoGuru injuries, so the model reads 0.82-0.89 where the live, not-listed
+# population plays ~all the time (2026-10-20 opener: 4 of 4 at >= $4.5k played; 2026-10-21
+# preview: ~40 starters and rotation movers, incl. players back from season-long injuries).
+EARLY_ENGINE_SALARY = 4500
+FRINGE_STARTER_P = 0.99          # DK starter flag (§4.1 override)
+FRINGE_CLAMP = (0.02, 0.97)
+
+
+def fringe_features(panel: pd.DataFrame, h, salary: dict | None = None) -> pd.DataFrame:
+    """Per candidate row (`panel`: player_id, team, date (int days), season) from the minutes
+    History `h` (box rows with min > 0), strictly before the row's date:
+    avg10 (mean minutes of his last 10 appearances, any team; 0 if none), app365 (appearances in
+    the 365 days before), app_season (appearances this season, any team), team_gp (his team's
+    games this season so far), missed_season = max(team_gp - app_season, 0), days (since his
+    last appearance, capped at 400), salary ({player_id: DK salary}, NaN when unknown), and the
+    model columns (logs, indicators, `regime`)."""
+    cache = getattr(h, "_p2_by", None)
+    if cache is None:
+        hs = h.hist[["player_id", "date", "season", "min"]].sort_values(["player_id", "date"],
+                                                                       kind="mergesort")
+        cache = {int(p): (g["date"].to_numpy(np.int64), g["season"].to_numpy(object),
+                          g["min"].to_numpy(float))
+                 for p, g in hs.groupby("player_id", sort=False)}
+        h._p2_by = cache
+    n = len(panel)
+    avg10 = np.zeros(n)
+    app365 = np.zeros(n)
+    app_s = np.zeros(n)
+    days = np.full(n, 400.0)
+    team_gp = np.zeros(n)
+    pids = panel["player_id"].to_numpy(np.int64)
+    dts = panel["date"].to_numpy(np.int64)
+    seas = panel["season"].to_numpy(object)
+    teams = panel["team"].to_numpy(object)
+    for i in range(n):
+        rec = cache.get(int(pids[i]))
+        d = int(dts[i])
+        if rec is not None:
+            dd, ss, mm = rec
+            j = int(np.searchsorted(dd, d, side="left"))         # appearances strictly before
+            if j:
+                avg10[i] = float(mm[max(0, j - 10):j].mean())
+                app365[i] = j - int(np.searchsorted(dd, d - 365, side="left"))
+                app_s[i] = int((ss[:j] == seas[i]).sum())
+                days[i] = min(400.0, float(d - dd[j - 1]))
+        s = h.sched.get(teams[i])
+        if s is not None:
+            k = int(np.searchsorted(s["date"], d, side="left"))
+            team_gp[i] = int((np.asarray(s["season"][:k]) == seas[i]).sum())
+    missed = np.maximum(team_gp - app_s, 0.0)
+    sal = np.array([np.nan if salary is None else float(salary.get(int(p), np.nan))
+                    for p in pids], float)
+    early = (team_gp < EARLY_GP) & (app_s == 0)
+    regime = np.where(early, np.where(np.isfinite(sal), "early", "early_nosal"), "mid")
+    return pd.DataFrame({"avg10": avg10, "app365": app365, "app_season": app_s,
+                         "team_gp": team_gp, "missed_season": missed, "days": days,
+                         "salary": sal, "l_app365": np.log1p(app365),
+                         "l_app_season0": (app_s == 0).astype(float),
+                         "l_sal": np.log(np.maximum(np.nan_to_num(sal, nan=3000.0), 3000.0)
+                                         / 3000.0),
+                         "min_sal": (np.nan_to_num(sal, nan=0.0) <= 3000.0).astype(float)
+                         * np.isfinite(sal),
+                         "regime": regime, "one": 1.0})
+
+
+@dataclass
+class FringeParams:
+    models: dict = field(default_factory=dict)    # regime -> {"features": [...], "coef": [...]}
+    meta: dict = field(default_factory=dict)
+
+    def p(self, X: pd.DataFrame) -> np.ndarray:
+        """P(plays | available) per row of `fringe_features` (by its `regime`)."""
+        out = np.full(len(X), np.nan)
+        reg = X["regime"].to_numpy(object)
+        for name, m in self.models.items():
+            sel = reg == name
+            if sel.any():
+                Z = X.loc[sel, m["features"]].to_numpy(float) @ np.asarray(m["coef"], float)
+                out[sel] = 1.0 / (1.0 + np.exp(-Z))
+        return np.clip(out, *FRINGE_CLAMP)
+
+    def to_json(self) -> dict:
+        return {"models": {k: {"features": list(v["features"]),
+                               "coef": [float(c) for c in v["coef"]]}
+                           for k, v in self.models.items()}, "meta": self.meta}
+
+    @classmethod
+    def from_json(cls, d: dict) -> "FringeParams":
+        return cls(models={k: {"features": list(v["features"]),
+                               "coef": [float(c) for c in v["coef"]]}
+                           for k, v in d["models"].items()}, meta=d.get("meta", {}))
+
+    def save(self, path: Path | str | None = None) -> Path:
+        path = Path(path) if path else FRINGE_PATH
+        path.write_text(json.dumps(self.to_json(), indent=1) + "\n")
+        return path
+
+
+_FRINGE_CACHE: dict[str, FringeParams] = {}
+
+
+def load_fringe(path: Path | str | None = None) -> FringeParams:
+    path = Path(path) if path else FRINGE_PATH
+    if str(path) not in _FRINGE_CACHE:
+        _FRINGE_CACHE[str(path)] = FringeParams.from_json(json.loads(path.read_text()))
+    return _FRINGE_CACHE[str(path)]
+
+
+def fit_logit(X: np.ndarray, y: np.ndarray, ridge: float = 1.0,
+              weight: np.ndarray | None = None) -> np.ndarray:
+    """Ridge logistic regression (Newton; column 0 = the unpenalised intercept), optional
+    sample weights."""
+    w = np.zeros(X.shape[1])
+    sw = np.ones(len(y)) if weight is None else np.asarray(weight, float)
+    R = np.eye(X.shape[1]) * ridge
+    R[0, 0] = 0.0
+    for _ in range(100):
+        p = 1.0 / (1.0 + np.exp(-(X @ w)))
+        g = X.T @ (sw * (y - p)) - R @ w
+        H = (X * (sw * p * (1 - p))[:, None]).T @ X + R
+        step = np.linalg.solve(H, g)
+        w += step
+        if np.abs(step).max() < 1e-9:
+            break
+    return w
+
+
+def fit_fringe_model(df: pd.DataFrame, regime: str, ridge: float = 1.0,
+                     weight: str | None = None) -> dict:
+    feats = list(FRINGE_FEATURES[regime])
+    w = fit_logit(df[feats].to_numpy(float), df["played"].to_numpy(float), ridge,
+                  None if weight is None else df[weight].to_numpy(float))
+    return {"features": feats, "coef": list(map(float, w))}
+
+
 # --- evaluation (honest: time split + blocked CV) --------------------------------------------
 
-SCENARIOS = ("T-300m", "T-45m", "T-10m")           # ~T-5h, lock-45, lock-10 (the game's own tip)
+SCENARIOS =("T-300m", "T-45m", "T-10m")           # ~T-5h, lock-45, lock-10 (the game's own tip)
 M_GRID = (5.0, 10.0, 20.0, 40.0, 80.0)
 SPLIT_DAY = date(2026, 3, 15)                       # fit <= this; test 03-16 .. 04-12 (RS)
 UNCERTAIN = ("doubtful", "questionable", "probable")

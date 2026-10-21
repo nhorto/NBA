@@ -488,7 +488,12 @@ def live_like_day(conn: sqlite3.Connection, ctx, bundle, live: LiveInputs, day, 
         pa = {(k, int(pid)): float(p_avail[int(pid)])
               for k, pid in zip(panel["key"], panel["player_id"]) if int(pid) in p_avail}
         env = {g: live.environment(g, at) for g in gg["game_id"]}
-        specs = P.build_games(ctx, bundle, conn, d, gg, panel, pa, env, starters)
+        if P.PPLAY == "v2":
+            fix = P.pplay_v2_fix(ctx, panel, p_avail, P.listed_of(rep_extras), starters)
+            specs = P.build_games(ctx, bundle, conn, d, gg, panel, pa, env, starters,
+                                  pp_fix=fix)
+        else:
+            specs = P.build_games(ctx, bundle, conn, d, gg, panel, pa, env, starters)
         r = P.run_games(specs, bundle, n_sims, seed, d)
         pl = r.players.copy()
         pl["status"] = [status.get(int(p), "") for p in pl["player_id"]]

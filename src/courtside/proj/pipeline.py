@@ -34,6 +34,15 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   (`pathA-v0.2+c1`, `pathA-v0.3+c1`, `pathA-v0.4+c1`). Seeds stay on SEED_VERSION, so a v1 run
   shares the environment / availability / minutes draws of its v0 arm. With COPULA "v0" none
   of it runs and every arm is bit-identical to the code before it.
+* **P(play) v2** (p2, 2026-10-21, `pplay_v2_fix`), behind `PPLAY` (default "v1"; env
+  ``COURTSIDE_PPLAY=v2``): on the live candidate paths only, (1) a listed, not-Out player's
+  P(plays | available) is 1, so his total P(play) is the report cell (fit on *played*; the engine's
+  own DNP-CD probability on top counted it twice), and (2) a forced DK-pool player outside the
+  team's last 10 games and not on the report gets the fringe model's P(plays | available)
+  (`availability.fringe_features` / `load_fringe`, DK Classic salary in the season's first
+  games, DK starter flag 0.99) instead of being scored as an active roster player. Version
+  suffix `+p2` on any arm (`pathA-v0.3+p2`, `pathA-v0.3+c1+p2`); bundle and seeds unchanged.
+  With "v1" nothing of it runs (bit-identical); the avail oracle is identical either way.
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -105,6 +114,15 @@ COPULA_DEFAULT = "v0"                  # shipping v1 = "v1" here (env still over
 COPULA_ENV = "COURTSIDE_COPULA"
 COPULA_V1_SUFFIX = "_c1"
 COPULA_V1_TAG = "+c1"
+# P(play) v2 (p2, 2026-10-21; `pplay_v2_fix`). "v1" by default (env COURTSIDE_PPLAY=v2 / v1
+# overrides; `set_pplay` at run time). v2 = a version suffix on whatever arm is active
+# (`pathA-v0.3+p2`, `pathA-v0.3+c1+p2`); the bundle is unchanged (the fringe model ships in the
+# package, `availability.FRINGE_PATH`) and seeds are unchanged (common random numbers).
+# It only acts on the live candidate paths (`project_games`, `backtest.live_like_day`): the
+# avail oracle has no report and no forced pool players, so it is identical either way.
+PPLAY_DEFAULT = "v1"                   # shipping p2 = "v2" here (env still overrides)
+PPLAY_ENV = "COURTSIDE_PPLAY"
+PPLAY_V2_TAG = "+p2"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -125,9 +143,25 @@ def _copula_flag(name: str, default: str = "v0") -> str:
     return default
 
 
-def _versions(on: bool, ext: bool = False, copula: str = "v0") -> tuple[str, str]:
-    """(bundle file suffix, MODEL_VERSION) for the context switch (+ the extended layer) and
-    the copula version (v1 appends `_c1` / `+c1` to whichever arm is active)."""
+def _pplay_flag(name: str, default: str = "v1") -> str:
+    v = os.environ.get(name, "").strip().lower()
+    if v in ("v2", "2", "p2", "true", "yes", "on", "1"):
+        return "v2"
+    if v in ("v1", "p1", "false", "no", "off", "0"):
+        return "v1"
+    return default
+
+
+def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
+              ) -> tuple[str, str]:
+    """(bundle file suffix, MODEL_VERSION) for the context switch (+ the extended layer), the
+    copula version (v1 appends `_c1` / `+c1` to whichever arm is active) and the P(play)
+    version (v2 appends `+p2` to the model version only: same bundle)."""
+    vs, mv = _versions_bundle(on, ext, copula)
+    return vs, (mv + PPLAY_V2_TAG if pplay == "v2" else mv)
+
+
+def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0") -> tuple[str, str]:
     if not on:
         vs, mv = _VS_BASE, MODEL_VERSION_BASE
     elif ext:
@@ -145,7 +179,8 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0") -> tuple[str, str
 CONTEXT_ON = _env_flag(CONTEXT_ENV, CONTEXT_DEFAULT)
 CONTEXT_EXT = _env_flag(CONTEXT_EXT_ENV, CONTEXT_EXT_DEFAULT)
 COPULA = _copula_flag(COPULA_ENV, COPULA_DEFAULT)
-_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA)
+PPLAY = _pplay_flag(PPLAY_ENV, PPLAY_DEFAULT)
+_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY)
 # Seeds use the base version in both states: ON and OFF runs of the same slate/day draw common
 # random numbers, so their difference is the layer, not Monte Carlo noise (OFF is unchanged).
 SEED_VERSION = MODEL_VERSION_BASE
@@ -160,7 +195,7 @@ def set_context(on: bool, ext: bool | None = None) -> None:
     CONTEXT_ON = bool(on)
     if ext is not None:
         CONTEXT_EXT = bool(ext)
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY)
 
 
 def set_copula(version: str) -> None:
@@ -170,7 +205,17 @@ def set_copula(version: str) -> None:
     if version not in ("v0", "v1"):
         raise ValueError(f"unknown copula version {version!r}")
     COPULA = version
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY)
+
+
+def set_pplay(version: str) -> None:
+    """Flip the P(play) switch at run time ("v1" | "v2"): updates PPLAY and MODEL_VERSION
+    together (the bundle suffix does not change)."""
+    global PPLAY, _VS, MODEL_VERSION
+    if version not in ("v1", "v2"):
+        raise ValueError(f"unknown P(play) version {version!r}")
+    PPLAY = version
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY)
 
 
 def context_groups() -> tuple:
@@ -525,9 +570,11 @@ def _stars(panel: pd.DataFrame, rates: pd.DataFrame) -> np.ndarray:
 
 def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
                 games: pd.DataFrame, panel: pd.DataFrame, p_avail: dict, env: dict,
-                starters: set | None = None) -> list[C.GameSpec]:
+                starters: set | None = None, pp_fix: dict | None = None) -> list[C.GameSpec]:
     """GameSpecs from a candidate panel (pregame_panel rows keyed game_id|team, optional
-    `absent` column) and P(available) {(key, player_id): p} (default 1.0; absent -> 0)."""
+    `absent` column) and P(available) {(key, player_id): p} (default 1.0; absent -> 0).
+    `pp_fix` (P(play) v2, `pplay_v2_fix`): {(key, player_id): P(plays | available)} replacing
+    the minutes engine's value for those players (None = the engine everywhere)."""
     panel = panel.reset_index(drop=True)
     q = pd.DataFrame({"player_id": panel["player_id"].astype(np.int64),
                       "game_date": day.isoformat()})
@@ -562,7 +609,10 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
             pl["rotation"] = pl["mpg"].to_numpy() >= 15.0
             if COPULA == "v1":                # position group for the T2.7 tier x position cells
                 pl["grp"] = r["grp"].to_numpy(int)
-            sm = C.ScenarioMinutes(p.drop(columns=["_star"]), b.minutes, shares,
+            pm = p.drop(columns=["_star"])
+            if pp_fix:
+                pm["pp_fix"] = [pp_fix.get((key, int(pid)), np.nan) for pid in pm["player_id"]]
+            sm = C.ScenarioMinutes(pm, b.minutes, shares,
                                    starters=_team_starters(starters, p))
             teams[side] = C.TeamSpec(team=team, players=pl, minutes=sm,
                                      implied=e["home_pts"] if side == "home" else e["away_pts"])
@@ -606,6 +656,51 @@ def apply_context(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
             tf = tf.merge(tfx, on=["game_id", "team"], how="left")
     return CX.apply_rates(b.context, rates, tf, key[0].to_numpy(), key[1].to_numpy(),
                           player_feats=pf)
+
+
+def pplay_v2_fix(ctx: Context, panel: pd.DataFrame, p_avail: dict | None,
+                 listed: set | None, starters: set | None = None,
+                 salaries: dict | None = None) -> dict:
+    """P(play) v2 (`PPLAY == "v2"`): {(key, player_id): P(plays | available)} overrides of the
+    minutes engine on the live candidate path (`build_games(pp_fix=...)`).
+
+    1. **Listed, not Out** (`listed`: the report's players with status in LISTED other than
+       'out'): 1.0. Their P(available) is the report cell, which is fit on *played* (it already
+       contains coach's-decision DNPs), so total P(play) = the calibrated cell. Multiplying it
+       by the engine's own P(plays | available) counted the DNP twice (T2.4: listed bench 0.29
+       vs 0.45 played).
+    2. **Fringe pool players**: forced in (`roster == 0`: not in the team's last 10 games) and
+       not on the report at all: the fringe model `availability.load_fringe()` on
+       `availability.fringe_features` (box history strictly before the day; the DK salary
+       `salaries` {player_id: salary} in the season's first games; a player DK prices at
+       >= `availability.EARLY_ENGINE_SALARY` there keeps the engine's value); DK starter flag
+       -> 0.99.
+       The engine scores these as active roster players (~0.7 vs ~0.25 played).
+    Everybody else keeps the engine's value."""
+    out: dict = {}
+    if not len(panel):
+        return out
+    listed = {int(x) for x in (listed or ())}
+    reported = {int(x) for x in (p_avail or {})}
+    starters = {int(x) for x in (starters or ())}
+    keys = panel["key"].to_numpy(object)
+    pids = panel["player_id"].to_numpy(np.int64)
+    roster = panel["roster"].to_numpy(int) if "roster" in panel else np.ones(len(panel), int)
+    fringe = np.array([r == 0 and int(p) not in reported for r, p in zip(roster, pids)], bool)
+    if fringe.any():
+        f = panel[fringe].reset_index(drop=True)
+        X = AV.fringe_features(f, ctx.h, salaries)
+        pf = AV.load_fringe().p(X)
+        priced = ((X["regime"] == "early") & (X["salary"] >= AV.EARLY_ENGINE_SALARY)).to_numpy()
+        for k, pid, v, keep in zip(f["key"], f["player_id"], pf, priced):
+            if int(pid) in starters:
+                out[(k, int(pid))] = AV.FRINGE_STARTER_P
+            elif not keep:              # season start, DK-priced player: the engine's value
+                out[(k, int(pid))] = float(v)
+    for k, pid in zip(keys, pids):
+        if int(pid) in listed:
+            out[(k, int(pid))] = 1.0
+    return out
 
 
 def _team_starters(starters: set | None, p: pd.DataFrame):
@@ -741,6 +836,11 @@ def report_avail(conn: sqlite3.Connection, day: date, at: datetime, games: pd.Da
     return p_avail, extras, {"n_report_rows": int(len(av)), "n_listed": n_listed}
 
 
+def listed_of(report_extras: dict | None) -> set:
+    """Player ids of `report_avail`'s forced report players (= listed, not 'out')."""
+    return {int(p) for v in (report_extras or {}).values() for p in v}
+
+
 def merge_extras(primary: dict | None, report: dict | None) -> dict:
     """Forced candidates {(game_id, team): [player_id]}. `primary` (the DK pool: each player's
     CURRENT team) wins over `report`, which places unlisted players on their last box-score
@@ -800,9 +900,12 @@ def project_games(conn: sqlite3.Connection, day, games: pd.DataFrame, *, ctx: Co
                   bundle: Bundle, n_sims: int, seed: int, p_avail: dict | None = None,
                   at: datetime | None = None, env_mode: str = "live",
                   extras: dict | None = None, starters: set | None = None,
+                  listed: set | None = None, salaries: dict | None = None,
                   log: Callable[[str], None] | None = None) -> DayResult:
     """Core of the live and report paths: candidates (+ extras), P(available) {player_id: p}
-    (default 1; 0 = out), environment per `env_mode` at `at`, simulate, summarise."""
+    (default 1; 0 = out), environment per `env_mode` at `at`, simulate, summarise.
+    `listed` (the report's listed, not-Out players) and `salaries` ({player_id: DK salary}):
+    P(play) v2 only (`pplay_v2_fix`)."""
     day = _as_date(day)
     panel = candidate_panel(ctx, day, games, extras)
     if env_mode == "live":
@@ -810,7 +913,11 @@ def project_games(conn: sqlite3.Connection, day, games: pd.DataFrame, *, ctx: Co
     pa = {(k, int(pid)): float(p_avail[int(pid)])
           for k, pid in zip(panel["key"], panel["player_id"]) if int(pid) in (p_avail or {})}
     env = {g: environment(conn, g, at, mode=env_mode) for g in games["game_id"]}
-    specs = build_games(ctx, bundle, conn, day, games, panel, pa, env, starters)
+    if PPLAY == "v2":
+        fix = pplay_v2_fix(ctx, panel, p_avail, listed, starters, salaries)
+        specs = build_games(ctx, bundle, conn, day, games, panel, pa, env, starters, pp_fix=fix)
+    else:
+        specs = build_games(ctx, bundle, conn, day, games, panel, pa, env, starters)
     return run_games(specs, bundle, n_sims, seed, day, log)
 
 
@@ -825,8 +932,10 @@ def project_day(conn: sqlite3.Connection, nba_day, at, *, n_sims: int = 25_000,
                 seed: int | None = None, kind: str = "manual", game_ids=None,
                 ctx: Context | None = None, bundle: Bundle | None = None,
                 extras: dict | None = None, starters: set | None = None,
+                salaries: dict | None = None,
                 log: Callable[[str], None] | None = None) -> DayResult:
-    """All games of an NBA day (or `game_ids`) as known at `at`, keyed by NBA player_id."""
+    """All games of an NBA day (or `game_ids`) as known at `at`, keyed by NBA player_id.
+    `salaries` {player_id: DK salary}: read by P(play) v2 only."""
     t0 = time.time()
     day = _as_date(nba_day)
     at = _aware(at)
@@ -840,7 +949,7 @@ def project_day(conn: sqlite3.Connection, nba_day, at, *, n_sims: int = 25_000,
     ex = merge_extras(extras, rep_extras)
     res = project_games(conn, day, games, ctx=ctx, bundle=b, n_sims=n_sims, seed=seed,
                         p_avail=p_avail, at=at, env_mode="live", extras=ex, starters=starters,
-                        log=log)
+                        listed=listed_of(rep_extras), salaries=salaries, log=log)
     res.meta.update({"seconds_total": round(time.time() - t0, 2), "at": _iso(at),
                      "kind": kind, **avinfo})
     return res
@@ -878,6 +987,7 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
         dk2nba = IDS.nba_ids(conn, "dk", dk_ids)
     extras: dict = {}
     starters: set = set()
+    salaries: dict = {}
     for p in pool.players:
         nid = dk2nba.get(str(p.dk_player_id))
         if nid is None or not p.game_id or not p.team:
@@ -885,10 +995,15 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
         extras.setdefault((p.game_id, p.team), []).append(nid)
         if p.starter:
             starters.add(nid)
+        if p.salary and pool.game_type_id == CLASSIC_GAME_TYPE:
+            salaries.setdefault(nid, int(p.salary))
     if seed is None:
         seed = stable_seed(sid, kind, SEED_VERSION)
+    if PPLAY == "v2" and pool.game_type_id != CLASSIC_GAME_TYPE:
+        salaries = classic_salaries(conn, day)          # Showdown prices are another scale
     res = project_day(conn, day, at, n_sims=n_sims, seed=seed, kind=kind, game_ids=game_ids,
-                      ctx=ctx, bundle=bundle, extras=extras, starters=starters or None, log=log)
+                      ctx=ctx, bundle=bundle, extras=extras, starters=starters or None,
+                      salaries=salaries if PPLAY == "v2" else None, log=log)
     nba2dk = {}
     for dk, nid in dk2nba.items():
         nba2dk.setdefault(nid, dk)
@@ -906,6 +1021,29 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
     meta["seconds"] = round(time.time() - t0, 2)
     meta.update(res.meta)
     out.meta = meta
+    return out
+
+
+CLASSIC_GAME_TYPE = 70                  # DK NBA Classic (the fringe model's salary scale)
+
+
+def classic_salaries(conn: sqlite3.Connection, day: date) -> dict[int, int]:
+    """{NBA player_id: DK Classic salary} over the day's Classic slates (latest capture wins);
+    P(play) v2 reads it for Showdown slates, whose prices are on another scale."""
+    from . import ids as IDS
+    rows = conn.execute(
+        "SELECT d.site_player_id, d.salary FROM dfs_salaries d JOIN dfs_slates s "
+        "ON s.slate_id = d.slate_id WHERE s.nba_day=? AND s.game_type_id=? AND d.salary>0 "
+        "AND d.site_player_id IS NOT NULL ORDER BY d.captured_at, d.id",
+        (_as_date(day).isoformat(), CLASSIC_GAME_TYPE)).fetchall()
+    if not rows:
+        return {}
+    dk2nba = IDS.nba_ids(conn, "dk", sorted({str(r[0]) for r in rows}))
+    out: dict[int, int] = {}
+    for dk, sal in rows:
+        nid = dk2nba.get(str(dk))
+        if nid is not None:
+            out[int(nid)] = int(sal)
     return out
 
 
@@ -1016,7 +1154,7 @@ def project_historical(conn: sqlite3.Connection, game_date, *, protocol: str = "
         p_avail, extras, avinfo = report_avail(conn, day, at, games)
         res = project_games(conn, day, games, ctx=ctx, bundle=b, n_sims=n_sims, seed=seed,
                             p_avail=p_avail, at=None, env_mode="closing", extras=extras,
-                            log=log)
+                            listed=listed_of(extras), log=log)
         res.meta.update({"at": _iso(at), **avinfo})
     else:
         games, panel, p_avail = historical_inputs(conn, ctx, day, protocol=protocol)

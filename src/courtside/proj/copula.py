@@ -374,6 +374,8 @@ class ScenarioMinutes:
         self.tgt = M._team_target(p, params)
         self.starters = (None if starters is None
                          else p["player_id"].isin({int(s) for s in starters}).to_numpy())
+        # P(play) v2 (pipeline.pplay_v2_fix): P(plays | available) overrides, NaN = the engine
+        self.pp_fix = p["pp_fix"].to_numpy(float) if "pp_fix" in p else None
         self._cache: dict[bytes, pd.DataFrame] = {}
 
     def __len__(self) -> int:
@@ -387,6 +389,8 @@ class ScenarioMinutes:
             return hit
         p = self.panel
         base, pp = M.base_and_pplay(p, self.params, absent)
+        if self.pp_fix is not None:
+            pp = np.where(np.isfinite(self.pp_fix), self.pp_fix, pp)
         share = (self.shares.matrix(self.date, self.pids, absent)
                  if self.shares is not None else None)
         mean, det = M.project_arrays(base, pp, absent, self.g1, self.g2, self.st10, self.ew,
