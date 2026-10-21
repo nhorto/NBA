@@ -467,3 +467,33 @@ def test_check_signs_unit():
     assert W.check_signs("Minutes cost him 10.0 and rebounds added 7.2.", sg, terms) == []
     assert W.check_signs("Rebounds cost him 7.2.", sg, terms)
     assert W.check_signs("He finished with 35.5 DK points, +10.0 against our number.", sg, terms) == []
+
+
+def test_absent_regulars_ignores_players_traded_away_in_the_summer():
+    """Opener 2026-10-20: last season's BOS regular Jaylen Brown (now PHI) was reported as
+    'did not play' for BOS. The current roster snapshot and tonight's box rule him out."""
+    import sqlite3
+    from courtside.proj import why_v0 as W
+    c = sqlite3.connect(":memory:")
+    c.executescript("""
+        CREATE TABLE team_games (game_id TEXT, team TEXT, game_date TEXT);
+        CREATE TABLE player_games (game_id TEXT, team TEXT, player_id INTEGER, player_name TEXT,
+                                   min REAL);
+        CREATE TABLE team_rosters (season TEXT, team_id INTEGER, team TEXT, player_id INTEGER,
+                                   player TEXT);
+    """)
+    for i in range(5):
+        c.execute("INSERT INTO team_games VALUES (?, 'BOS', ?)", (f"g{i}", f"2026-04-0{i + 1}"))
+        for pid, name in ((1, "Jaylen Brown"), (2, "Jayson Tatum"), (3, "Derrick White")):
+            c.execute("INSERT INTO player_games VALUES (?, 'BOS', ?, ?, 34)", (f"g{i}", pid, name))
+    box = {2: {"team": "BOS", "min": 33}}            # Tatum played; White did not
+    # no roster snapshot yet: the heuristic keeps everyone who did not play
+    assert set(W.absent_regulars(c, "x", "BOS", "2026-10-20", box)) == {"Jaylen Brown",
+                                                                         "Derrick White"}
+    # Brown played for PHI tonight -> not a BOS absence
+    box_phi = {**box, 1: {"team": "PHI", "min": 30}}
+    assert W.absent_regulars(c, "x", "BOS", "2026-10-20", box_phi) == ["Derrick White"]
+    # roster snapshot without Brown -> not a BOS absence even if he sat for PHI
+    for pid in (2, 3):
+        c.execute("INSERT INTO team_rosters VALUES ('2026-27', 1, 'BOS', ?, '')", (pid,))
+    assert W.absent_regulars(c, "x", "BOS", "2026-10-20", box) == ["Derrick White"]

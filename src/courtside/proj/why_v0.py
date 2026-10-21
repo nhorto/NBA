@@ -305,6 +305,21 @@ def _game_context(conn: sqlite3.Connection, gid: str) -> dict:
     return ctx
 
 
+def _current_roster(conn: sqlite3.Connection, team: str, day: str) -> set[int] | None:
+    """Player ids on `team`'s official roster snapshot for the season of `day` (`team_rosters`),
+    or None when there is no snapshot. Without it, last season's regulars who were traded in the
+    summer read as "did not play" for their old team (opener 2026-10-20: Jaylen Brown for BOS)."""
+    d = date.fromisoformat(str(day)[:10])
+    y = d.year if d.month >= 8 else d.year - 1
+    try:
+        ids = {int(r[0]) for r in conn.execute(
+            "SELECT player_id FROM team_rosters WHERE season=? AND team=?",
+            (f"{y}-{(y + 1) % 100:02d}", team))}
+    except sqlite3.OperationalError:
+        return None
+    return ids or None
+
+
 def absent_regulars(conn: sqlite3.Connection, gid: str, team: str, day: str,
                     box: dict[int, dict]) -> list[str]:
     """Players of `team` who played in >= 3 of its previous 5 games for >= 20 min on average
@@ -323,8 +338,11 @@ def absent_regulars(conn: sqlite3.Connection, gid: str, team: str, day: str,
             a = agg[int(pid)]
             a[0], a[1], a[2] = name, a[1] + 1, a[2] + float(mn)
     played = {pid for pid, r in box.items() if (r.get("min") or 0) > 0 and r.get("team") == team}
+    elsewhere = {pid for pid, r in box.items() if r.get("team") not in (None, team)}
+    roster = _current_roster(conn, team, day)
     regs = [(a[2] / a[1], a[0]) for pid, a in agg.items()
-            if a[1] >= 3 and a[2] / a[1] >= 20.0 and pid not in played and a[0]]
+            if a[1] >= 3 and a[2] / a[1] >= 20.0 and pid not in played and a[0]
+            and pid not in elsewhere and (roster is None or pid in roster)]
     regs.sort(reverse=True)
     return [n for _, n in regs[:3]]
 
