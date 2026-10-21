@@ -120,7 +120,7 @@ COPULA_V1_TAG = "+c1"
 # package, `availability.FRINGE_PATH`) and seeds are unchanged (common random numbers).
 # It only acts on the live candidate paths (`project_games`, `backtest.live_like_day`): the
 # avail oracle has no report and no forced pool players, so it is identical either way.
-PPLAY_DEFAULT = "v1"                   # shipping p2 = "v2" here (env still overrides)
+PPLAY_DEFAULT = "v2"                   # shipped 2026-10-21 (owner OK; env still overrides)
 PPLAY_ENV = "COURTSIDE_PPLAY"
 PPLAY_V2_TAG = "+p2"
 

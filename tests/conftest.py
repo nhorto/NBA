@@ -1,4 +1,11 @@
+import os
+
 import pytest
+
+# The shipped default is P(play) v2 (`proj/pipeline.py` PPLAY_DEFAULT). Tests of the other model
+# switches assert their own exact version strings, so the suite runs with v2 off;
+# tests/test_proj_pplay_v2.py turns it on explicitly (`set_pplay`).
+os.environ.setdefault("COURTSIDE_PPLAY", "v1")
 
 
 @pytest.fixture(autouse=True)

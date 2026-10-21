@@ -31,7 +31,7 @@ def restore():
 # ------------------------------------------------------------------------- switch, versions
 
 def test_default_off_and_versions_compose(restore, monkeypatch):
-    assert P.PPLAY_DEFAULT == "v1"
+    assert P.PPLAY_DEFAULT == "v2"                                   # shipped 2026-10-21
     for v, want in (("v2", "v2"), ("1", "v2"), ("on", "v2"), ("v1", "v1"), ("off", "v1"),
                     ("", "v1"), ("junk", "v1")):
         monkeypatch.setenv(P.PPLAY_ENV, v)
