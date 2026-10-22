@@ -67,6 +67,10 @@ LOCK10_WINDOW = (12 * 60, 7 * 60)
 SWAP_WINDOW = LOCK10_WINDOW
 LOCK10_MAX_LEAD = 25 * 60      # adaptive lock10: never start earlier than lock - 25 min
 LOCK10_FINISH_BY = 3 * 60      # ... and aim to finish this long before the lock
+LOCK10_LATE_MIN = 2 * 60       # a missed lock10 may still start until lock - 2 min ...
+LOCK10_LATE_PAD = 60           # ... when 1.25 x its build estimate + this fits before the lock
+TICK_INTERVAL_S = 5 * 60       # launchd fires the tick every 5 min (a busy tick skips a fire)
+SWAP_EST_S = 30.0              # a swap run's time, for the pull-forward check
 TOLERANCE_S = 30               # launchd / systemd start a few seconds late
 SWAP_LEAD = timedelta(minutes=10)
 FALLBACK_VERSION = "fppg-fallback"
@@ -964,6 +968,32 @@ def _in_window(delta_s: float, window: tuple[int, int]) -> bool:
     return near - TOLERANCE_S <= delta_s <= far
 
 
+def build_estimate(conn: sqlite3.Connection, slate_ids: list, lock: datetime, *,
+                   fallback: bool = False) -> float:
+    """Seconds to build `slate_ids` one after another: each slate's latest successful lock45
+    (else any non-swap) build from the 6 h before `lock`. A slate with no such build counts 0,
+    or with `fallback` the slowest non-swap build of any slate in those 6 h (a slate's first
+    build of the day has no history of its own)."""
+    since = iso(lock - timedelta(hours=6))
+    worst = None
+    est = 0.0
+    for sid in slate_ids:
+        r = conn.execute(
+            "SELECT seconds FROM dfs_runs WHERE slate_id=? AND ok=1 AND kind!='swap' "
+            "AND created_at>=? AND seconds IS NOT NULL "
+            "ORDER BY (kind='lock45') DESC, created_at DESC LIMIT 1", (str(sid), since)).fetchone()
+        if r:
+            est += float(r[0])
+        elif fallback:
+            if worst is None:
+                w = conn.execute(
+                    "SELECT MAX(seconds) FROM dfs_runs WHERE ok=1 AND kind!='swap' AND "
+                    "created_at>=? AND seconds IS NOT NULL", (since,)).fetchone()
+                worst = float(w[0]) if w and w[0] is not None else 0.0
+            est += worst
+    return est
+
+
 def lock10_window(conn: sqlite3.Connection, slate_ids: list, lock: datetime) -> tuple[int, int]:
     """The lock10 window for the slates that share `lock`, widened when builds are slow.
 
@@ -973,28 +1003,18 @@ def lock10_window(conn: sqlite3.Connection, slate_ids: list, lock: datetime) -> 
     earlier (capped at LOCK10_MAX_LEAD) and stays 5 min wide. The Mac is shared with CI: on
     2026-10-20 a lock45 build took 574 s at load ~150 (27 s unloaded), which would have
     finished the default lock10 run at the lock."""
-    est = 0.0
-    since = iso(lock - timedelta(hours=6))
-    for sid in slate_ids:
-        r = conn.execute(
-            "SELECT seconds FROM dfs_runs WHERE slate_id=? AND ok=1 AND kind!='swap' "
-            "AND created_at>=? AND seconds IS NOT NULL "
-            "ORDER BY (kind='lock45') DESC, created_at DESC LIMIT 1", (str(sid), since)).fetchone()
-        est += float(r[0]) if r else 0.0
+    est = build_estimate(conn, slate_ids, lock)
     far = int(min(LOCK10_MAX_LEAD, max(LOCK10_WINDOW[0], 1.25 * est + LOCK10_FINISH_BY)))
     if far <= LOCK10_WINDOW[0]:
         return LOCK10_WINDOW
     return far, far - (LOCK10_WINDOW[0] - LOCK10_WINDOW[1])
 
 
-def due_runs(conn: sqlite3.Connection, now: datetime) -> list[dict]:
-    """The (slate, kind[, tip]) whose window contains `now`, with ``done`` set when an ok run
-    already exists. Reads ``dfs_slates`` / ``dfs_salaries`` / ``dfs_runs`` only."""
-    now = _utc(now)
+def _slate_locks(conn: sqlite3.Connection, now: datetime):
+    """([(slate, tips, lock)], {lock: [slate_id]}) for slates locking from 14 h ago to 1 day out."""
     rows = conn.execute("SELECT * FROM dfs_slates WHERE lock_utc>=? AND lock_utc<=? "
                         "ORDER BY lock_utc, slate_id",
                         (iso(now - timedelta(hours=14)), iso(now + timedelta(days=1)))).fetchall()
-    out = []
     slates = []
     for r in rows:
         slate = dict(r)
@@ -1004,7 +1024,68 @@ def due_runs(conn: sqlite3.Connection, now: datetime) -> list[dict]:
     for slate, _, lock in slates:
         if lock is not None:
             by_lock.setdefault(lock, []).append(slate["slate_id"])
+    return slates, by_lock
+
+
+def _late_from(conn: sqlite3.Connection, slate_ids: list, lock: datetime) -> int | None:
+    """Seconds before the lock until which a missed lock10 may still start (None: no room
+    left after the window)."""
+    est = build_estimate(conn, slate_ids, lock)
+    late = int(max(LOCK10_LATE_MIN, 1.25 * est + LOCK10_LATE_PAD))
+    return late if late < lock10_window(conn, slate_ids, lock)[1] - TOLERANCE_S else None
+
+
+def pull_forward(conn: sqlite3.Connection, now: datetime, todo: list[dict]) -> list[dict]:
+    """lock10 runs to start NOW, ahead of `todo`, because running `todo` first would carry the
+    tick past their window (the tick runs one build after another and a busy tick skips the next
+    launchd fire). On 2026-10-21 a 7:30 PM slate's lock45 builds held the tick from 18:45 to
+    18:50 ET and the 7:00 PM main slate's lock10 window (18:46-18:51) passed unrun.
+
+    Only lock10s whose window has not opened yet, that are not done, and that are no more than
+    LOCK10_MAX_LEAD before their lock."""
+    now = _utc(now)
+    rest = [d for d in todo if d["kind"] != "lock10"]
+    if not rest:
+        return []
+    est = 0.0
+    for d in rest:
+        if d["kind"] == "swap":
+            est += SWAP_EST_S
+        else:
+            est += build_estimate(conn, [d["slate_id"]], _parse_ts(d["event"]), fallback=True)
+    busy_until = now + timedelta(seconds=est + TICK_INTERVAL_S)
+    queued = {(d["slate_id"], d["kind"]) for d in todo}
+    out = []
+    slates, by_lock = _slate_locks(conn, now)
+    tag = {sl["slate_id"]: sl["tag"] for sl, _, _ in slates}
+    for lock, sids in sorted(by_lock.items()):
+        lead = (lock - now).total_seconds()
+        far, near = lock10_window(conn, sids, lock)
+        if not (far < lead <= LOCK10_MAX_LEAD):         # window open / passed, or too early
+            continue
+        if lock - timedelta(seconds=near) > busy_until:  # a later tick still lands in the window
+            continue
+        for sid in sids:
+            if (sid, "lock10") in queued or run_done(conn, sid, "lock10", None) is not None:
+                continue
+            out.append({"slate_id": sid, "kind": "lock10", "trigger": None, "event": iso(lock),
+                        "tag": tag.get(sid), "done": False,
+                        "note": f"pulled forward {int(lead - far)} s: other builds would run "
+                                "past its window"})
+    return out
+
+
+_RUN_ORDER = {"lock10": 0, "swap": 1, "manual": 2, "lock45": 3}
+
+
+def due_runs(conn: sqlite3.Connection, now: datetime) -> list[dict]:
+    """The (slate, kind[, tip]) whose window contains `now`, with ``done`` set when an ok run
+    already exists. Reads ``dfs_slates`` / ``dfs_salaries`` / ``dfs_runs`` only."""
+    now = _utc(now)
+    slates, by_lock = _slate_locks(conn, now)
+    out = []
     l10 = {lock: lock10_window(conn, sids, lock) for lock, sids in by_lock.items()}
+    late = {lock: _late_from(conn, sids, lock) for lock, sids in by_lock.items()}
     for slate, tips, lock in slates:
         sid = slate["slate_id"]
         if lock is None:
@@ -1014,6 +1095,11 @@ def due_runs(conn: sqlite3.Connection, now: datetime) -> list[dict]:
             if _in_window(d, win):
                 out.append({"slate_id": sid, "kind": kind, "trigger": None,
                             "event": iso(lock), "tag": slate["tag"]})
+        if late[lock] is not None and late[lock] <= d < l10[lock][1] - TOLERANCE_S:
+            # the lock10 window passed (a long tick ate it): catch up while a build still
+            # finishes before the lock (only fires when no lock10 run exists, see below)
+            out.append({"slate_id": sid, "kind": "lock10", "trigger": None,
+                        "event": iso(lock), "tag": slate["tag"], "late": True})
         if not is_showdown(slate):
             for t in tips:
                 if t > lock and _in_window((t - now).total_seconds(), SWAP_WINDOW):
@@ -1021,6 +1107,8 @@ def due_runs(conn: sqlite3.Connection, now: datetime) -> list[dict]:
                                 "event": iso(t), "tag": slate["tag"]})
     for d in out:
         d["done"] = run_done(conn, d["slate_id"], d["kind"], d["trigger"]) is not None
+    out = [d for d in out if not (d.get("late") and d["done"])]     # catch-up only when missed
+    for d in out:
         if d["kind"] == "swap" and not d["done"] and not current_lineups(conn, d["slate_id"]):
             d["done"] = True
             d["note"] = "no saved lineups to swap"
@@ -1059,6 +1147,10 @@ def tick(conn: sqlite3.Connection, now: datetime | None = None, *, dry_run: bool
     out = [{**d, "action": "already_done"} for d in due if d["done"]]
     if not todo:
         return out
+    # the lock nearest in time first, lock10s before swaps before lock45s; plus any lock10 the
+    # rest of the tick would push out of its window
+    todo = pull_forward(conn, now, todo) + todo
+    todo.sort(key=lambda d: (d["event"], _RUN_ORDER.get(d["kind"], 9)))
     if dry_run:
         return out + [{**d, "action": "would_run"} for d in todo]
     with _tick_lock() as got:

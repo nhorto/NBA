@@ -252,7 +252,10 @@ def test_tick_window_edges(conn):
     assert due(47, 1) == [] and due(48) == []
     assert due(39) == [] and due(30) == [] and due(13) == []
     assert due(12) == ["lock10"] and due(7) == ["lock10"]
-    assert due(6) == [] and due(1) == [] and due(0) == []
+    # window missed: a late catch-up until lock - LOCK10_LATE_MIN (no build history here)
+    assert due(6) == ["lock10"] and due(2) == ["lock10"]
+    assert [d.get("late") for d in runner.due_runs(conn, lock - timedelta(minutes=6))] == [True]
+    assert due(1) == [] and due(0) == []
     assert due(-60) == []                      # an hour after the first lock: nothing until swap
     swap = runner.due_runs(conn, T(G2) - timedelta(minutes=10))
     assert [d["done"] for d in swap] == [True]        # nothing saved to swap: nothing to do
@@ -265,7 +268,7 @@ def test_tick_window_edges(conn):
 def test_tick_makes_no_request_outside_windows(conn, no_net):
     capture(conn, "S1", payload([G1, G2]), at="2026-10-20T20:00:00Z")
     save_fake_lineups(conn, "S1")
-    for minutes in (300, 120, 60, 30, 20, 3, 0, -30):
+    for minutes in (300, 120, 60, 30, 20, 1, 0, -30):
         assert runner.tick(conn, T(G1) - timedelta(minutes=minutes)) == []
     # the no-op path does not even write
     n = conn.execute("SELECT COUNT(*) FROM dfs_runs").fetchone()[0]
@@ -864,3 +867,75 @@ def test_lock10_window_widens_when_builds_are_slow(conn):
     assert runner.lock10_window(conn, ["X1"], lock)[0] == runner.LOCK10_MAX_LEAD   # capped
     conn.execute(ins, ("f", "X3", "lock45", "2026-10-20T08:00:00Z", 5000.0, 1))    # > 6 h ago
     assert runner.lock10_window(conn, ["X3"], lock) == runner.LOCK10_WINDOW
+
+
+def test_late_catch_up_only_when_lock10_missed_and_time_fits(conn):
+    capture(conn, "S1", payload([G1, G2]), at="2026-10-20T20:00:00Z")
+    lock = T(G1)
+    ins = ("INSERT INTO dfs_runs (run_id, slate_id, kind, created_at, seconds, ok) "
+           "VALUES (?,?,?,?,?,?)")
+
+    def kinds(minutes):
+        return [d["kind"] for d in runner.due_runs(conn, lock - timedelta(minutes=minutes))
+                if not d["done"]]
+    conn.execute(ins, ("a", "S1", "lock45", runner.iso(lock - timedelta(minutes=45)), 200.0, 1))
+    # 200 s builds: catch-up only while 1.25 x 200 + 60 = 310 s fit before the lock
+    assert kinds(6) == ["lock10"] and kinds(5.3) == ["lock10"] and kinds(5.1) == []
+    conn.execute(ins, ("b", "S1", "lock10", runner.iso(lock - timedelta(minutes=11)), 200.0, 1))
+    assert runner.due_runs(conn, lock - timedelta(minutes=6)) == []     # done: no catch-up
+    # builds too slow for any catch-up after the window
+    conn.execute("DELETE FROM dfs_runs WHERE run_id='b'")
+    conn.execute(ins, ("c", "S1", "lock45", runner.iso(lock - timedelta(minutes=44)), 500.0, 1))
+    far, near = runner.lock10_window(conn, ["S1"], lock)
+    assert runner._late_from(conn, ["S1"], lock) is None
+    assert kinds(near / 60 - 1) == []
+
+
+def test_pull_forward_runs_an_imminent_lock10_before_long_builds(conn):
+    """2026-10-21: S1 (main, 7:00 PM lock) builds took ~520 s, so its lock10 window opened
+    about 14 min before the lock; at 18:45 the tick started S2's lock45 (7:30 PM) builds, which
+    ran past S1's window. Now S1's lock10 runs first, pulled forward."""
+    capture(conn, "S1", payload([G1, G2]), at="2026-10-20T20:00:00Z")
+    lock1 = T(G1)
+    capture(conn, "S2", payload([G2, G3]), at="2026-10-20T20:00:00Z", tag="turbo")
+    lock2 = runner.slate_lock(runner._slate(conn, "S2"), runner.slate_tips(conn, "S2"))
+    ins = ("INSERT INTO dfs_runs (run_id, slate_id, kind, created_at, seconds, ok) "
+           "VALUES (?,?,?,?,?,?)")
+    conn.execute(ins, ("a", "S1", "lock45", runner.iso(lock1 - timedelta(minutes=45)), 520.0, 1))
+    far, near = runner.lock10_window(conn, ["S1"], lock1)
+    now = lock1 - timedelta(seconds=far + 50)          # the window opens in 50 s
+    todo = [{"slate_id": "S2", "kind": "lock45", "trigger": None, "event": runner.iso(lock2),
+             "tag": "turbo", "done": False}]
+    pulled = runner.pull_forward(conn, now, todo)
+    assert [(d["slate_id"], d["kind"]) for d in pulled] == [("S1", "lock10")]
+    # far from the window (a later tick still lands in it): nothing pulled
+    assert runner.pull_forward(conn, lock1 - timedelta(minutes=24), todo) == []
+    # beyond the max lead: never
+    assert runner.pull_forward(conn, lock1 - timedelta(seconds=runner.LOCK10_MAX_LEAD + 60),
+                               todo) == []
+    # nothing else queued: nothing to pull ahead of
+    assert runner.pull_forward(conn, now, []) == []
+    # already done: nothing pulled
+    conn.execute(ins, ("b", "S1", "lock10", runner.iso(now), 520.0, 1))
+    assert runner.pull_forward(conn, now, todo) == []
+
+
+def test_tick_runs_pulled_lock10_first(conn, monkeypatch):
+    """tick wiring: the pulled lock10 (earlier lock) runs before the due lock45."""
+    l1, l2 = "2026-10-20T23:00:00Z", "2026-10-20T23:30:00Z"
+    monkeypatch.setattr(runner, "due_runs", lambda c, n: [
+        {"slate_id": "S2", "kind": "lock45", "trigger": None, "event": l2, "tag": "turbo",
+         "done": False}])
+    monkeypatch.setattr(runner, "pull_forward", lambda c, n, todo: [
+        {"slate_id": "S1", "kind": "lock10", "trigger": None, "event": l1, "tag": "main",
+         "done": False, "note": "pulled forward"}])
+    order = []
+
+    def fake_run(c, slate_id, kind, *, now, tip=None, **kw):
+        order.append((slate_id, kind))
+        return {"status": "ok"}
+    monkeypatch.setattr(runner, "run_slate", fake_run)
+    monkeypatch.setattr(runner, "refresh_inputs", lambda c, n: {})
+    res = runner.tick(conn, T("2026-10-20T22:45:00Z"))
+    assert order == [("S1", "lock10"), ("S2", "lock45")]
+    assert res[0].get("note") == "pulled forward"
