@@ -125,7 +125,7 @@ Operational notes:
 ## 6. Open follow-ups (not in PLAYERS.md)
 
 - **Sync the player data, the PBP and the 2025-26 injury rows to the Mac** after the backfill (§2).
-- **Investigate the game model's in-season overconfidence** (slope ≈ 0.8 on the 2025-26 replay). Candidates are early-season priors and missing injury data in the replay. The monitoring will show live evidence.
+- **Game model in-season overconfidence: investigated 2026-10-21 (`docs/research/game-calibration.md`), not real at season level.** The 0.8 slope came from a replay that stopped 2026-02-20; the full 2025-26 replay gives 0.97 (0.07), all 14 seasons 0.98 (0.02), and the closing line was just as overconfident in Dec/Jan. Missing injury rows: no effect. The model-only part is its departures from the market (2025-26 team-level spread). Pull-toward-close (w ≈ 0.2–0.3) is −2.3 SE log loss but 2024-25 +1.06 SE, so it misses the bar; re-check after 2026-27. Expect the live monitor to warn around January (the market would too).
 - **The `predictions` view `latest_pretip_predictions` only shows champion/NULL rows,** and shadow rows have model = version id (MLOPS.md).
 - **Opening night is 2026-10-20 (first tip 19:00Z).** On 10-21, check the first real Brief, the props, the referee capture, DFS salaries and `/health`.
 - **(Optional) Log in `claude` on the Mac's desktop,** so the writer uses Claude rather than Codex there.
