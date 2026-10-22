@@ -501,3 +501,19 @@ def test_report_prints_latest_snapshot(conn, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "DFS tracking as of 2026-10-20" in out and "dk_mae" in out and "S0" in out
     assert G._grade_cmd(argparse.Namespace(date="2026-10-20", force=False)) == 0
+
+
+def test_manual_runs_count_only_on_nights_without_scheduled_runs():
+    import pandas as pd
+    df = pd.DataFrame([
+        # night 1: scheduled lock10 for p1; a manual build also has p1 and p2 (p2 later dropped)
+        dict(game_id="g1", player_id=1, day="d1", kind="lock10", created_at="2"),
+        dict(game_id="g1", player_id=1, day="d1", kind="manual", created_at="1"),
+        dict(game_id="g1", player_id=2, day="d1", kind="manual", created_at="1"),
+        # night 2: manual only -> kept; a run-less row (kind NULL) counts as manual
+        dict(game_id="g2", player_id=3, day="d2", kind="manual", created_at="1"),
+        dict(game_id="g2", player_id=4, day="d2", kind=None, created_at="1"),
+    ])
+    out = G._one_per_player(df)
+    got = sorted(zip(out["day"], out["player_id"], out["kind"].fillna("-")))
+    assert got == [("d1", 1, "lock10"), ("d2", 3, "manual"), ("d2", 4, "-")]

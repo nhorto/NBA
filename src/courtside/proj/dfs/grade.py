@@ -1052,6 +1052,16 @@ def _player_frame(conn, lo: date, hi: date) -> pd.DataFrame:
     df = pd.read_sql_query(q, conn, params=(lo.isoformat(), hi.isoformat()))
     if df.empty:
         return df
+    return _one_per_player(df)
+
+
+def _one_per_player(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per (game, player): lock10 > lock45 > manual > swap, newest first. Manual builds
+    (often earlier, an older model, players the lock runs later dropped) count only on nights
+    with no scheduled run (the weekly report's rule, proj/reports.dedupe)."""
+    manual = ~df["kind"].isin(("lock10", "lock45", "swap"))
+    sched_days = set(df.loc[~manual, "day"])
+    df = df[~manual | ~df["day"].isin(sched_days)].copy()
     df["prio"] = df["kind"].map(KIND_PRIORITY).fillna(2)
     df = df.sort_values(["prio", "created_at"], ascending=[True, False])
     return df.drop_duplicates(["game_id", "player_id"]).reset_index(drop=True)
@@ -1059,7 +1069,8 @@ def _player_frame(conn, lo: date, hi: date) -> pd.DataFrame:
 
 def player_snapshot_rows(conn, day: date, win: str, cache: dict | None = None) -> list[tuple]:
     """(model, metric, n, value, se, details) rows of player_metric_snapshots for one window.
-    Population: one row per (game, player) (lock10 run preferred), projected minutes >= 10,
+    Population: one row per (game, player) (lock10 run preferred; manual runs only on nights
+    with no scheduled run), projected minutes >= 10,
     DNP scored 0, never filtered on actual minutes (PLAYERS.md §7.2). 'fppg' and 'salary' are
     scored on their own available rows; the paired gains use the rows all three have. Positive
     bias = over-projection. SEs are clustered by game (>= 5 games)."""
