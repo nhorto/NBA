@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-22 ~04:10 ET (day 2; live model pathA-v0.3+p2).*
+*Last updated 2026-10-22 ~05:50 ET (day 2; live model pathA-v0.3+p2).*
 
 ## 0. Where we are, in one paragraph
 
@@ -80,7 +80,7 @@ Operational notes:
 - **Minutes fix (`COURTSIDE_MINFIX=1`, `+mf`, 731598a): OFF, clears the bar, owner decision.** Cause: the engine's P(plays | available) logit ignored the GBM's plan for the night (demoted bench +0.05–0.06 too likely to play, promoted −0.065), and the noise was fit on residuals that already held the margin effect (stars/starters too wide; ~0.6 min/game shifted stars → bench). Fix: plan + depth rank in the P(plays) logit; noise fit net of the margin curve, then per-tier location/scale calibrated by simulation (seasons < S). CRPS vs OFF (2023-24 / 2024-25 harness; live / live10 with real tip times; RotoGuru 2019-20 / 2020-21): **+mf −6.1 / −5.2, −2.6 / −3.7, −3.7 / −3.0; +mf+mr(B) −7.2 / −6.4, −2.9 / −3.0, −4.5 / −5.2**; +mf+mr(C) and +mf+pre also pass but are weaker. No tier worse (worst z −0.7). With +mf, +mr no longer costs the bench. Before shipping +mf+mr, refit the +mr training plans from the +mf engine. Debut reserve (+pre) driver capped to the training range (OKC opener still a miss). Planned-demotion rows only partly fixed.
 - **`+pq` version tag wired** (fd4b02e): `COURTSIDE_PPLAYQ=1` → `pathA-v0.3+p2+pq`; same bundle and seeds.
 - **Owner decisions pending (all OFF):** `+mf` (or `+mf+mr`), `+pq`. Ship prep done: the 2026-27 `_mf` bundle is pre-fit (129 s on the Mac, from prod's `bundle_2026-27_v1_cx.json`) in `~/Developer/courtside-compute/ship/data/proj/`; copy `bundle_2026-27_v1_cx_mf.json` + `minutes_params_2026-27_v1_mf.json` into `~/Developer/NBA/var/proj/` before flipping `MINFIX_DEFAULT`, so a switch-on does not fit at lock time. End-to-end check on the 10-20/10-21 nights via `project_day` (no DK status inputs, so absolute numbers run high for both arms): paired DK abs error +mf − OFF −0.27 (game-clustered SE 0.05, 14 games); 80% coverage 0.714 → 0.697.
-- **In progress:** blowout minutes (`COURTSIDE_BLOWOUT`, `+bo`), evaluated on OFF and +mf.
+- **Blowout minutes (`COURTSIDE_BLOWOUT=1`, `+bo`, 510d8e1): OFF, misses the bar.** Real gap: at the actual final margin the sims gave stars +1.4–1.6 min too few in close games and 2.2–2.5 too many at 26+ (+mf doesn't change it). Cause: bench P(play) and the outside-set reserve ignore the margin, and the 240 refill hands minutes back to starters. The stage fixes calibration at the margin (star PIT 0.455 → 0.524 at 26+), but CRPS is −1.5 / −1.5 SE (2023-24 / 2024-25; bar is 2), live −4.5 / −4.1; over +mf it adds ~0 in the harness seasons (rotation +1.9 SE in 2023-24). The gain scales with the season's blowout share (2025-26: −2.8 SE). Lineup sim spread gets slightly wider, so blowouts are not why copula v1 ranges were too wide; next lever there is refitting c1's dispersion and winner/loser shift. Remaining blowout error is per-minute (stars in big wins 2.0–2.6 DK low at the right minutes).
 
 **Next (in order):**
 1. Watch tonight's lock runs (first lock 19:00 ET) and tomorrow's 03:00 grading under `pathA-v0.3+p2`; add a `+p2` block to `live_like_baseline.json` once it has a few nights.
