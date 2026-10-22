@@ -63,6 +63,9 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   margin curve. Suffix on any arm: bundle `<arm's bundle>_mf.json` (after `_pre`, before `_mr` /
   `_c1`; the arm's bundle, minutes params replaced: `minutes_params_<S>_v1[_pre]_mf.json`),
   version `<arm>+mf` (`pathA-v0.3+mf+p2`); seeds unchanged. OFF: bit-identical.
+* **Lock-10 Questionable refit** (pq, `availability.PPLAYQ`, default OFF; env
+  ``COURTSIDE_PPLAYQ=1``; `set_pplayq`): logit offsets on listed non-starters once a lineup is
+  out. Version `<model version>+pq` (`pathA-v0.3+p2+pq`); same bundle and seeds.
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -207,7 +210,10 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
     switch (`_mr` / `+mr`, before the copula's); the preseason (`_pre`) and minutes-fix (`_mf`)
     switches come before it."""
     vs, mv = _versions_bundle(on, ext, copula, mr, pre, mf)
-    return vs, (mv + PPLAY_V2_TAG if pplay == "v2" else mv)
+    mv = mv + PPLAY_V2_TAG if pplay == "v2" else mv
+    # the lock-10 Questionable refit (availability.PPLAYQ, `+pq`): model version only, same
+    # bundle and seeds; its offsets live in availability's own params file
+    return vs, (mv + AV.PPLAYQ_TAG if AV.PPLAYQ else mv)
 
 
 def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool = False,
@@ -305,6 +311,14 @@ def set_minfix(on: bool) -> None:
     MODEL_VERSION together (the other switches are kept)."""
     global MINFIX, _VS, MODEL_VERSION
     MINFIX = bool(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX)
+
+
+def set_pplayq(on: bool) -> None:
+    """Flip the lock-10 Questionable refit (availability.PPLAYQ) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    AV.set_pplayq(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
                                    MINFIX)
 

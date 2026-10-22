@@ -273,3 +273,17 @@ def test_refit_frame_vector_matches_the_rule_table():
     assert out[0] < 0.6 and out[4] < 0.7                         # team A lineup known
     assert out[5] == 0.6 and out[6] == 0.7                       # team B: no flags
     assert list(out[1:4]) == [0.97, 0.97, 0.97]
+
+
+def test_pipeline_version_tag_follows_the_switch():
+    from courtside.proj import availability as AV, pipeline as P
+    was = AV.PPLAYQ
+    try:
+        P.set_pplayq(False)
+        off = P.MODEL_VERSION
+        assert not off.endswith(AV.PPLAYQ_TAG)
+        vs_off = P._VS
+        P.set_pplayq(True)
+        assert P.MODEL_VERSION == off + AV.PPLAYQ_TAG and P._VS == vs_off   # same bundle
+    finally:
+        P.set_pplayq(was)
