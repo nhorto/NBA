@@ -93,10 +93,13 @@ def attach(rows: pd.DataFrame, tg: pd.DataFrame, pf: pd.DataFrame | None = None
 
 
 def _key(season: str, sp: dict, n_train: int, dvp_params: dict | None) -> str:
-    blob = json.dumps({"v": FRAME_VERSION, "season": season, "n": n_train,
-                       "sp": sp.get("fit_seasons"), "kappa": {s: sp["stats"][s]["kappa"]
-                                                              for s in sp["stats"]},
-                       "dvp": dvp_params or opp_defense.DVP_PARAMS}, sort_keys=True)
+    d = {"v": FRAME_VERSION, "season": season, "n": n_train,
+         "sp": sp.get("fit_seasons"), "kappa": {s: sp["stats"][s]["kappa"] for s in sp["stats"]},
+         "dvp": dvp_params or opp_defense.DVP_PARAMS}
+    if ST.has_mr(sp):         # minutes-ratio arm: its refit usage bump changes E0 (key absent = OFF)
+        d["mr"] = hashlib.sha1(json.dumps([sp["minutes_adj_mr"], sp.get("usage_bump")],
+                                          sort_keys=True).encode()).hexdigest()[:10]
+    blob = json.dumps(d, sort_keys=True)
     return hashlib.sha1(blob.encode()).hexdigest()[:10]
 
 

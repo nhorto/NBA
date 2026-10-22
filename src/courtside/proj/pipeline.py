@@ -43,6 +43,13 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   games, DK starter flag 0.99) instead of being scored as an active roster player. Version
   suffix `+p2` on any arm (`pathA-v0.3+p2`, `pathA-v0.3+c1+p2`); bundle and seeds unchanged.
   With "v1" nothing of it runs (bit-identical); the avail oracle is identical either way.
+* **Minutes ratio** (mr, 2026-10-21, `minutes_ratio.py`), behind `MINRATIO` (default OFF; env
+  ``COURTSIDE_MINRATIO=1``): the per-minute minutes table is keyed on the minutes engine's
+  planned E[min | plays] of each sim's availability scenario, f_u(m / P) (g_p = 1), instead
+  of f(m / mpg) (which gave planned changes - ramps, promotions - the per-minute penalty of
+  unplanned ones). Suffix on any arm: bundle `<arm's bundle>_mr.json` (the arm's bundle with the
+  table, the usage bump, copula v0 and the context layer refit on seasons < S), version
+  `<arm>+mr` (`pathA-v0.3+mr+p2`); seeds unchanged. OFF: nothing of it runs (bit-identical).
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -123,6 +130,14 @@ COPULA_V1_TAG = "+c1"
 PPLAY_DEFAULT = "v2"                   # shipped 2026-10-21 (owner OK; env still overrides)
 PPLAY_ENV = "COURTSIDE_PPLAY"
 PPLAY_V2_TAG = "+p2"
+# Minutes ratio (mr, `minutes_ratio.py`). OFF by default (env COURTSIDE_MINRATIO=1 / 0 overrides;
+# `set_minratio` at run time). ON = a suffix on whatever arm is active: bundle `<arm>_mr` (before
+# a copula `_c1`), version `<arm>+mr` (before `+c1` / `+p2`); seeds unchanged (common random
+# numbers with the arm's OFF runs).
+MINRATIO_DEFAULT = False               # shipping = True here (env still overrides)
+MINRATIO_ENV = "COURTSIDE_MINRATIO"
+MINRATIO_SUFFIX = "_mr"
+MINRATIO_TAG = "+mr"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -152,16 +167,18 @@ def _pplay_flag(name: str, default: str = "v1") -> str:
     return default
 
 
-def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
-              ) -> tuple[str, str]:
+def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1",
+              mr: bool = False) -> tuple[str, str]:
     """(bundle file suffix, MODEL_VERSION) for the context switch (+ the extended layer), the
-    copula version (v1 appends `_c1` / `+c1` to whichever arm is active) and the P(play)
-    version (v2 appends `+p2` to the model version only: same bundle)."""
-    vs, mv = _versions_bundle(on, ext, copula)
+    copula version (v1 appends `_c1` / `+c1` to whichever arm is active), the P(play)
+    version (v2 appends `+p2` to the model version only: same bundle) and the minutes-ratio
+    switch (`_mr` / `+mr`, before the copula's)."""
+    vs, mv = _versions_bundle(on, ext, copula, mr)
     return vs, (mv + PPLAY_V2_TAG if pplay == "v2" else mv)
 
 
-def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0") -> tuple[str, str]:
+def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool = False
+                     ) -> tuple[str, str]:
     if not on:
         vs, mv = _VS_BASE, MODEL_VERSION_BASE
     elif ext:
@@ -171,6 +188,8 @@ def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0") -> tuple[s
     else:
         mv = CONTEXT_MODEL_VERSION if MINUTES_VERSION == "v1" else f"{MODEL_VERSION_BASE}+cx"
         vs = _VS_BASE + CONTEXT_SUFFIX
+    if mr:
+        vs, mv = vs + MINRATIO_SUFFIX, mv + MINRATIO_TAG
     if copula == "v1":
         return vs + COPULA_V1_SUFFIX, mv + COPULA_V1_TAG
     return vs, mv
@@ -180,7 +199,8 @@ CONTEXT_ON = _env_flag(CONTEXT_ENV, CONTEXT_DEFAULT)
 CONTEXT_EXT = _env_flag(CONTEXT_EXT_ENV, CONTEXT_EXT_DEFAULT)
 COPULA = _copula_flag(COPULA_ENV, COPULA_DEFAULT)
 PPLAY = _pplay_flag(PPLAY_ENV, PPLAY_DEFAULT)
-_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY)
+MINRATIO = _env_flag(MINRATIO_ENV, MINRATIO_DEFAULT)
+_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
 # Seeds use the base version in both states: ON and OFF runs of the same slate/day draw common
 # random numbers, so their difference is the layer, not Monte Carlo noise (OFF is unchanged).
 SEED_VERSION = MODEL_VERSION_BASE
@@ -195,7 +215,7 @@ def set_context(on: bool, ext: bool | None = None) -> None:
     CONTEXT_ON = bool(on)
     if ext is not None:
         CONTEXT_EXT = bool(ext)
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
 
 
 def set_copula(version: str) -> None:
@@ -205,7 +225,7 @@ def set_copula(version: str) -> None:
     if version not in ("v0", "v1"):
         raise ValueError(f"unknown copula version {version!r}")
     COPULA = version
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
 
 
 def set_pplay(version: str) -> None:
@@ -215,7 +235,15 @@ def set_pplay(version: str) -> None:
     if version not in ("v1", "v2"):
         raise ValueError(f"unknown P(play) version {version!r}")
     PPLAY = version
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
+
+
+def set_minratio(on: bool) -> None:
+    """Flip the minutes-ratio switch at run time: updates MINRATIO, the bundle suffix and
+    MODEL_VERSION together (the other switches are kept)."""
+    global MINRATIO, _VS, MODEL_VERSION
+    MINRATIO = bool(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
 
 
 def context_groups() -> tuple:
@@ -429,7 +457,10 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
     context switch on: `bundle_<S>_v1_cx.json` = the OFF bundle of S (reused from disk when
     present, so ON and OFF differ only by the layer) plus the context layer fit on seasons < S.
     With COPULA v1: `<the arm's file>_c1.json` = the arm's v0 bundle (loaded or fitted the v0
-    way) plus `copula_v1` fit on seasons < S."""
+    way) plus `copula_v1` fit on seasons < S. With MINRATIO: `<that file>_mr.json` (before a
+    `_c1`) = that arm's bundle refit for the planned-minutes table (`_load_bundle_mr`)."""
+    if MINRATIO:
+        return _load_bundle_mr(conn, season, ctx, refit=refit, log=log)
     if COPULA == "v1":
         return _load_bundle_v1(conn, season, ctx, refit=refit, log=log)
     say = log or (lambda m: None)
@@ -488,6 +519,36 @@ def _load_bundle_v1(conn: sqlite3.Connection, season: str, ctx: Context | None, 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(b.to_json())
     say(f"bundle {season} + copula v1 fitted in {time.time() - t0:.0f}s -> {path}")
+    return b
+
+
+def _load_bundle_mr(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
+                    refit: bool, log) -> Bundle:
+    """The minutes-ratio arm's bundle: the same arm's bundle with MINRATIO off (loaded or fitted
+    the usual way), then `minutes_ratio.fit_bundle` (table + bump, copula v0, context layer with
+    re-keyed offsets; all on seasons < S), cached as `bundle_<S><arm>_mr[_c1].json`."""
+    from . import minutes_ratio as MR
+    say = log or (lambda m: None)
+    path = cache_dir() / f"bundle_{season}{_VS}.json"
+    if path.exists() and not refit:
+        b = Bundle.from_json(path.read_text())
+        if ST.has_mr(b.state) and MR.table_matches(b.state["minutes_adj_mr"]):
+            return b
+    set_minratio(False)
+    try:
+        base = load_bundle(conn, season, ctx, refit=refit, log=log)
+    finally:
+        set_minratio(True)
+
+    def fit_cx(sp, frame):
+        return CX.fit_season(conn, season, sp, groups=tuple(base.context.groups),
+                             n_train=int(base.context.meta.get("n_train_seasons",
+                                                               CX.LIVE_N_TRAIN)),
+                             params=CONTEXT_FIT_PARAMS, frame=frame, log=say)
+    b = MR.fit_bundle(conn, season, base, fit_context=fit_cx, log=say)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(b.to_json())
+    say(f"bundle {season} (minutes ratio) -> {path}")
     return b
 
 

@@ -149,14 +149,45 @@ def phi_for(params: dict, stat: str, tier) -> np.ndarray:
     return phi[np.asarray(tier, int)]
 
 
-def minutes_multiplier(params: dict, stat: str, minutes, mpg) -> np.ndarray:
+def has_mr(params: dict | None) -> bool:
+    """True when `params` carry the planned-minutes re-keyed table (`minutes_adj_mr`, the
+    COURTSIDE_MINRATIO arm; `minutes_ratio.fit_table`)."""
+    return bool(params and params.get("minutes_adj_mr"))
+
+
+def minutes_multiplier(params: dict, stat: str, minutes, mpg, planned=None) -> np.ndarray:
     """f_stat(minutes / mpg): multiplier on rate x minutes for a game of `minutes` by a player
-    whose minutes-per-game state is `mpg` (1.0 when the table is not fitted)."""
+    whose minutes-per-game state is `mpg` (1.0 when the table is not fitted).
+
+    With `planned` (the minutes engine's pre-game E[min | plays]) AND a `minutes_adj_mr` table in
+    `params` (the minutes-ratio arm), the multiplier is the two-factor table instead:
+    f_u(minutes / planned) x g_p(planned / mpg) - the unplanned deviation from the plan, and the
+    plan relative to his usual minutes (`minutes_ratio`). Without either it is exactly f(m/mpg)."""
+    if planned is not None and has_mr(params):
+        return minutes_multiplier_mr(params, stat, minutes, planned, mpg)
     adj = params.get("minutes_adj")
     if not adj or stat not in adj["mult"]:
         return np.ones(np.broadcast(np.asarray(minutes), np.asarray(mpg)).shape)
     ratio = np.asarray(minutes, float) / np.maximum(np.asarray(mpg, float), 1.0)
     return np.interp(ratio, adj["centers"], adj["mult"][stat])
+
+
+def minutes_multiplier_mr(params: dict, stat: str, minutes, planned, mpg) -> np.ndarray:
+    """f_u(minutes / planned) x g_p(planned / mpg) from `params["minutes_adj_mr"]` (1.0 for a
+    stat the table does not carry). `planned` <= 0 or NaN falls back to `mpg` (no plan known:
+    the deviation is measured from his usual minutes and g_p is read at 1)."""
+    adj = params["minutes_adj_mr"]
+    shape = np.broadcast(np.asarray(minutes), np.asarray(planned), np.asarray(mpg)).shape
+    if stat not in adj["mult_u"]:
+        return np.ones(shape)
+    mpg_ = np.maximum(np.asarray(mpg, float), 1.0)
+    pl = np.asarray(planned, float)
+    pl = np.where(np.isfinite(pl) & (pl > 0), pl, mpg_)
+    pl = np.maximum(pl, 1.0)
+    u = np.asarray(minutes, float) / pl
+    v = pl / mpg_
+    return (np.interp(u, adj["centers_u"], adj["mult_u"][stat])
+            * np.interp(v, adj["centers_p"], adj["mult_p"][stat]))
 
 
 def bump_for(params: dict, role: str, stat: str) -> float:
@@ -684,8 +715,10 @@ def fit_usage_bump(conn: sqlite3.Connection, params: dict, seasons: list[str], *
     out: dict = {}
     for role, d in wf.groupby("role"):
         entry = {"n": int(len(d)), "games": int(d[["game_id", "team"]].drop_duplicates().shape[0])}
+        pl = d["planned"].to_numpy(float) if "planned" in d else None   # minutes-ratio arm
         mu = {s: d[f"r_{s}"].to_numpy() * d["min"].to_numpy()
-                 * minutes_multiplier(params, s, d["min"].to_numpy(), d["mpg"].to_numpy())
+                 * minutes_multiplier(params, s, d["min"].to_numpy(), d["mpg"].to_numpy(),
+                                      planned=pl)
               for s in STATS}
         for s in STATS:
             entry[s] = float(d[s].sum() / mu[s].sum()) if mu[s].sum() > 0 else 1.0

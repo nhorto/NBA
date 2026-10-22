@@ -175,7 +175,9 @@ def conditional_frame(wf: pd.DataFrame, sp: dict, team_pts: pd.DataFrame,
     w = wf.merge(team_pts, on=["game_id", "team"], how="inner").copy()
     mins = w["min"].to_numpy(float)
     mpg = w["mpg"].to_numpy(float)
-    mu = {s: w[f"r_{s}"].to_numpy(float) * mins * ST.minutes_multiplier(sp, s, mins, mpg)
+    plan = w["planned"].to_numpy(float) if "planned" in w else None    # minutes-ratio arm
+    mu = {s: w[f"r_{s}"].to_numpy(float) * mins * ST.minutes_multiplier(sp, s, mins, mpg,
+                                                                        planned=plan)
           for s in DK_STATS}
     w["raw_pts"] = mu["pts"]
     w["raw_oth"] = sum(DK_W[s] * mu[s] for s in OTHER_STATS)
@@ -259,10 +261,14 @@ def tier_pair_corr(df: pd.DataFrame, z: str = "z") -> tuple[dict, float, dict]:
 
 
 def fit_copula(conn: sqlite3.Connection, season: str, sp: dict, *, n_seasons: int = 2,
-               games: pd.DataFrame | None = None, log=None) -> CopulaParams:
+               games: pd.DataFrame | None = None, log=None,
+               planned: pd.DataFrame | None = None) -> CopulaParams:
     """Fit CopulaParams on the `n_seasons` regular seasons before `season`: environment sds
     (3 seasons of closing lines), alpha, CV-by-level and tier-pair / opponent correlations of
-    the conditional residuals. `sp` = rate-state params fit on seasons < `season`."""
+    the conditional residuals. `sp` = rate-state params fit on seasons < `season`.
+    `planned` (minutes-ratio arm only): (game_id, team, player_id, planned) pre-game planned
+    minutes of those seasons (`minutes_ratio.planned_rows`); the conditional means then use the
+    two-factor minutes table of `sp`. None = the f(m/mpg) table, exactly as before."""
     say = log or (lambda m: None)
     s0 = int(season[:4])
     seasons = [_season_label(s0 - k) for k in range(n_seasons, 0, -1)]
@@ -272,6 +278,9 @@ def fit_copula(conn: sqlite3.Connection, season: str, sp: dict, *, n_seasons: in
     wf = pd.concat([ST.walk_forward(conn, s, sp, games=games) for s in seasons],
                    ignore_index=True)
     wf = wf[wf["season_type"] == "Regular Season"]
+    if planned is not None:
+        wf = wf.merge(planned[["game_id", "team", "player_id", "planned"]],
+                      on=["game_id", "team", "player_id"], how="left")
     tp = pd.read_sql_query("SELECT game_id, team, pts AS team_pts FROM team_games WHERE "
                            "season >= ? AND season <= ?", conn, params=(seasons[0], seasons[-1]))
     w, alpha = conditional_frame(wf, sp, tp)
@@ -449,18 +458,23 @@ class GameSims:
 
 # ============================================================================== grids
 
-def _grids(players: pd.DataFrame, sp: dict) -> dict[str, np.ndarray]:
+def _grids(players: pd.DataFrame, sp: dict, planned: np.ndarray | None = None
+           ) -> dict[str, np.ndarray]:
     """Per player, per bump role (none/star/rotation), per minute 0..GRID_MAX: expected pts,
-    other DK, reb, ast, fg3m given minutes (rate x m x f(m/mpg) x bump) and the DD/TD bonus."""
+    other DK, reb, ast, fg3m given minutes (rate x m x f(m/mpg) x bump) and the DD/TD bonus.
+    `planned` (n,) (minutes-ratio arm: one availability scenario's E[min | plays]) switches the
+    minutes table to f_u(m / planned) x g_p(planned / mpg)."""
     n = len(players)
     m = np.arange(GRID_MAX + 1, dtype=float)
     mpg = players["mpg"].to_numpy(float)
     mm = np.broadcast_to(m[None, :], (n, len(m)))
     mpgb = np.broadcast_to(mpg[:, None], (n, len(m)))
+    plb = (None if planned is None
+           else np.broadcast_to(np.asarray(planned, float)[:, None], (n, len(m))))
     base = {}
     for s in DK_STATS:
         r = players[f"r_{s}"].to_numpy(float)
-        base[s] = r[:, None] * mm * ST.minutes_multiplier(sp, s, mm, mpgb)
+        base[s] = r[:, None] * mm * ST.minutes_multiplier(sp, s, mm, mpgb, planned=plb)
     out = {k: np.zeros((3, n, len(m))) for k in ("pts", "oth", "reb", "ast", "fg3m")}
     for ri, role in enumerate(BUMP_ROLES):
         bump = {s: (ST.bump_for(sp, role, s) if role != "none" else 1.0) for s in DK_STATS}
@@ -488,6 +502,25 @@ def _lookup(grid: np.ndarray, role: np.ndarray, x: np.ndarray) -> np.ndarray:
         off = col + lo
     flat = grid.ravel()
     return flat[off] * (1.0 - w) + flat[off + 1] * w
+
+
+class _PlanGrids:
+    """Minutes-ratio arm: the expected-count grids of one team per availability scenario (the
+    plan, E[min | plays], differs by scenario: a promoted player's plan is higher when the
+    starter sits). `grids[b]` = `grid_fn(players, sp, planned=plan[b])` for every kept scenario
+    b; `look(key, role, x)` reads each sim from its own scenario's grid."""
+
+    def __init__(self, grid_fn, players: pd.DataFrame, sp: dict, plan: list, assign: np.ndarray):
+        self.assign = assign
+        self.grids = {int(b): grid_fn(players, sp, planned=plan[int(b)])
+                      for b in np.unique(assign)}
+
+    def look(self, key: str, role: np.ndarray | None, x: np.ndarray) -> np.ndarray:
+        out = np.zeros(x.shape)
+        for b, g in self.grids.items():
+            idx = np.flatnonzero(self.assign == b)
+            out[idx] = _lookup(g[key], None if role is None else role[idx], x[idx])
+        return out
 
 
 # ============================================================================== scenarios
@@ -555,9 +588,11 @@ def _seed_seq(seed) -> np.random.SeedSequence:
 
 
 def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
-                  n_ot: np.ndarray, rng_s: np.random.Generator, rng_m: np.random.Generator
-                  ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """(minutes (S, n), absent (S, n), scenario info) for one team."""
+                  n_ot: np.ndarray, rng_s: np.random.Generator, rng_m: np.random.Generator,
+                  plan_out: dict | None = None) -> tuple[np.ndarray, np.ndarray, dict]:
+    """(minutes (S, n), absent (S, n), scenario info) for one team. `plan_out` (minutes-ratio
+    arm) receives 'plan' (per kept scenario: E[min | plays] before the margin, the engine's
+    `mean`) and 'assign' (S,) (each sim's kept scenario); it changes no draw."""
     S = len(margin_team)
     pl = ts.players
     sc = draw_scenarios(pl["p_avail"].to_numpy(float), S, rng_s)
@@ -567,6 +602,8 @@ def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
         if not len(idx):
             continue
         proj = ts.minutes.project(kept)
+        if plan_out is not None:
+            plan_out.setdefault("plan", {})[b] = proj["mean"].to_numpy(float)
         xb = M.sample_minutes(proj, mp, margin_team[idx], rng_m, n_ot=n_ot[idx])
         extra = sc["absent"][idx] & ~kept[None, :]
         rows = extra.any(1)
@@ -577,6 +614,8 @@ def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
             xb[rows] = M._renorm(xr, tot, M.CAP + 5.0 * ot)
         x[idx] = xb
     x = np.where(sc["absent"], 0.0, x)
+    if plan_out is not None:
+        plan_out["assign"] = sc["assign"]
     info = {"n_distinct": sc["n_distinct"], "n_projected": len(sc["kept"]),
             "kept_mass": sc["kept_mass"], "collapsed_sims": sc["collapsed"]}
     return x, sc["absent"], info
@@ -601,24 +640,31 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
     parts, teams_info = [], {}
     for side, ts, sign in sides:
         pl = ts.players.reset_index(drop=True)
-        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min)
+        po = {} if ST.has_mr(sp) else None
+        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po)
         played = x > 0
         star = pl["star"].to_numpy(bool)
         rot = pl["rotation"].to_numpy(bool) & ~star
         star_out = (absent & star[None, :]).any(1)
         role = np.where(star_out[:, None] & star[None, :] & ~absent, 1, 0)
         role = np.where(star_out[:, None] & rot[None, :] & ~absent, 2, role)
-        G = _grids(pl, sp)
-        raw_pts = _lookup(G["pts"], role, x) * played
-        raw_oth = _lookup(G["oth"], role, x) * played
-        bonus = _lookup(G["bonus"], None, x) * played
+        if po is None:
+            G = _grids(pl, sp)
+
+            def look(key, rl, xx, G=G):
+                return _lookup(G[key], rl, xx)
+        else:                                 # minutes-ratio arm: per-scenario plan grids
+            look = _PlanGrids(_grids, pl, sp, po["plan"], po["assign"]).look
+        raw_pts = look("pts", role, x) * played
+        raw_oth = look("oth", role, x) * played
+        bonus = look("bonus", None, x) * played
         g = team_pts[side] / max(mean_pts[side], 1.0)
         rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
         mu = pts + oth + bonus
         stats = {"pts": pts}
         for s in ("reb", "ast", "fg3m"):
-            stats[s] = _lookup(G[s], role, x) * played * k_pace[:, None]
+            stats[s] = look(s, role, x) * played * k_pace[:, None]
         rec.update(sinfo)
         rec["team"] = ts.team
         teams_info[ts.team] = rec
@@ -901,18 +947,21 @@ def count_tables(v1: CopulaV1Params) -> CountTables:
 
 # ------------------------------------------------------------------------------ v1 pieces
 
-def _stat_grids(players: pd.DataFrame, sp: dict) -> dict[str, np.ndarray]:
+def _stat_grids(players: pd.DataFrame, sp: dict, planned: np.ndarray | None = None
+                ) -> dict[str, np.ndarray]:
     """Per stat (COMP_STATS): (3 bump roles, n, GRID_MAX + 1) expected count given minutes
-    (rate x m x f(m/mpg) x bump), the per-stat version of `_grids`."""
+    (rate x m x f(m/mpg) x bump), the per-stat version of `_grids` (`planned` as there)."""
     n = len(players)
     m = np.arange(GRID_MAX + 1, dtype=float)
     mpg = players["mpg"].to_numpy(float)
     mm = np.broadcast_to(m[None, :], (n, len(m)))
     mpgb = np.broadcast_to(mpg[:, None], (n, len(m)))
+    plb = (None if planned is None
+           else np.broadcast_to(np.asarray(planned, float)[:, None], (n, len(m))))
     out = {}
     for s in COMP_STATS:
         r = players[f"r_{s}"].to_numpy(float)
-        base = r[:, None] * mm * ST.minutes_multiplier(sp, s, mm, mpgb)
+        base = r[:, None] * mm * ST.minutes_multiplier(sp, s, mm, mpgb, planned=plb)
         out[s] = np.stack([base * (ST.bump_for(sp, role, s) if role != "none" else 1.0)
                            for role in BUMP_ROLES])
     return out
@@ -1027,24 +1076,35 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
     parts, teams_info = [], {}
     for side, ts, sign in sides:
         pl = ts.players.reset_index(drop=True)
-        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min)
+        po = {} if ST.has_mr(sp) else None
+        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po)
         played = x > 0
         star = pl["star"].to_numpy(bool)
         rot = pl["rotation"].to_numpy(bool) & ~star
         star_out = (absent & star[None, :]).any(1)
         role = np.where(star_out[:, None] & star[None, :] & ~absent, 1, 0)
         role = np.where(star_out[:, None] & rot[None, :] & ~absent, 2, role)
-        G = _grids(pl, sp)
-        GS = _stat_grids(pl, sp)
-        raw_pts = _lookup(G["pts"], role, x) * played
-        raw_oth = _lookup(G["oth"], role, x) * played
-        bonus = _lookup(G["bonus"], None, x) * played
+        if po is None:
+            G = _grids(pl, sp)
+            GS = _stat_grids(pl, sp)
+
+            def look(key, rl, xx, G=G):
+                return _lookup(G[key], rl, xx)
+
+            def look_s(key, rl, xx, GS=GS):
+                return _lookup(GS[key], rl, xx)
+        else:                                 # minutes-ratio arm: per-scenario plan grids
+            look = _PlanGrids(_grids, pl, sp, po["plan"], po["assign"]).look
+            look_s = _PlanGrids(_stat_grids, pl, sp, po["plan"], po["assign"]).look
+        raw_pts = look("pts", role, x) * played
+        raw_oth = look("oth", role, x) * played
+        bonus = look("bonus", None, x) * played
         g = team_pts[side] / max(mean_pts[side], 1.0)
         rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
         means = {"pts": pts}
         for s in OTHER_STATS:
-            means[s] = _lookup(GS[s], role, x) * played * k_pace[:, None]
+            means[s] = look_s(s, role, x) * played * k_pace[:, None]
         rec.update(sinfo)
         rec["team"] = ts.team
         teams_info[ts.team] = rec
