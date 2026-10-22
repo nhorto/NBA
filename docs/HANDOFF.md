@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-22 ~03:45 ET (day 2; live model pathA-v0.3+p2).*
+*Last updated 2026-10-22 ~04:10 ET (day 2; live model pathA-v0.3+p2).*
 
 ## 0. Where we are, in one paragraph
 
@@ -76,6 +76,11 @@ Operational notes:
 - **Night 2 graded (2026-10-22 03:00, ok):** weekly report n=2 nights, inside the live-like bands (DK MAE 8.72, minutes MAE played15 4.56, cov80 83.9%). 10-21 DK MAE 9.10 on 199 rows, just above the v0.3+p2 slice p90 (info). Minutes engine over-projects starters +1.2 min (1.6 SE; MINFIX targets this).
 - **Missed lock10 on 10-21 (fixed in ef131a5, deployed):** main slate 155078 + showdown 155310 (7:00 PM lock) had no lock10. Builds ran ~520 s, so the adaptive window was 18:46–18:51 ET; the 18:45 tick ran the 7:30 PM slates' lock45 builds until 18:50. Now the tick runs the nearest lock first, pulls an imminent lock10 forward when the rest of the tick would overrun its window, and runs a missed lock10 late while it can still finish before the lock. A read-only replay of 10-21 pulls 155078/155310 forward at 18:45. Root of the slow builds: a minutes-ratio RotoGuru eval (`courtside-compute/mr`, ended 19:47 ET) ran through the 18:00–19:20 blackout. Long scratch jobs must check the clock before each stage, not just at launch.
 - **Recon gaps (not a bug):** pre-reconciliation team points run 7–15 below the market for most teams (MEM −24, LAC −17, IND −15) early in the season, consistent with the #3 finding (promoted / new players get low per-minute rates); the market scaling absorbs it for points. The "residual 1.66" in the alert came from a 10-21 morning manual `pathA-v0.3` run (LAL scale capped at 1.33), not a live run. `ids_dk`: 13 unmatched DK names are two-way / rookie players with no NBA rows (nothing to alias yet).
+
+- **Minutes fix (`COURTSIDE_MINFIX=1`, `+mf`, 731598a): OFF, clears the bar, owner decision.** Cause: the engine's P(plays | available) logit ignored the GBM's plan for the night (demoted bench +0.05–0.06 too likely to play, promoted −0.065), and the noise was fit on residuals that already held the margin effect (stars/starters too wide; ~0.6 min/game shifted stars → bench). Fix: plan + depth rank in the P(plays) logit; noise fit net of the margin curve, then per-tier location/scale calibrated by simulation (seasons < S). CRPS vs OFF (2023-24 / 2024-25 harness; live / live10 with real tip times; RotoGuru 2019-20 / 2020-21): **+mf −6.1 / −5.2, −2.6 / −3.7, −3.7 / −3.0; +mf+mr(B) −7.2 / −6.4, −2.9 / −3.0, −4.5 / −5.2**; +mf+mr(C) and +mf+pre also pass but are weaker. No tier worse (worst z −0.7). With +mf, +mr no longer costs the bench. Before shipping +mf+mr, refit the +mr training plans from the +mf engine. Debut reserve (+pre) driver capped to the training range (OKC opener still a miss). Planned-demotion rows only partly fixed.
+- **`+pq` version tag wired** (fd4b02e): `COURTSIDE_PPLAYQ=1` → `pathA-v0.3+p2+pq`; same bundle and seeds.
+- **Owner decisions pending (all OFF):** `+mf` (or `+mf+mr`), `+pq`. Ship prep: the 2026-27 `_mf` bundle is being pre-fit in `courtside-compute/ship/` so a switch-on does not fit at lock time; copy `bundle_2026-27_v1_cx_mf.json` + `minutes_params_2026-27_v1_cx_mf.json` into `var/proj/` before flipping `MINFIX_DEFAULT`.
+- **In progress:** blowout minutes (`COURTSIDE_BLOWOUT`, `+bo`), evaluated on OFF and +mf.
 
 **Next (in order):**
 1. Watch tonight's lock runs (first lock 19:00 ET) and tomorrow's 03:00 grading under `pathA-v0.3+p2`; add a `+p2` block to `live_like_baseline.json` once it has a few nights.
