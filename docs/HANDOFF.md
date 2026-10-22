@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-22 ~00:30 ET (day 2; live model pathA-v0.3+p2).*
+*Last updated 2026-10-22 ~03:45 ET (day 2; live model pathA-v0.3+p2).*
 
 ## 0. Where we are, in one paragraph
 
@@ -72,6 +72,10 @@ Operational notes:
 - **Grader fix (d18b963, deployed):** manual runs count in player snapshots only on nights without scheduled runs (night 1 showed 8.71 vs 7.14 DK MAE from 11 manual pathA-v0.1 rows).
 - **#1 F9 prop lines (f3c86c1): built, OFF.** Readiness ~Nov 9–14; PLAYERS.md §7.1 L6 (props never features) needs an owner amendment before F9 can ship. No free historical prop source (The Odds API from 2023-05 is paid).
 - Fixed a wall-clock-dependent test (`test_postgame_espn_final_updates_game`).
+
+- **Night 2 graded (2026-10-22 03:00, ok):** weekly report n=2 nights, inside the live-like bands (DK MAE 8.72, minutes MAE played15 4.56, cov80 83.9%). 10-21 DK MAE 9.10 on 199 rows, just above the v0.3+p2 slice p90 (info). Minutes engine over-projects starters +1.2 min (1.6 SE; MINFIX targets this).
+- **Missed lock10 on 10-21 (fixed in ef131a5, deployed):** main slate 155078 + showdown 155310 (7:00 PM lock) had no lock10. Builds ran ~520 s, so the adaptive window was 18:46–18:51 ET; the 18:45 tick ran the 7:30 PM slates' lock45 builds until 18:50. Now the tick runs the nearest lock first, pulls an imminent lock10 forward when the rest of the tick would overrun its window, and runs a missed lock10 late while it can still finish before the lock. A read-only replay of 10-21 pulls 155078/155310 forward at 18:45.
+- **Recon gaps (not a bug):** pre-reconciliation team points run 7–15 below the market for most teams (MEM −24, LAC −17, IND −15) early in the season, consistent with the #3 finding (promoted / new players get low per-minute rates); the market scaling absorbs it for points. The "residual 1.66" in the alert came from a 10-21 morning manual `pathA-v0.3` run (LAL scale capped at 1.33), not a live run. `ids_dk`: 13 unmatched DK names are two-way / rookie players with no NBA rows (nothing to alias yet).
 
 **Next (in order):**
 1. Watch tonight's lock runs (first lock 19:00 ET) and tomorrow's 03:00 grading under `pathA-v0.3+p2`; add a `+p2` block to `live_like_baseline.json` once it has a few nights.
