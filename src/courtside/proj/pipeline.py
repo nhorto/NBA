@@ -63,6 +63,14 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   margin curve. Suffix on any arm: bundle `<arm's bundle>_mf.json` (after `_pre`, before `_mr` /
   `_c1`; the arm's bundle, minutes params replaced: `minutes_params_<S>_v1[_pre]_mf.json`),
   version `<arm>+mf` (`pathA-v0.3+mf+p2`); seeds unchanged. OFF: bit-identical.
+* **Blowout minutes** (bo, `minutes.BO_*`), behind `BLOWOUT` (default OFF; env
+  ``COURTSIDE_BLOWOUT=1``): the minutes params are refit on seasons < S with a blowout stage on
+  top (P(plays | available) and the reserve move with the sim's margin, the margin curve is
+  recalibrated by simulation so stars lose / the bench gains the minutes they really do at each
+  margin, each tier's level and spread unchanged); the copula reads the per-minute multiplier
+  net of the margin curve (copula v1's winner / loser shift is fit the same way). Suffix on any arm: bundle `<arm's bundle>_bo.json` (after `_mf`, before `_mr` / `_c1`; the
+  arm's bundle, minutes params replaced: `minutes_params_<S>_v1[_pre][_mf]_bo.json`), version
+  `<arm>+bo` (`pathA-v0.3+mf+bo+p2`); seeds unchanged. OFF: bit-identical.
 * **Lock-10 Questionable refit** (pq, `availability.PPLAYQ`, default OFF; env
   ``COURTSIDE_PPLAYQ=1``; `set_pplayq`): logit offsets on listed non-starters once a lineup is
   out. Version `<model version>+pq` (`pathA-v0.3+p2+pq`); same bundle and seeds.
@@ -173,6 +181,15 @@ MINFIX_DEFAULT = False                 # shipping = True here (env still overrid
 MINFIX_ENV = "COURTSIDE_MINFIX"
 MINFIX_SUFFIX = "_mf"
 MINFIX_TAG = "+mf"
+# Blowout minutes (bo; `minutes.BO_*`). OFF by default (env COURTSIDE_BLOWOUT=1 / 0 overrides;
+# `set_blowout` at run time). ON = a suffix on whatever arm is active: bundle `<arm>_bo` (after
+# `_mf`, before `_mr` / `_c1`) = the arm's bundle with the minutes params refit with
+# `fit_v1(blowout=True)` on seasons < S, version `<arm>+bo`; seeds unchanged (common random
+# numbers with the arm's OFF runs). OFF: nothing of it runs (bit-identical).
+BLOWOUT_DEFAULT = False                # shipping = True here (env still overrides)
+BLOWOUT_ENV = "COURTSIDE_BLOWOUT"
+BLOWOUT_SUFFIX = "_bo"
+BLOWOUT_TAG = "+bo"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -203,13 +220,14 @@ def _pplay_flag(name: str, default: str = "v1") -> str:
 
 
 def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1",
-              mr: bool = False, pre: bool = False, mf: bool = False) -> tuple[str, str]:
+              mr: bool = False, pre: bool = False, mf: bool = False, bo: bool = False
+              ) -> tuple[str, str]:
     """(bundle file suffix, MODEL_VERSION) for the context switch (+ the extended layer), the
     copula version (v1 appends `_c1` / `+c1` to whichever arm is active), the P(play)
     version (v2 appends `+p2` to the model version only: same bundle) and the minutes-ratio
-    switch (`_mr` / `+mr`, before the copula's); the preseason (`_pre`) and minutes-fix (`_mf`)
-    switches come before it."""
-    vs, mv = _versions_bundle(on, ext, copula, mr, pre, mf)
+    switch (`_mr` / `+mr`, before the copula's); the preseason (`_pre`), minutes-fix (`_mf`)
+    and blowout (`_bo`) switches come before it."""
+    vs, mv = _versions_bundle(on, ext, copula, mr, pre, mf, bo)
     mv = mv + PPLAY_V2_TAG if pplay == "v2" else mv
     # the lock-10 Questionable refit (availability.PPLAYQ, `+pq`): model version only, same
     # bundle and seeds; its offsets live in availability's own params file
@@ -217,7 +235,7 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
 
 
 def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool = False,
-                     pre: bool = False, mf: bool = False) -> tuple[str, str]:
+                     pre: bool = False, mf: bool = False, bo: bool = False) -> tuple[str, str]:
     if not on:
         vs, mv = _VS_BASE, MODEL_VERSION_BASE
     elif ext:
@@ -231,6 +249,8 @@ def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool =
         vs, mv = vs + PRESEASON_SUFFIX, mv + PRESEASON_TAG
     if mf:
         vs, mv = vs + MINFIX_SUFFIX, mv + MINFIX_TAG
+    if bo:
+        vs, mv = vs + BLOWOUT_SUFFIX, mv + BLOWOUT_TAG
     if mr:
         vs, mv = vs + MINRATIO_SUFFIX, mv + MINRATIO_TAG
     if copula == "v1":
@@ -245,8 +265,9 @@ PPLAY = _pplay_flag(PPLAY_ENV, PPLAY_DEFAULT)
 MINRATIO = _env_flag(MINRATIO_ENV, MINRATIO_DEFAULT)
 PRESEASON = _env_flag(PRESEASON_ENV, PRESEASON_DEFAULT)
 MINFIX = _env_flag(MINFIX_ENV, MINFIX_DEFAULT)
+BLOWOUT = _env_flag(BLOWOUT_ENV, BLOWOUT_DEFAULT)
 _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
-                               MINFIX)
+                               MINFIX, BLOWOUT)
 # Seeds use the base version in both states: ON and OFF runs of the same slate/day draw common
 # random numbers, so their difference is the layer, not Monte Carlo noise (OFF is unchanged).
 SEED_VERSION = MODEL_VERSION_BASE
@@ -262,7 +283,7 @@ def set_context(on: bool, ext: bool | None = None) -> None:
     if ext is not None:
         CONTEXT_EXT = bool(ext)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
-                                   MINFIX)
+                                   MINFIX, BLOWOUT)
 
 
 def set_copula(version: str) -> None:
@@ -273,7 +294,7 @@ def set_copula(version: str) -> None:
         raise ValueError(f"unknown copula version {version!r}")
     COPULA = version
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
-                                   MINFIX)
+                                   MINFIX, BLOWOUT)
 
 
 def set_pplay(version: str) -> None:
@@ -284,7 +305,7 @@ def set_pplay(version: str) -> None:
         raise ValueError(f"unknown P(play) version {version!r}")
     PPLAY = version
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
-                                   MINFIX)
+                                   MINFIX, BLOWOUT)
 
 
 def set_minratio(on: bool) -> None:
@@ -293,7 +314,7 @@ def set_minratio(on: bool) -> None:
     global MINRATIO, _VS, MODEL_VERSION
     MINRATIO = bool(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
-                                   MINFIX)
+                                   MINFIX, BLOWOUT)
 
 
 def set_preseason(on: bool) -> None:
@@ -303,7 +324,7 @@ def set_preseason(on: bool) -> None:
     global PRESEASON, _VS, MODEL_VERSION
     PRESEASON = bool(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
-                                   MINFIX)
+                                   MINFIX, BLOWOUT)
 
 
 def set_minfix(on: bool) -> None:
@@ -312,7 +333,16 @@ def set_minfix(on: bool) -> None:
     global MINFIX, _VS, MODEL_VERSION
     MINFIX = bool(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
-                                   MINFIX)
+                                   MINFIX, BLOWOUT)
+
+
+def set_blowout(on: bool) -> None:
+    """Flip the blowout-minutes switch at run time: updates BLOWOUT, the bundle suffix and
+    MODEL_VERSION together (the other switches are kept)."""
+    global BLOWOUT, _VS, MODEL_VERSION
+    BLOWOUT = bool(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
 
 
 def set_pplayq(on: bool) -> None:
@@ -320,7 +350,7 @@ def set_pplayq(on: bool) -> None:
     global _VS, MODEL_VERSION
     AV.set_pplayq(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
-                                   MINFIX)
+                                   MINFIX, BLOWOUT)
 
 
 def context_groups() -> tuple:
@@ -542,6 +572,8 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
         return _load_bundle_mr(conn, season, ctx, refit=refit, log=log)
     if COPULA == "v1":
         return _load_bundle_v1(conn, season, ctx, refit=refit, log=log)
+    if BLOWOUT:
+        return _load_bundle_bo(conn, season, ctx, refit=refit, log=log)
     if MINFIX:
         return _load_bundle_mf(conn, season, ctx, refit=refit, log=log)
     if PRESEASON:
@@ -598,7 +630,11 @@ def _load_bundle_v1(conn: sqlite3.Connection, season: str, ctx: Context | None, 
     finally:
         set_copula("v1")
     t0 = time.time()
-    b.copula_v1 = C.fit_copula_v1(conn, season, b.state, b.copula, log=say)
+    if b.minutes.blowout:       # blowout arm: the shift is fit with f read net of the margin
+        frame = C.v1_frame(conn, season, b.state, b.copula.alpha, mp=b.minutes)
+        b.copula_v1 = C.fit_copula_v1(conn, season, b.state, b.copula, frame=frame, log=say)
+    else:
+        b.copula_v1 = C.fit_copula_v1(conn, season, b.state, b.copula, log=say)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(b.to_json())
     say(f"bundle {season} + copula v1 fitted in {time.time() - t0:.0f}s -> {path}")
@@ -686,6 +722,55 @@ def _load_bundle_mf(conn: sqlite3.Connection, season: str, ctx: Context | None, 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(b.to_json())
     say(f"bundle {season} (minutes fix) in {time.time() - t0:.0f}s -> {path}")
+    return b
+
+
+def _load_bundle_bo(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
+                    refit: bool, log) -> Bundle:
+    """The blowout arm's bundle: the same arm's bundle with BLOWOUT off (loaded or fitted the
+    usual way; the minutes-fix / preseason arm's when those are on) with its minutes params
+    replaced by a refit on seasons < S with `fit_v1(blowout=True)` (+ minfix when MINFIX is on,
+    + the preseason features and debut reserve when PRESEASON is on;
+    `minutes_params_<S>_v1[_pre][_mf]_bo.json`), cached as `bundle_<S><arm>_bo.json`. Rate state,
+    copula and context layer are the arm's."""
+    say = log or (lambda m: None)
+    path = cache_dir() / f"bundle_{season}{_VS}.json"
+    if path.exists() and not refit:
+        b = Bundle.from_json(path.read_text())
+        if (b.minutes.blowout and bool(b.minutes.minfix) == MINFIX
+                and M.uses_preseason(b.minutes) == PRESEASON):
+            return b
+    set_blowout(False)
+    try:
+        base = load_bundle(conn, season, ctx, refit=refit, log=log)
+    finally:
+        set_blowout(True)
+    t0 = time.time()
+    tag = (_VS_BASE + (PRESEASON_SUFFIX if PRESEASON else "")
+           + (MINFIX_SUFFIX if MINFIX else "") + BLOWOUT_SUFFIX)
+    mpath = cache_dir() / f"minutes_params_{season}{tag}.json"
+    if mpath.exists() and not refit:
+        mp = M.MinutesParams.from_json(mpath.read_text())
+    else:
+        ctx = ctx or Context(conn, season, log=say)
+        if PRESEASON and ctx.h.pre is None:
+            M.attach_preseason(ctx.h, conn)
+        panel = ctx.train_panel()
+        kw: dict = {"blowout": True}
+        if MINFIX:
+            kw["minfix"] = True
+        if PRESEASON:
+            kw["features"] = M.preseason_features()
+        mp = M.fit(ctx.h, season, window=MINUTES_WINDOW, log=say, panel=panel,
+                   shares=M.PairShares(M.pair_events(panel)), version=MINUTES_VERSION,
+                   v1_kw=kw, debut_reserve=PRESEASON)
+        mpath.parent.mkdir(parents=True, exist_ok=True)
+        mpath.write_text(mp.to_json())
+    b = Bundle(season=season, minutes=mp, state=base.state, copula=base.copula,
+               context=base.context, copula_v1=base.copula_v1)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(b.to_json())
+    say(f"bundle {season} (blowout minutes) in {time.time() - t0:.0f}s -> {path}")
     return b
 
 

@@ -201,6 +201,10 @@ class MinutesParams:
     # GBM plan, the noise fit net of the margin curve (see MF_* below). Empty = off (and the key
     # is left out of the JSON).
     minfix: dict = field(default_factory=dict)
+    # blowout minutes (COURTSIDE_BLOWOUT, `fit(v1_kw={"blowout": True})`): P(plays) offsets,
+    # reserve offsets and the margin curve calibrated by simulation (see BO_* below). Empty =
+    # off (and the key is left out of the JSON).
+    blowout: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
         d = asdict(self)
@@ -208,6 +212,8 @@ class MinutesParams:
             del d["reserve_debut"]
         if not d["minfix"]:                 # likewise
             del d["minfix"]
+        if not d["blowout"]:                # likewise
+            del d["blowout"]
         return json.dumps(d)
 
     @classmethod
@@ -1556,6 +1562,268 @@ def _mf_calibrate_noise(prm: MinutesParams, r: pd.DataFrame, log: Callable[[str]
                        for a, b, c, d in st] for st in hist]}
 
 
+# --- blowout minutes (bo; pipeline.BLOWOUT, env COURTSIDE_BLOWOUT=1, default OFF) ----------
+# The margin curve g is fit on box residuals and has the right shape (the top tier +1.5 min in
+# close games, -6 at 30+), but the sims lose most of it: P(plays | available) does not move with
+# the margin (the deep bench that plays in blowouts is drawn DNP at its average rate) and the
+# per-sim proportional water-filling to 240 hands the stars' lost minutes back (2024-25, OFF,
+# minutes at the actual margin: stars -2.2 min too many at |m| >= 26, +1.6 too few at 0-9). The
+# blowout stage, fit on the 5 seasons < S on the same out-of-fold training projections as the
+# noise: (1) P(plays) logit offsets by P band x won / lost x |margin| bin (BO_P_EDGES; each
+# band's offsets centred, so its level is the arm's), (2) the team's minutes outside the
+# candidate set by |margin| bin (centred), (3) the margin curve recalibrated by simulation
+# (sample_minutes at each game's actual margin, regulation games) so that the simulated minutes
+# of the players who play match the actual ones by tier x won / lost x bin around each tier's
+# level, which stays the arm's own simulated level (shape only: mean-preserving), and (4) the
+# noise scale per tier rescaled so that the margin-integrated spread of the minutes given play
+# stays the arm's (variance moves from the noise to the margin). The copula then reads the
+# per-minute multiplier f(m / mpg) at the minutes net of the margin curve (`bo_minutes_factor`):
+# f was fit on realised minutes, where a low ratio is mostly an early exit with a lower rate,
+# and garbage-time losses keep the per-minute rate.
+
+BO_VERSION = 1
+BO_P_EDGES = (0.0, 0.3, 0.6, 0.85, 0.95)     # P(plays | available) bands of the offsets
+BO_RIDGE = 2.0                               # ridge of each offset (logit units^-2)
+BO_RES_K = 50.0                              # pseudo team-games of the reserve offsets
+BO_CELL_K = 200.0                            # pseudo-rows of a margin-curve cell's update
+BO_CAL_SIMS = 60
+BO_CAL_ITERS = 5
+
+
+def _bo_mids() -> np.ndarray:
+    edges = np.asarray(MARGIN_BINS, float)
+    mids = 0.5 * (edges[:-1] + edges[1:])
+    mids[-1] = edges[-2] + 4.0
+    return mids
+
+
+def _bo_bin(margins) -> np.ndarray:
+    return np.clip(np.searchsorted(MARGIN_BINS, np.abs(np.asarray(margins, float)),
+                                   side="right") - 1, 0, len(MARGIN_BINS) - 2)
+
+
+def _bo_band(p) -> np.ndarray:
+    return np.clip(np.searchsorted(BO_P_EDGES, np.asarray(p, float), side="right") - 1, 0,
+                   len(BO_P_EDGES) - 1)
+
+
+def bo_pplay(bo: dict, p: np.ndarray, margins: np.ndarray) -> np.ndarray:
+    """(S, n) P(plays | available) at each sim's team margin: logit(p) + the offset of p's band
+    and the margin's side, linear in |m| between bin centres; p = 0 / 1 stay 0 / 1."""
+    p = np.asarray(p, float)
+    m = np.atleast_1d(np.asarray(margins, float))
+    a = np.asarray(bo["p_off"], float)                  # (K, 2, B)
+    band = _bo_band(p)
+    mids = _bo_mids()
+    am, won = np.abs(m), (m > 0).astype(int)
+    off = np.zeros((len(m), len(p)))
+    for r in (0, 1):
+        sel = won == r
+        if not sel.any():
+            continue
+        for k in np.unique(band):
+            off[np.ix_(sel, band == k)] = np.interp(am[sel], mids, a[k, r])[:, None]
+    pc = np.clip(p, 1e-6, 1.0 - 1e-6)
+    out = 1.0 / (1.0 + np.exp(-(np.log(pc / (1.0 - pc))[None, :] + off)))
+    return np.where(p[None, :] <= 0.0, 0.0, np.where(p[None, :] >= 1.0, 1.0, out))
+
+
+def bo_reserve(bo: dict, margins: np.ndarray) -> np.ndarray:
+    """(S,) extra team minutes outside the candidate set at each sim's |margin| (centred)."""
+    return np.interp(np.abs(np.asarray(margins, float)), _bo_mids(),
+                     np.asarray(bo["res_off"], float))
+
+
+def bo_minutes_factor(params: MinutesParams, proj: pd.DataFrame, margins: np.ndarray
+                      ) -> np.ndarray:
+    """(S, n) plan / (plan + g_bo(margin)): the factor that takes a sim's minutes back to the
+    minutes it would have had without the margin curve (the copula reads the per-minute
+    multiplier f(m / mpg) there, so a margin-driven change - garbage time - keeps the player's
+    per-minute rate; f stays for the unplanned part, early exits and noise). 1 where the plan
+    is 0."""
+    bo = params.blowout
+    mean = proj["mean"].to_numpy(float)
+    gv = g_value(params, tier_of(mean), np.asarray(margins, float), bo["g_table"],
+                 bo["g_center"]).reshape(len(margins), len(mean))
+    lvl = np.maximum(mean[None, :] + gv, 0.5)
+    return np.where(mean[None, :] > 0, np.clip(mean[None, :] / lvl, 0.5, 2.0), 1.0)
+
+
+def bo_minutes_factor_rows(params: MinutesParams, plan: np.ndarray, margins: np.ndarray
+                           ) -> np.ndarray:
+    """`bo_minutes_factor` per row (each row its own plan and team margin): plan / (plan +
+    g_bo(margin)), 1 where the plan is 0 (training frames: the plan is the player's mpg)."""
+    bo = params.blowout
+    plan = np.nan_to_num(np.asarray(plan, float))
+    gv = _g_rows(params, tier_of(plan), margins, bo["g_table"], bo["g_center"])
+    lvl = np.maximum(plan + gv, 0.5)
+    return np.where(plan > 0, np.clip(plan / lvl, 0.5, 2.0), 1.0)
+
+
+def _bo_fit_pplay(r: pd.DataFrame, iters: int = 25) -> tuple[list, list]:
+    """Per (P band, side, |margin| bin): the logit offset on top of each available training
+    row's P(plays) (separable 1-D ridge Newton per cell), then each band's offsets centred
+    (count-weighted) so the band keeps its level. Returns (offsets, counts)."""
+    q = r[~r["absent"].to_numpy(bool) & (r["mean0"].to_numpy(float) > 0)
+          & (r["p_play"].to_numpy(float) > 0)]
+    p = np.clip(q["p_play"].to_numpy(float), 1e-6, 1.0 - 1e-6)
+    lp = np.log(p / (1.0 - p))
+    y = q["played"].to_numpy(float)
+    m = q["margin"].to_numpy(float)
+    K, B = len(BO_P_EDGES), len(MARGIN_BINS) - 1
+    c = (_bo_band(p) * 2 + (m > 0).astype(int)) * B + _bo_bin(m)
+    a = np.zeros(K * 2 * B)
+    n = np.bincount(c, minlength=len(a)).astype(float)
+    for _ in range(iters):
+        mu = 1.0 / (1.0 + np.exp(-(lp + a[c])))
+        g = np.bincount(c, y - mu, len(a)) - BO_RIDGE * a
+        hs = np.bincount(c, mu * (1.0 - mu), len(a)) + BO_RIDGE
+        a = a + g / hs
+    a = a.reshape(K, 2, B)
+    n = n.reshape(K, 2, B)
+    for k in range(K):
+        if n[k].sum() > 0:
+            a[k] -= (a[k] * n[k]).sum() / n[k].sum()
+    return a.tolist(), n.astype(int).tolist()
+
+
+def _bo_fit_reserve(r: pd.DataFrame) -> list:
+    """Per |margin| bin: the mean of (team minutes outside the candidates - the reserve), shrunk
+    to the overall mean (BO_RES_K team-games), centred (count-weighted)."""
+    k = r.assign(_y=r["act_min"].fillna(0.0)).groupby("key").agg(
+        margin=("margin", "first"), n_ot=("n_ot", "first"), act=("_y", "sum"),
+        res=("reserve", "first"))
+    out = TEAM_MIN + OT_TEAM_MIN * k["n_ot"].fillna(0).to_numpy(float) - k["act"].to_numpy(float)
+    e = out - k["res"].to_numpy(float)
+    b = _bo_bin(k["margin"].to_numpy(float))
+    B = len(MARGIN_BINS) - 1
+    n = np.bincount(b, minlength=B).astype(float)
+    tot = np.bincount(b, e, B)
+    mean = float(e.mean())
+    v = (tot + BO_RES_K * mean) / (n + BO_RES_K)
+    v = v - (v * n).sum() / max(n.sum(), 1.0)
+    return v.tolist()
+
+
+def _bo_sim_stats(prm: MinutesParams, r: pd.DataFrame, sims: int, seed: int,
+                  margins: dict | None = None) -> pd.DataFrame:
+    """Per played row of the regulation training games: the mean of its simulated minutes given
+    that it plays (`sample_minutes` at the game's actual margin, no overtime), the box minutes,
+    the tier of its plan, the side and the |margin| bin. `margins` ((sims,) per key): simulate
+    at these margins instead (draws from the margin mix of the training games) and add the 10 /
+    90 % quantiles of the minutes given play (rows with >= 10 played sims)."""
+    rng = np.random.default_rng(seed)
+    rr = r[r["n_ot"].fillna(0).to_numpy(float) == 0]
+    cols = ["p_play", "pf36", "reserve", "mean0"]
+    ms = rr["margin"].to_numpy(float)
+    keys = rr["key"].to_numpy()
+    out = []
+    for idx in rr.groupby("key", sort=False).indices.values():
+        d = rr.iloc[idx]
+        pl = d["played"].to_numpy(bool) & (d["mean0"].to_numpy(float) > 0)
+        if not pl.any():
+            continue
+        m = np.full(sims, ms[idx[0]]) if margins is None else margins[keys[idx[0]]]
+        x = sample_minutes(d[cols].rename(columns={"mean0": "mean"}), prm, m, rng)[:, pl]
+        k = (x > 0).sum(0)
+        ok = k >= (3 if margins is None else 10)
+        if not ok.any():
+            continue
+        fr = pd.DataFrame({"mean0": d["mean0"].to_numpy(float)[pl][ok],
+                           "sim": x.sum(0)[ok] / k[ok],
+                           "y": d["act_min"].to_numpy(float)[pl][ok], "m": ms[idx[0]]})
+        if margins is not None:
+            with np.errstate(all="ignore"):
+                q = np.nanquantile(np.where(x[:, ok] > 0, x[:, ok], np.nan), [0.1, 0.9], axis=0)
+            fr["q10"], fr["q90"] = q[0], q[1]
+        out.append(fr)
+    f = pd.concat(out, ignore_index=True)
+    f["tier"] = tier_of(f["mean0"].to_numpy(float))
+    f["won"] = (f["m"].to_numpy(float) > 0).astype(int)
+    f["bin"] = _bo_bin(f["m"].to_numpy(float))
+    return f
+
+
+def _bo_cov(f: pd.DataFrame, nt: int) -> np.ndarray:
+    """Per tier: share of played rows whose box minutes are inside the sims' 10-90 % (given
+    play); NaN for tiers with < 200 rows."""
+    ok = f["q10"].notna() & f["q90"].notna()
+    c = ((f["q10"] <= f["y"]) & (f["y"] <= f["q90"]))[ok].groupby(f["tier"][ok])
+    n, v = c.size(), c.mean()
+    return np.array([float(v[t]) if t in v.index and n[t] >= 200 else np.nan for t in range(nt)])
+
+
+def _bo_fit(prm: MinutesParams, r: pd.DataFrame, log: Callable[[str], None],
+            sims: int = BO_CAL_SIMS, iters: int = BO_CAL_ITERS) -> dict:
+    """The blowout stage on the projected training panel `r` (out-of-fold plans, the oracle
+    scenario, each game's actual margin): P(plays) offsets, reserve offsets, then the margin
+    curve calibrated by simulation (module comment above) and the noise scale per tier
+    rescaled so that the minutes given play, simulated over the margin mix of the training games
+    (each sim at a random training game's margin), keep the arm's own 10-90 % coverage: the
+    variance the margin now explains comes out of the noise (the arm's noise was fit with the
+    margin effect in it). Returns `MinutesParams.blowout`."""
+    from scipy.stats import norm
+    nt = len(TIER_EDGES) + 1
+    rr = r[r["n_ot"].fillna(0).to_numpy(float) == 0]
+    km = rr.groupby("key", sort=False)["margin"].first()
+    pool = km.to_numpy(float)
+    rg = np.random.default_rng(41)
+    shuf = {k: rg.choice(pool, sims) for k in km.index}      # each sim: a training game's margin
+    p_off, p_n = _bo_fit_pplay(r)
+    res_off = _bo_fit_reserve(r)
+    log(f"  fit_v1 blowout: reserve offsets {np.round(res_off, 2).tolist()}")
+    for k in range(len(BO_P_EDGES)):
+        log(f"  fit_v1 blowout: P offsets band {k} lost {np.round(p_off[k][0], 2).tolist()} "
+            f"won {np.round(p_off[k][1], 2).tolist()}")
+    saved = prm.blowout
+    prm.blowout = {}
+    f0 = _bo_sim_stats(prm, r, sims, seed=29)             # the arm's own sims: tier levels
+    lvl0 = f0.groupby("tier")["sim"].mean().reindex(range(nt)).to_numpy(float)
+    cov0 = _bo_cov(_bo_sim_stats(prm, r, sims, seed=30, margins=shuf), nt)
+    tab = np.asarray(prm.g_table, float).copy()
+    sg = np.asarray(prm.sigma, float).copy()
+    prm.blowout = {"version": BO_VERSION, "p_off": p_off, "res_off": res_off,
+                   "g_table": tab.tolist(), "g_center": list(prm.g_center),
+                   "sigma": sg.tolist()}
+    hist = []
+    for it in range(iters + 1):
+        fs = _bo_sim_stats(prm, r, sims, seed=131 + it, margins=shuf)
+        cov = _bo_cov(fs, nt)
+        if it < iters:
+            for t in range(nt):
+                if np.isfinite(cov[t]) and np.isfinite(cov0[t]):
+                    z0 = norm.ppf(np.clip((1.0 + cov0[t]) / 2.0, 0.55, 0.995))
+                    z1 = norm.ppf(np.clip((1.0 + cov[t]) / 2.0, 0.55, 0.995))
+                    sg[t] = float(np.clip(sg[t] * np.clip(z0 / z1, 0.8, 1.25), 0.02, 2.0))
+            prm.blowout["sigma"] = sg.tolist()
+        log(f"  fit_v1 blowout: noise {it}: coverage at the margin mix "
+            f"{np.round(cov, 3).tolist()} vs the arm's {np.round(cov0, 3).tolist()}, sigma "
+            f"{np.round(sg, 3).tolist()}")
+        f = _bo_sim_stats(prm, r, sims, seed=31 + it)
+        g = f.groupby(["tier", "won", "bin"])
+        n = g.size()
+        d = (g["y"].mean() - g["sim"].mean())
+        lt = f.groupby("tier")
+        lv_y, lv_s = lt["y"].mean(), lt["sim"].mean()
+        worst = 0.0
+        for (t, w, b), cnt in n.items():
+            if t >= nt or not np.isfinite(lvl0[t]):
+                continue
+            upd = (d[(t, w, b)] - (lv_y[t] - lv_s[t])) + (lvl0[t] - lv_s[t])
+            worst = max(worst, abs(upd) * min(1.0, cnt / 400.0))
+            if it < iters:
+                tab[t, w, b] += cnt / (cnt + BO_CELL_K) * upd
+        hist.append(round(worst, 3))
+        log(f"  fit_v1 blowout: g calibration {it}: worst cell gap {worst:.3f}, tier level "
+            f"sim - arm {np.round(lv_s.reindex(range(nt)).to_numpy() - lvl0, 3).tolist()}")
+        if it < iters:
+            prm.blowout["g_table"] = tab.tolist()
+    out = dict(prm.blowout, p_n=p_n, calib=hist, level0=np.round(lvl0, 4).tolist(),
+               cov0=np.round(cov0, 4).tolist())
+    prm.blowout = saved
+    return out
+
+
 def departed(h: History, panel: pd.DataFrame) -> np.ndarray:
     """Training candidates that the live path would not have (pipeline.drop_moved_players
     removes players whose current roster team differs): the player's next regular-season
@@ -1967,11 +2235,13 @@ def _spread_leftover(adj, lift, p, avail, g1, g2, gj, vac, sh_j, params) -> None
 
 # --- margin curve and noise ------------------------------------------------------------------
 
-def g_value(params: MinutesParams, tiers: np.ndarray, margin) -> np.ndarray:
+def g_value(params: MinutesParams, tiers: np.ndarray, margin, tab=None, cen=None
+            ) -> np.ndarray:
     """g_tier(|m|, won) - c_tier, linear in |m| between bin centres. margin: scalar or (S,)
-    array (team perspective); returns (S, n) (or (n,) for a scalar)."""
-    tab = np.asarray(params.g_table, float)        # (T, 2, B)
-    cen = np.asarray(params.g_center, float)
+    array (team perspective); returns (S, n) (or (n,) for a scalar). tab / cen: another
+    (T, 2, B) table and centre (the blowout arm's), default the params' own."""
+    tab = np.asarray(params.g_table if tab is None else tab, float)        # (T, 2, B)
+    cen = np.asarray(params.g_center if cen is None else cen, float)
     edges = np.asarray(MARGIN_BINS, float)
     mids = 0.5 * (edges[:-1] + edges[1:])
     mids[-1] = edges[-2] + 4.0
@@ -2041,17 +2311,27 @@ def sample_minutes(proj: pd.DataFrame, params: MinutesParams, margins: np.ndarra
     margins = np.asarray(margins, float)
     S, n = len(margins), len(mean)
     tiers = tier_of(mean)
-    x = np.maximum(mean[None, :] + g_value(params, tiers, margins).reshape(S, n), 0.0)
+    bo = params.blowout
+    if bo:      # blowout arm: its calibrated margin curve (same draws below)
+        gv = g_value(params, tiers, margins, bo["g_table"], bo["g_center"])
+        x = np.maximum(mean[None, :] + gv.reshape(S, n), 0.0)
+    else:
+        x = np.maximum(mean[None, :] + g_value(params, tiers, margins).reshape(S, n), 0.0)
     if noise:
         mu = np.asarray(params.mu)[tiers]
-        sg = np.asarray(params.sigma)[tiers]
+        sg = np.asarray(bo["sigma"] if bo and "sigma" in bo else params.sigma)[tiers]
         x = x * np.exp(mu[None, :] + sg[None, :] * rng.standard_normal((S, n)))
         q = np.clip(params.q0 + params.q1 * pf, 0.0, 0.5)
         ex = rng.random((S, n)) < q[None, :]
         x = np.where(ex, x * rng.uniform(*EXIT_U, size=(S, n)), x)
+    ot = np.zeros(S) if n_ot is None else np.asarray(n_ot, float)
+    if bo:      # P(plays) and the reserve move with the sim's margin (common random numbers)
+        plays = rng.random((S, n)) < bo_pplay(bo, p, margins)
+        x = np.where(plays, x, 0.0)
+        return _renorm(x, TEAM_MIN + OT_TEAM_MIN * ot - _reserve_of(proj)
+                       - bo_reserve(bo, margins), CAP + 5.0 * ot)
     plays = rng.random((S, n)) < p[None, :]
     x = np.where(plays, x, 0.0)
-    ot = np.zeros(S) if n_ot is None else np.asarray(n_ot, float)
     return _renorm(x, TEAM_MIN + OT_TEAM_MIN * ot - _reserve_of(proj), CAP + 5.0 * ot)
 
 
@@ -2354,8 +2634,8 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
            shares: "PairShares | None", log: Callable[[str], None] = print,
            use_share: bool = False, max_rounds: int = 3000, gbm_params: dict | None = None,
            nmu_grid=(0.0, 0.5, 1.0), k_grid=(0.0, 0.15, 0.3), share_grid=(0.0, 0.15, 0.3),
-           cv_grid=(0.2, 0.4, 0.6), features=None, minfix: bool | dict = False
-           ) -> MinutesParams:
+           cv_grid=(0.2, 0.4, 0.6), features=None, minfix: bool | dict = False,
+           blowout: bool = False) -> MinutesParams:
     """v1 on top of a v0.5 fit, all on the same training panel (seasons < S, oracle scenario).
 
     1. LightGBM (L2) for E[regulation minutes | plays] on V1_FEATURES (+ V1_SHARE if
@@ -2372,7 +2652,11 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
     3. Refit the margin curve g and the noise model on the OOF projections.
     minfix (COURTSIDE_MINFIX): P(plays | available) is refit with the plan (MF_PLAN_FEATURES on
     the out-of-fold GBM base, `prm.minfix["pplay_coef"]`) before step 2, and step 3 fits the
-    noise net of the margin curve."""
+    noise net of the margin curve.
+    blowout (COURTSIDE_BLOWOUT): after step 3 (and the minfix noise calibration), the blowout
+    stage (`_bo_fit`: P(plays) and reserve offsets by margin, the margin curve calibrated by
+    simulation) on the same out-of-fold projections -> `prm.blowout`; nothing before it
+    changes."""
     import lightgbm as lgb
     import time as _time
     t0 = _time.time()
@@ -2469,6 +2753,8 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
     cnt_min, nok = _fit_margin_noise(prm, best[2])
     if prm.minfix.get("noise") == "calib":
         prm.minfix["calibration"] = _mf_calibrate_noise(prm, best[2], log)["calib"]
+    if blowout:
+        prm.blowout = _bo_fit(prm, best[2], log)
     prm.diagnostics = dict(prm.diagnostics, v1={
         "n_rounds": n_rounds, "folds": folds, "train_rows": int(rows.sum()),
         "fallback_share_train": round(float((~ok & ~ab).sum() / max((~ab).sum(), 1)), 4),
@@ -2543,10 +2829,12 @@ def _fit_margin_noise(prm: MinutesParams, r: pd.DataFrame) -> tuple[int, bool]:
     return int(cnt.min()), ok
 
 
-def _g_rows(prm: MinutesParams, tiers: np.ndarray, margins: np.ndarray) -> np.ndarray:
-    """g_tier(|m|, won) - c_tier per row (each row its own tier and margin), as g_value."""
-    tab = np.asarray(prm.g_table, float)
-    cen = np.asarray(prm.g_center, float)
+def _g_rows(prm: MinutesParams, tiers: np.ndarray, margins: np.ndarray, tab=None, cen=None
+            ) -> np.ndarray:
+    """g_tier(|m|, won) - c_tier per row (each row its own tier and margin), as g_value (tab /
+    cen: another table and centre, default the params' own)."""
+    tab = np.asarray(prm.g_table if tab is None else tab, float)
+    cen = np.asarray(prm.g_center if cen is None else cen, float)
     edges = np.asarray(MARGIN_BINS, float)
     mids = 0.5 * (edges[:-1] + edges[1:])
     mids[-1] = edges[-2] + 4.0

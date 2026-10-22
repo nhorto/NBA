@@ -15,7 +15,9 @@ Per sim s of a game (home H, away A):
    it uses B's redistribution of vacated minutes, and its extra absentees are zeroed and the
    team re-water-filled to 240. Marginal P(play) is therefore exact; only the redistribution of
    rare multi-absence sets is approximate.
-3. **Minutes** = `minutes.sample_minutes` at the sim's margin (team perspective) and OT.
+3. **Minutes** = `minutes.sample_minutes` at the sim's margin (team perspective) and OT. Under
+   the blowout switch (`pipeline.BLOWOUT`, `MinutesParams.blowout`) P(plays), the reserve and
+   the margin curve come from the blowout stage (`minutes.BO_*`); the draws are the same.
 4. **DK FP given minutes.** Mean = minutes x per-minute rate (T1.1 EB rate x the short-minutes
    multiplier f_stat(min/mpg) x the usage bump when a top-2 star of the team is absent in this
    sim's scenario) + E[DD/TD bonus | minutes] (independent-NB approximation, `state_eval`).
@@ -589,14 +591,18 @@ def _seed_seq(seed) -> np.random.SeedSequence:
 
 def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
                   n_ot: np.ndarray, rng_s: np.random.Generator, rng_m: np.random.Generator,
-                  plan_out: dict | None = None) -> tuple[np.ndarray, np.ndarray, dict]:
+                  plan_out: dict | None = None, bo_out: dict | None = None
+                  ) -> tuple[np.ndarray, np.ndarray, dict]:
     """(minutes (S, n), absent (S, n), scenario info) for one team. `plan_out` (minutes-ratio
     arm) receives 'plan' (per kept scenario: E[min | plays] before the margin, the engine's
-    `mean`) and 'assign' (S,) (each sim's kept scenario); it changes no draw."""
+    `mean`) and 'assign' (S,) (each sim's kept scenario); it changes no draw. `bo_out` (blowout
+    arm) receives 'k' (S, n): `minutes.bo_minutes_factor` of each sim's scenario and margin."""
     S = len(margin_team)
     pl = ts.players
     sc = draw_scenarios(pl["p_avail"].to_numpy(float), S, rng_s)
     x = np.zeros((S, len(pl)))
+    if bo_out is not None:
+        bo_out["k"] = np.ones((S, len(pl)))
     for b, kept in enumerate(sc["kept"]):
         idx = np.flatnonzero(sc["assign"] == b)
         if not len(idx):
@@ -604,6 +610,8 @@ def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
         proj = ts.minutes.project(kept)
         if plan_out is not None:
             plan_out.setdefault("plan", {})[b] = proj["mean"].to_numpy(float)
+        if bo_out is not None:
+            bo_out["k"][idx] = M.bo_minutes_factor(mp, proj, margin_team[idx])
         xb = M.sample_minutes(proj, mp, margin_team[idx], rng_m, n_ot=n_ot[idx])
         extra = sc["absent"][idx] & ~kept[None, :]
         rows = extra.any(1)
@@ -611,6 +619,8 @@ def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
             xr = np.where(extra[rows], 0.0, xb[rows])
             ot = n_ot[idx][rows]
             tot = M.TEAM_MIN + M.OT_TEAM_MIN * ot - M._reserve_of(proj)
+            if mp.blowout:            # blowout arm: the reserve moves with the margin
+                tot = tot - M.bo_reserve(mp.blowout, margin_team[idx][rows])
             xb[rows] = M._renorm(xr, tot, M.CAP + 5.0 * ot)
         x[idx] = xb
     x = np.where(sc["absent"], 0.0, x)
@@ -619,6 +629,22 @@ def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
     info = {"n_distinct": sc["n_distinct"], "n_projected": len(sc["kept"]),
             "kept_mass": sc["kept_mass"], "collapsed_sims": sc["collapsed"]}
     return x, sc["absent"], info
+
+
+# Blowout arm (`MinutesParams.blowout`): the per-minute multiplier f(m / mpg) of the expected
+# counts is read at the minutes net of the margin curve, x * k (k = `bo_minutes_factor`), and
+# the count is scaled back to x: rate x x x f(x k / mpg). Research switch (False: f at x, as v0).
+BO_PM_NEUTRAL = True
+
+
+def _bo_look(look, k: np.ndarray, played: np.ndarray):
+    """Wrap a grid lookup `look(key, role, x)` so it reads the grid at x * k and scales the
+    expected count back to x (k clipped so x * k stays on the grid)."""
+    def look_bo(key, rl, xx):
+        kk = np.where(played & (xx > 0), np.minimum(k, (GRID_MAX - 1.0) / np.maximum(xx, 1e-9)),
+                      1.0)
+        return look(key, rl, xx * kk) / kk
+    return look_bo
 
 
 def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dict,
@@ -641,7 +667,9 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
     for side, ts, sign in sides:
         pl = ts.players.reset_index(drop=True)
         po = {} if ST.has_mr(sp) else None
-        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po)
+        bo = {} if (mp.blowout and BO_PM_NEUTRAL) else None
+        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po,
+                                         bo_out=bo)
         played = x > 0
         star = pl["star"].to_numpy(bool)
         rot = pl["rotation"].to_numpy(bool) & ~star
@@ -655,9 +683,11 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
                 return _lookup(G[key], rl, xx)
         else:                                 # minutes-ratio arm: per-scenario plan grids
             look = _PlanGrids(_grids, pl, sp, po["plan"], po["assign"]).look
+        bonus = look("bonus", None, x) * played
+        if bo is not None:                    # blowout arm: f read net of the margin curve
+            look = _bo_look(look, bo["k"], played)
         raw_pts = look("pts", role, x) * played
         raw_oth = look("oth", role, x) * played
-        bonus = look("bonus", None, x) * played
         g = team_pts[side] / max(mean_pts[side], 1.0)
         rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
@@ -1077,7 +1107,9 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
     for side, ts, sign in sides:
         pl = ts.players.reset_index(drop=True)
         po = {} if ST.has_mr(sp) else None
-        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po)
+        bo = {} if (mp.blowout and BO_PM_NEUTRAL) else None
+        x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po,
+                                         bo_out=bo)
         played = x > 0
         star = pl["star"].to_numpy(bool)
         rot = pl["rotation"].to_numpy(bool) & ~star
@@ -1096,9 +1128,12 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
         else:                                 # minutes-ratio arm: per-scenario plan grids
             look = _PlanGrids(_grids, pl, sp, po["plan"], po["assign"]).look
             look_s = _PlanGrids(_stat_grids, pl, sp, po["plan"], po["assign"]).look
+        bonus = look("bonus", None, x) * played
+        if bo is not None:                    # blowout arm: f read net of the margin curve
+            look = _bo_look(look, bo["k"], played)
+            look_s = _bo_look(look_s, bo["k"], played)
         raw_pts = look("pts", role, x) * played
         raw_oth = look("oth", role, x) * played
-        bonus = look("bonus", None, x) * played
         g = team_pts[side] / max(mean_pts[side], 1.0)
         rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
@@ -1157,11 +1192,15 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
 # ------------------------------------------------------------------------------ v1 fitting
 
 def v1_frame(conn: sqlite3.Connection, season: str, sp: dict, alpha: float, *,
-             n_seasons: int = 2, games: pd.DataFrame | None = None) -> pd.DataFrame:
+             n_seasons: int = 2, games: pd.DataFrame | None = None,
+             mp: M.MinutesParams | None = None) -> pd.DataFrame:
     """Per-stat conditional means given ACTUAL minutes and ACTUAL team points (the v1 analogue
     of `conditional_frame`) on the `n_seasons` regular seasons before `season`: columns game_id,
     team, season, tier (0..2), margin (team perspective), y_<stat>, m_<stat> (pts x g, others x
-    g^alpha, g = team points / sum of rate x minutes points of the team-game), dk_act, mu_dk."""
+    g^alpha, g = team points / sum of rate x minutes points of the team-game), dk_act, mu_dk.
+    `mp` with a blowout stage: the per-minute multiplier is read at the minutes net of the
+    margin curve, as the blowout arm's sims read it (`minutes.bo_minutes_factor_rows`, the plan
+    = the player's mpg)."""
     s0 = int(season[:4])
     seasons = [_season_label(s0 - k) for k in range(n_seasons, 0, -1)]
     first = _season_label(s0 - n_seasons - sp.get("history_seasons", 6))
@@ -1177,8 +1216,13 @@ def v1_frame(conn: sqlite3.Connection, season: str, sp: dict, alpha: float, *,
     w = wf.merge(tp, on=["game_id", "team"], how="inner").reset_index(drop=True)
     mins = w["min"].to_numpy(float)
     mpg = w["mpg"].to_numpy(float)
-    raw = {s: w[f"r_{s}"].to_numpy(float) * mins * ST.minutes_multiplier(sp, s, mins, mpg)
-           for s in COMP_STATS}
+    if mp is not None and mp.blowout:
+        kf = M.bo_minutes_factor_rows(mp, mpg, w["margin"].to_numpy(float))
+        raw = {s: w[f"r_{s}"].to_numpy(float) * mins
+               * ST.minutes_multiplier(sp, s, mins * kf, mpg) for s in COMP_STATS}
+    else:
+        raw = {s: w[f"r_{s}"].to_numpy(float) * mins * ST.minutes_multiplier(sp, s, mins, mpg)
+               for s in COMP_STATS}
     key = (w["game_id"] + "|" + w["team"]).to_numpy()
     rp = pd.Series(raw["pts"]).groupby(key).transform("sum").to_numpy()
     g = w["team_pts"].to_numpy(float) / np.maximum(rp, 1.0)

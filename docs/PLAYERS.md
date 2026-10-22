@@ -100,6 +100,7 @@ No review item is rejected outright. Three are accepted with a different option 
 | **Minutes ratio (mr, 2026-10-21) behind `COURTSIDE_MINRATIO=1`, default OFF.** The per-minute minutes table is re-keyed from realised m / mpg to the unplanned deviation m / P (P = the minutes engine's E[min ∣ plays] of each sim's availability scenario; in training the same engine walk-forward), so planned changes (injury ramps, promotions when a star sits) no longer get the per-minute penalty or boost of unplanned ones (early exits, blowouts). The ON bundle `<arm>_mr.json` refits the table, the usage bump, copula v0 and the context layer (offset E_s re-keyed) on seasons < S. Version `<arm>+mr`; seeds unchanged; with the switch off everything is bit-identical (2024-01-10, opener slate 154575, p2 identity hashes). A second factor g_p(P / mpg) was tested and dropped (weaker; star tier +1.3 SE) | Design B (the switch's), T2.1 avail, paired, date-clustered: DK CRPS −0.0037 (−2.8 SE) / −0.0031 (−2.0 SE) in 2023-24 / 2024-25, DK MAE −0.004; live / live10 + p2 CRPS −0.6 / +0.6 SE; RotoGuru 2019-20 / 2020-21 CRPS −3.3 / −4.9 SE. Per-minute error at > 1.4× recent: −4.3…−4.7 % → −2.8…−3.1 %; promoted bias −0.75 → −0.5; game-0 returners +1.6 → +1.1; star-out gap unchanged. Cost: the bench tier (E[min ∣ plays] < 15) is worse in all six sets (DK MAE +0.010…+0.035; CRPS +2.9 SE in 2019-20). **Bench follow-up:** not small-P instability or the context refit. The pooled f_u is too steep for bench plans (refit by P they are flatter at short minutes, lower at m / P 0.8–1.0), and the re-key unmasks the minutes engine's over-projection of planned-demoted bench players (P(play) +0.04…+0.06, E[min] +0.4…+0.8). Design C (f_u by P tier, `PL_TIERS_C`) is the better table at realised minutes and in aggregate: CRPS −3.7 / −2.4 SE, RotoGuru −4.7 / −5.9, live −0.4 / +0.7, bench DK MAE 10–30 % smaller. But bench is still +2.7 SE (2019-20) / +1.03 SE (2024-25), and its steeper mid-P curve widens rotation intervals: rotation +1.6 / +2.3 SE on the live slice. Cash lineups −2.2 / −2.5 (± 1.5 / 1.3). **Bar not met by either design; not shipped.** The switch keeps B, and C is a research option. Next: the minutes side for short-plan players. Results block under Phase 2 |
 | **Preseason minutes + season-start debut reserve (pre, 2026-10-21) behind `COURTSIDE_PRESEASON=1`, default OFF.** The minutes LightGBM gets 9 preseason columns from the migration 15 logs (the row team's preseason only, strictly before the date: games, mpg, last-2-games mpg, share of team minutes, rank, vs prior-season mpg and vs teammates, did-not-play flag; NaN from team game 20 on). Scrimmages are dropped; games against international clubs are kept. Walk-forward finding: the minutes of players outside the candidate set are ~29 per team at game 0 (13 debutants + 16 non-regular arrivals in the oracle) against a season-average fitted reserve of ~3, and ~1–3 later. After game 0, prior-season minutes are not mis-weighted (roster rows' bias is +0.04…+0.10). So the reserve is split: debutants by team games into the season × the camp's new players' preseason minutes (winsorised at the training p95), and the rest. Version `<arm>+pre`, bundle `<arm>_pre.json`; OFF is bit-identical | T2.1 avail ON − OFF, first 15 team games: minutes MAE −0.027 (−1.4 SE) / −0.032 (−2.8 SE) / −0.020 (−0.9 SE) and DK CRPS −1.4 / −3.5 / −0.9 SE in 2023-24 / 2024-25 / 2025-26. Full season ±0. Star tier full-season CRPS +1.4 SE (2023-24) and +2.6 SE (2025-26). Opener 2026-27: the debut reserve takes 18–30 team minutes from BOS / OKC / PHI / SAS, but debutants played 0–13. **Bar not met; not shipped.** Results block under Phase 2 |
 | **Minutes fix (mf, 2026-10-22) behind `COURTSIDE_MINFIX=1`, default OFF.** Diagnosis of the +mr / +pre minutes-side failures: the planned-demotion bias is the v1 P(plays ∣ available) logit, which never sees the GBM's plan (demoted bench +0.05…+0.06, promoted −0.065; three quarters of demoted bench rows are the player's own return / DNP streak, 7–9 % a starter back today); E[min ∣ plays] is close; the 240 rebalance only carries P(play) changes into the starters. The sims' noise was fit on log(actual / plan), which already holds the margin effect, and its tier lognormal is not mean-preserving, so the sims moved ~0.6 min a game from stars to the bench and made stars / starters too wide (bench draws given play were too narrow). Fix, refit on seasons < S: P(plays) logit + the plan (log plan, plan / EWMAs / median 5, depth rank by plan), fit on out-of-fold plans; noise fit net of the margin curve, then location / scale per tier calibrated by simulation on the training projections. A LightGBM P(plays) was dropped (it learns the oracle rule that available regulars always play). Version `<arm>+mf`, bundle `<arm>_mf.json` (after `_pre`); composes with +mr / +pre. Debut reserve (under +pre): driver = the camp's two largest new players' preseason minutes, capped at the training max (the camp sum ran out of range: OKC 126) | ON − OFF, date-clustered: DK CRPS −6.1 / −5.2 SE (2023-24 / 2024-25 avail), live / live10 + p2 −2.6 / −3.7, RotoGuru −3.7 / −3.0; every tier better in every set (worst −0.7 SE); DK MAE −0.013…−0.029, minutes MAE −0.022…−0.043; star DK bias −0.40 / −0.25 → −0.19 / −0.09. **+mf+mr (B)** −7.2 / −6.4, live −2.9 / −3.0, RotoGuru −4.5 / −5.2, bench no longer worse (C passes too, weaker). **+mf+pre** −4.4 / −4.5, live −1.7 / −2.7, first 15 games CRPS −2.1 / −3.2 SE. Demoted-bench rows with E[min] ≥ 10 keep most of their P(play) bias (+0.067 / +0.080 → +0.063 / +0.075). 28 openers of 2026-27: the debut reserve is unbiased (the 6-team opener was the sample) but OKC is still over-reserved. OFF bit-identical (2024-01-10, slate 154575, 5 / 5 p2 hashes). **Bar met by +mf, +mf+mr, +mf+pre; not shipped (owner's call).** Results block under Phase 2 |
+| **Blowout minutes (bo, 2026-10-22) behind `COURTSIDE_BLOWOUT=1`, default OFF.** Simulating each game at its actual margin (avail oracle, params fit < S) shows the sims keep only about half of the margin effect on minutes: stars get 1.2–1.6 min too few in games decided by 0–9 and 2.2–2.7 too many at 26+, under OFF and +mf alike. The fitted margin curve has the right shape (top tier +1.5 → −6 min); the sims lose it for two reasons. P(plays ∣ available) does not move with the margin: deep-bench P(play) is +0.15 too high at 0–9 and −0.24 too low at 26+. And the per-sim proportional fill to 240 gives the lost minutes back to the starters (players outside the candidate set also go from 1 to 3 min). Fix: a blowout stage on top of the arm's minutes params, fit < S on the out-of-fold training projections. It has P(plays) logit offsets by P band × won / lost × \|margin\|, a reserve offset by \|margin\|, the margin curve recalibrated by simulation (each tier's level kept), and the noise scale rescaled so each tier's margin-integrated spread stays the arm's. The copula also reads f(min / mpg) net of the margin curve. A copula v0 winner / loser per-minute shift was tested and dropped. Version `<arm>+bo`, bundle `<arm>_bo.json` (after `_mf`) | At the actual margin the OFF star minutes gap goes from +1.4…+1.6 (0–9) / −2.2…−2.5 (26+) to a flat +0.4…+0.6 in every bucket. Bench P(play) gaps go from +0.15 / −0.24 to +0.05 / +0.01. DK CRPS, +bo − OFF: −1.5 / −1.5 SE (2023-24 / 2024-25), live / live10 −4.5 / −4.1 SE, no tier worse than +0.3 SE. +mf+bo − +mf: +0.1 / −1.9 SE, live −4.0 / −3.2, RotoGuru −0.1 / −0.4 (rotation +1.9 SE in 2023-24). The gain sits in realised blowouts (stars at 26+ −3.4 / −4.3 SE) at a small cost in realised close games (+2.0 / +2.1). 2025-26 had more blowouts (avail −2.8 SE). Lineup sims get wider (one team's top 4: sd +5 %), not narrower. OFF bit-identical (2024-01-10, slate 154575, 5 / 5 p2 hashes). **Bar not met** (needs ≥ 2 SE in both harness seasons); not shipped. Results block under Phase 2 |
 
 ## 1. Scope and design in one paragraph
 
@@ -1180,6 +1181,149 @@ The switch stays OFF in every combination; shipping is the owner's call. If it s
 - +mf+mr (B) is the strongest arm.
 - The minutes-ratio table's training plans should then be refit from the +mf engine (planned rows here are the OFF engine's).
 - The +p2 / +pq live paths' listed and fringe P(play) are unchanged by +mf (it replaces only the engine's P(plays ∣ available) of unlisted roster players).
+
+**Blowout-minutes results (bo, 2026-10-22; switch default OFF, not shipped).**
+- **Switch:** `COURTSIDE_BLOWOUT=1` (`pipeline.BLOWOUT`, `BLOWOUT_DEFAULT = False`; `set_blowout()`). It is a suffix on any arm:
+  - bundle `<arm's bundle>_bo.json` (after `_mf`, before `_mr` / `_c1`) = the arm's bundle with the minutes params refit on seasons < S plus the blowout stage (`minutes_params_<S>_v1[_pre][_mf]_bo.json`). Everything before the stage is byte-identical to the arm's params (checked for all 8 fits).
+  - version `<arm>+bo` (`pathA-v0.3+bo+p2`, `pathA-v0.3+mf+bo+p2`); seeds unchanged.
+- **Code:**
+  - `minutes`: `BO_*`, `bo_pplay` / `bo_reserve` / `bo_minutes_factor[_rows]`, `_bo_fit` (`_bo_fit_pplay`, `_bo_fit_reserve`, `_bo_sim_stats`, `_bo_cov`), `fit_v1(blowout=True)`, `MinutesParams.blowout` (a JSON key only when set), `sample_minutes`, `g_value(tab=, cen=)`.
+  - `copula`: `_team_minutes(bo_out=)`, `_bo_look`, `BO_PM_NEUTRAL`, `v1_frame(mp=)`. Under bo, copula v1's winner / loser shift is fit with f read net of the margin curve; c1+bo was not evaluated.
+  - `pipeline._load_bundle_bo`.
+- **Tests:** `tests/test_proj_blowout.py` (14).
+- **Research:** `research/blowout_eval.py`:
+  - `mdiag` / `mtable`: the minutes engine alone at each game's actual margin.
+  - `harness`: the T2.1 harness / T2.4 slice, plus DK and minutes stats conditional on the sim's team margin being near the actual one, plus lineup rows.
+  - `dk` / `summary`: paired tables.
+  - `fit` / `same`.
+- **Mac scratch:** `courtside-compute/bo` on a backup of the prod DB of 2026-10-22 03:57. The slice ran with real tip times: the ESPN scoreboard archive was copied into the scratch data dir, and `tip_unknown` was 0 on every date.
+
+*The gap.* Minutes engine alone, avail oracle, every available candidate, `sample_minutes` at each team-game's actual margin and overtime (400 sims). Cells are actual − sim, in minutes; SE 0.09–0.28, clustered by date; tiers by E[min ∣ plays].
+
+| Stars, 2023-24 / 2024-25 | 0–9 | 10–19 | 20–25 | 26+ |
+|---|---|---|---|---|
+| OFF | +1.43 / +1.59 | +0.32 / +0.20 | −1.36 / −1.44 | −2.47 / −2.19 |
+| +mf | +1.24 / +1.43 | +0.13 / +0.07 | −1.60 / −1.56 | −2.68 / −2.40 |
+| +bo | +0.45 / +0.56 | +0.61 / +0.47 | +0.56 / +0.43 | +0.36 / +0.46 |
+| +mf+bo | +0.30 / +0.43 | +0.44 / +0.35 | +0.29 / +0.25 | +0.12 / +0.24 |
+
+- **Starters:** OFF +0.81 / +0.69 at 0–9 and −1.79 / −1.00 at 26+; +bo +0.13 / −0.00 and +0.28 / +0.76.
+- **Bench (E[min ∣ plays] < 15):** the sims' P(play) − played is +0.15 at 0–9 and −0.24 at 26+ in both seasons, under OFF and +mf; under +bo it is +0.05 / +0.01. Bench minutes at 26+ go from 2.1 too few to 0.1 too many.
+- **Outside the candidate set** (call-ups, deep bench): these players play 1.0 min per team-game at 0–9 and 3.1 at 26+, against a reserve of 2.1–2.7.
+- **Why.** The fitted margin curve g is right (top tier +1.5 min at 0–5, −5.3…−6.3 at 30+); the sims lose it:
+  - P(plays ∣ available) does not depend on the margin, so the deep bench that empties out in blowouts is drawn DNP at its average rate.
+  - The per-sim proportional fill to 240 hands the stars' lost minutes back.
+  - The noise already holds the margin variance: OFF fits it on log(actual / plan), and +mf calibrates it at the actual margin with this weak response.
+- **DK at the margin** (harness; DK sims whose team margin is within ±3 of the actual one): OFF stars are −1.40 / −1.39 DK at 0–9 and +2.59 / +1.54 at 26+. The DK gap is the minutes gap.
+
+*The fix* (`fit_v1(blowout=True)`, on the 5 seasons < S and the out-of-fold training projections the noise is fit on):
+1. **P(plays ∣ available) logit offsets** by P band (< 0.3, 0.3–0.6, 0.6–0.85, 0.85–0.95, ≥ 0.95) × won / lost × \|margin\| bin. Each band is centred, so its level stays the arm's. 2024-25 fit:
+   - P < 0.3: −1.1 logit at 0–5, +1.3…+1.6 at 20+.
+   - P 0.6–0.85: −0.4 / +0.6…+1.0.
+   - P ≥ 0.85: about 0.
+2. **Reserve offset** by \|margin\| (centred): −0.5 min at 0–5, +1.5 at 30+.
+3. **Margin curve recalibrated by simulation.** `sample_minutes` runs at each regulation training game's actual margin for 6 rounds, so that the minutes of players who play match the actual ones by tier × won / lost × bin. The fit moves the shape around each tier's own simulated level; levels move ≤ 0.04 min. The worst weighted cell gap falls from 0.98 to 0.28 min.
+4. **Noise scale rescaled per tier.** Minutes given play, simulated over the training margin mix, keep the arm's own 10–90 coverage, because the margin now carries variance the noise used to hold. Top tier σ: 0.126 → 0.106 (OFF), 0.074 → 0.054 (+mf).
+5. **Per-minute rate read net of the margin curve.** The copula reads f(min / mpg) at x · plan / (plan + g). f was fit on realised minutes, where a low ratio is mostly an early exit with a lower rate. Without this step, stars in big wins come out 2.8 DK low at the right minutes.
+
+*Tested and dropped* (+bo − OFF CRPS, 2023-24 / 2024-25):
+- **Steps 1–3 alone:** +1.1 / +1.2 SE (stars +2.6 / +2.5). Coverage got wider because the noise double counted the margin variance.
+- **Adding step 5:** +0.4 SE (2024-25).
+- **Adding step 4 (the switch as committed):** −1.5 / −1.5 SE.
+- **A copula v0 winner / loser per-minute shift on top of the switch:** points moved between tiers and the other DK stats, by role tier × signed margin, `fit_wl`'s construction with f net of the margin curve.
+  - CRPS at the actual margin: −6.7 / −5.4 SE.
+  - Unconditional CRPS: only −1.1 / −0.1 SE, because the shift adds margin-driven DK variance on top of a CV that already holds it.
+  - That fix belongs with the copula v1 variance retune.
+
+*Evaluation.* Setup:
+- Paired ON − OFF on identical rows: E[min] ≥ 10 in either arm, DNP = 0.
+- T2.1 harness: avail, 4,000 sims, closing lines, every date.
+- T2.4 slice: 2025-26, live / live10 + p2, P(play) cells leave-one-month-out, real tip times.
+- SE clustered by date; z in brackets.
+- "At the margin": DK CRPS of the sims whose team margin is within ±3 of the actual one, widened until there are ≥ 100 sims.
+
+**+bo** (`pathA-v0.3+bo+p2` vs `pathA-v0.3+p2`):
+
+| | 2023-24 | 2024-25 | live | live10 |
+|---|---|---|---|---|
+| rows | 21787 | 21923 | 14941 | 14825 |
+| DK CRPS OFF / Δ (z) | 5.651 / -0.0014 (-1.5) | 5.646 / -0.0016 (-1.5) | 5.719 / -0.0064 (-4.5) | 5.609 / -0.0052 (-4.1) |
+| DK MAE OFF / Δ (z) | 8.018 / -0.0022 (-1.7) | 7.996 / -0.0026 (-1.8) | 8.104 / -0.0080 (-3.9) | 7.925 / -0.0066 (-3.1) |
+| 80% cov OFF → ON | 0.820 → 0.821 | 0.824 → 0.825 | 0.838 → 0.838 | 0.836 → 0.836 |
+| DK PIT max dev | 0.0077 → 0.0073 | 0.0107 → 0.0110 | 0.0165 → 0.0161 | 0.0162 → 0.0154 |
+| CRPS z star/starter/rotation/bench | -0.8 / -1.4 / -0.6 / +0.3 | -1.3 / -0.4 / -1.1 / +0.2 | -3.8 / -3.5 / -1.7 / -1.3 | -4.2 / -2.9 / -0.5 / -1.5 |
+| minutes 80% cov OFF → ON | 0.847 → 0.851 | 0.852 → 0.854 | 0.869 → 0.870 | 0.870 → 0.871 |
+| DK CRPS at the margin Δ (z) | -0.0161 (-3.9) | -0.0140 (-3.2) | -0.0055 (-1.2) | -0.0033 (-0.7) |
+| star DK bias at the margin 0-9 / 10-19 / 20-25 / 26+, OFF | -1.40 / -0.39 / +1.15 / +2.59 | -1.39 / +0.22 / +1.35 / +1.54 | -0.61 / +0.69 / +0.69 / +1.34 | -0.85 / +0.38 / +0.55 / +1.11 |
+| … ON | -0.35 / -0.66 / -0.80 / -0.17 | -0.27 / -0.04 / -0.59 / -1.08 | +0.41 / +0.44 / -1.01 / -0.96 | +0.16 / +0.14 / -1.10 / -1.14 |
+| star minutes bias at the margin 0-9 / 26+, OFF → ON | -1.54 → -0.60 / +2.77 → +0.08 | -1.62 → -0.62 / +2.35 → -0.17 | -1.19 → -0.29 / +1.77 → -0.47 | -1.43 → -0.53 / +1.67 → -0.52 |
+| star DK bias at the margin 26+ won / lost, OFF → ON | +0.91 → -2.12 / +4.50 → +2.04 | +0.87 → -1.99 / +2.41 → +0.12 | +0.10 → -2.57 / +2.92 → +1.08 | +0.21 → -2.40 / +2.25 → +0.47 |
+
+2025-26 with the avail protocol: −0.0030 (−2.8 SE); stars −3.1, rotation +0.1 SE.
+
+**+mf+bo − +mf** (bo on top of the minutes fix; RotoGuru with the harness's cash lineups):
+
+| | 2023-24 | 2024-25 | live | live10 | 2019-20 | 2020-21 |
+|---|---|---|---|---|---|---|
+| rows | 21911 | 22091 | 15045 | 14924 | 18872 | 19276 |
+| DK CRPS +mf / Δ (z) | 5.632 / +0.0001 (+0.1) | 5.628 / -0.0016 (-1.9) | 5.709 / -0.0050 (-4.0) | 5.596 / -0.0035 (-3.2) | 5.536 / -0.0001 (-0.1) | 5.499 / -0.0002 (-0.4) |
+| DK MAE +mf / Δ (z) | 7.986 / -0.0008 (-0.7) | 7.969 / -0.0036 (-3.0) | 8.092 / -0.0063 (-3.4) | 7.910 / -0.0051 (-2.9) | 7.841 / -0.0010 (-1.3) | 7.776 / -0.0005 (-0.6) |
+| 80% cov | 0.815 → 0.818 | 0.821 → 0.822 | 0.836 → 0.836 | 0.836 → 0.836 | 0.822 → 0.822 | 0.823 → 0.824 |
+| CRPS z star/starter/rotation/bench | -0.5 / -0.7 / +1.9 / +0.1 | -1.3 / -1.0 / -0.4 / -1.1 | -3.6 / -3.1 / -1.4 / -0.3 | -3.5 / -1.8 / -0.0 / -1.3 | +0.1 / -0.7 / +0.0 / +0.5 | +0.7 / -0.4 / -0.2 / -1.4 |
+| minutes 80% cov | 0.829 → 0.839 | 0.837 → 0.841 | 0.855 → 0.859 | 0.856 → 0.860 | 0.855 → 0.857 | 0.843 → 0.847 |
+| DK CRPS at the margin Δ (z) | -0.0134 (-3.4) | -0.0132 (-3.2) | -0.0009 (-0.2) | +0.0008 (+0.2) | -0.0044 (-1.4) | -0.0109 (-3.7) |
+| star DK bias at the margin 0-9 / 26+ | -1.28 → -0.27 / +2.75 → +0.04 | -1.25 → -0.16 / +1.69 → -0.89 | -0.50 → +0.47 / +1.29 → -0.86 | -0.72 → +0.25 / +1.06 → -1.06 | -0.96 → -0.13 / +1.79 → -0.39 | -1.73 → -0.80 / +3.04 → +0.69 |
+
+**+mf+bo − OFF:**
+- CRPS: −6.0 / −5.4 SE (2023-24 / 2024-25), live / live10 −3.8 / −4.1, RotoGuru −3.7 / −3.0. +mf alone: −6.1 / −5.2, −2.6 / −3.7, −3.7 / −3.0.
+- Tiers: every tier is better in every set (worst −0.7 SE).
+
+*Blowout-bucket calibration.* Per actual \|margin\| bucket: mean PIT at the margin, 10–90 coverage at the margin, unconditional CRPS z. 2024-25, +bo − OFF:
+
+| tier | 0–9 | 10–19 | 20–25 | 26+ |
+|---|---|---|---|---|
+| star | PIT 0.531 → 0.501, cov 0.831 → 0.833, z +2.1 | 0.488 → 0.495, 0.843 → 0.841, +0.2 | 0.456 → 0.508, 0.842 → 0.812, −2.3 | 0.455 → 0.524, 0.832 → 0.815, −4.3 |
+| starter | 0.509 → 0.489, 0.816 → 0.816, +3.0 | 0.488 → 0.493, 0.809 → 0.810, +0.6 | 0.467 → 0.502, 0.826 → 0.810, −1.7 | 0.474 → 0.520, 0.820 → 0.799, −2.9 |
+| rotation | 0.504 → 0.498, 0.802 → 0.812, −0.1 | 0.505 → 0.507, 0.815 → 0.815, −0.4 | 0.501 → 0.511, 0.844 → 0.814, −0.9 | 0.507 → 0.526, 0.813 → 0.778, −1.1 |
+| bench | 0.476 → 0.489, 0.878 → 0.882, −0.2 | 0.486 → 0.487, 0.866 → 0.870, +1.0 | 0.477 → 0.460, 0.894 → 0.844, +0.1 | 0.562 → 0.551, 0.817 → 0.784, −0.4 |
+
+2023-24 shows the same pattern: stars' PIT at 26+ 0.425 → 0.498 and z −3.4; at 0–9 0.528 → 0.500 and z +2.0. Unconditional coverage by bucket barely moves (stars at 26+ 0.811 → 0.814). The sims can't know the realised margin; the gain is that the margin-conditional distributions are now centred.
+
+*Lineups.* Sum of per-sim DK over the same players in both arms; sd of the lineup sims; 10–90 coverage of the actual score:
+
+| lineups, +bo − OFF | 2023-24 | 2024-25 | live |
+|---|---|---|---|
+| projected top 8 | sd 42.2 +0.77 (z +12.5), cov 0.896 → 0.889 | 42.0 +0.61, 0.809 → 0.817 | 41.7 +0.34, 0.874 → 0.862 |
+| 30 random 8-player sets / date | 30.9 +0.40 (+12.1), 0.840 → 0.846 | 31.1 +0.34, 0.832 → 0.838 | 31.4 +0.15, 0.827 → 0.831 |
+| one team's projected top 4 | 24.1 +1.24 (+49.5), 0.834 → 0.858 | 24.1 +1.15, 0.838 → 0.855 | 24.3 +0.81, 0.849 → 0.858 |
+| … in games ending 26+ | 24.3 +1.27, 0.680 → 0.718 | 24.1 +1.09, 0.731 → 0.767 | 24.2 +0.72, 0.712 → 0.742 |
+
+- RotoGuru cash lineups (each arm's own, +mf+bo − +mf): sd 34.9 → +0.57 / 34.5 → +0.68; cov80 0.819 → 0.812 / 0.842 → 0.849.
+- Lineup ranges get a little wider, not narrower. Teammates now lose and gain minutes together with the margin, so one-team stacks widen most (sd +5 %). They were already over-covered overall (0.83–0.85) and under-covered in blowouts (0.68–0.73).
+- **The copula v1 hypothesis is not supported.** Its too-wide ranges do not come from the blowout minutes; the sharper margin response widens lineups slightly. That leaves the dispersion fit (its CV is fit on residuals that hold margin-driven variance) as the item to retune.
+
+*Reading.*
+- **The gap was real, and +mf did not touch it.** Stars kept 2.2–2.7 min too many at 26+ and got 1.2–1.6 too few at 0–9. The bo stage removes the margin shape at both the minutes and the DK-at-the-margin level (CRPS at the margin −3.2…−3.9 SE on the harness).
+- **Unconditionally the gain is modest.** It sits in realised blowouts and costs a little in realised close games, so it scales with how many blowouts a season has:
+  - share of team-games ending 26+: 10.2 % / 11.0 % / 12.5 % in 2023-24 / 2024-25 / 2025-26;
+  - +bo CRPS: −1.5 / −1.5 / −2.8 SE (avail), −4.5 on the live slice.
+- **Remaining DK error at the margin is per minute, by signed margin.** Big winners' stars come out 2.0–2.6 DK low and big losers' 0.1–2.0 high, at the right minutes (copula v0 has no winner / loser shift). A shift fixes it at the margin but needs the copula's dispersion refit to pay off unconditionally.
+- **Level:** the stage lowers mean DK by 0.02–0.06 (tier levels −0.03…−0.04 min).
+
+**Ship bar** (CRPS ≥ 2 SE better in 2023-24 and 2024-25, no tier worse by > 1 SE in any set, live slice not worse):
+- **+bo: not met.** −1.5 / −1.5 SE. Tiers are fine (worst +0.3) and live is −4.5 / −4.1.
+- **+mf+bo:**
+  - Against OFF, the numbers pass (−6.0 / −5.4; live −3.8 / −4.1).
+  - bo's increment over +mf is +0.1 / −1.9 SE, with rotation +1.9 SE in 2023-24 and RotoGuru −0.1 / −0.4. So the gain is +mf's; bo adds only on the live slice (−4.0 / −3.2).
+
+OFF bit-identical: HEAD fd4b02e (`git archive`) vs HEAD + this change, same DB copy and canonical bundles, `pathA-v0.3+p2`, switch unset (and `=0`):
+- **Historical 2024-01-10:** players 308 × 36, stats 3,696 × 12, 30 sim arrays (1.23M values) and meta all identical.
+- **Opener slate 154575 at 2026-10-20 22:15Z:** 106 × 38, 1,272 × 12, 9 arrays (2.65M values) and meta all identical.
+- **`research/p2_identity.py`:** 5 / 5 hashes identical to HEAD (and to the +mf block's).
+- OFF writes no `blowout` key, and no OFF path reads it.
+- **Tests:** `tests/test_proj_blowout.py`, 14. `tests/test_proj_*.py`: 386 passed.
+
+The switch stays OFF. Next, if the owner wants to pursue it: refit copula v1's dispersion and winner / loser shift on the bo arm (the remaining at-margin DK error is per minute), then re-evaluate +c1+bo.
 
 ### Phase 2F: feature program (owner request 2026-10-19: use the depth of the data)
 
