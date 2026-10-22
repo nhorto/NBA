@@ -74,13 +74,27 @@ base (`V1_STATS` counts them). News features are not in the GBM (reports exist f
 dropped, games against international clubs kept), the v1 panel gains `V1_PRESEASON` (the row
 team's preseason only: games, mpg, last-2-games mpg, share of team minutes, rank, vs prior-season
 mpg and vs teammates, did-not-play flag; strictly before the date) and the team-level
-`pre_new_tg` (preseason minutes of camp players with no box row yet). The ON fit
+`pre_new_tg` (preseason minutes of camp players with no box row yet) and `pre_new_top2` (the
+same for the camp's two largest such players). The ON fit
 (`fit(..., v1_kw={"features": preseason_features()}, debut_reserve=True)`) adds them to the GBM
 (LightGBM learns the decay through gp_season / tgs) and splits the reserve: minutes of players
-with no box row before the date (`debut_reserve`: team games into the season x `pre_new_tg`;
+with no box row before the date (`debut_reserve`: team games into the season x DEBUT_DRIVER,
+`pre_new_top2` capped at the training maximum since 2026-10-22, `pre_new_tg` before;
 season openers lose ~13 minutes per team to debutants, the season-average reserve gave ~3) and
 everybody else outside the candidates (the usual spline, refit without the debutants).
 With `History.pre` None (OFF) no column, parameter or JSON key changes.
+
+**Minutes fix (mf; `pipeline.MINFIX`, env COURTSIDE_MINFIX=1, default OFF).** `fit(...,
+v1_kw={"minfix": True})` (MF_DEFAULT) changes two fitted parts, both on the 5 seasons < S:
+P(plays | available) is a logit on the v1 logit's columns plus the GBM's plan for the night
+(MF_PLAN_FEATURES: log plan, log plan / EWMAs / median of 5) and dummies of the depth rank by
+that plan (MF_RANKS), fit on the out-of-fold plans of the training panel (`mf_pplay`); and the
+noise (mu, sigma per tier) is fit net of the margin curve, then recalibrated by simulation on the
+training projections at each game's actual margin so that the simulated minutes of players who
+play match the actual minutes on average and their 10-90 % interval covers 80 % (`_mf_calibrate_
+noise`). A LightGBM classifier for P(plays) was tested and dropped: it learns the avail oracle's
+own rule (available regulars always play), which does not exist live. With `minfix` empty (OFF)
+nothing changes: the key is left out of the JSON and no code path reads it.
 
 Everything learned lives in `MinutesParams` (JSON-serialisable; v1 stores the LightGBM model
 text), produced by `fit(history, S)` from seasons < S only. Structural constants (EWMA alphas, RECON_CV, SHARE_K, tiers, margin
@@ -183,11 +197,17 @@ class MinutesParams:
     # players with no box row before the date, by team games into the season and the team's
     # debutants' preseason minutes. Empty = off (and the key is left out of the JSON).
     reserve_debut: list = field(default_factory=list)
+    # minutes fix (COURTSIDE_MINFIX, `fit(minfix=True)`): P(plays | available) that reads the
+    # GBM plan, the noise fit net of the margin curve (see MF_* below). Empty = off (and the key
+    # is left out of the JSON).
+    minfix: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
         d = asdict(self)
         if not d["reserve_debut"]:          # absent key: the format before it, byte for byte
             del d["reserve_debut"]
+        if not d["minfix"]:                 # likewise
+            del d["minfix"]
         return json.dumps(d)
 
     @classmethod
@@ -543,7 +563,9 @@ V1_PRESEASON = ("pre_gp", "pre_mpg", "pre_mpg_l2", "pre_l2_gp", "pre_share", "pr
 # team-level (same on every row of a team-game; input of the debut reserve, not a GBM feature):
 # preseason minutes per team preseason game of the team's camp players with no box row before
 # the date (rookies / new to the league: never minutes-engine candidates)
-PRE_TEAM_COLS = ("pre_new_tg",)
+# pre_new_top2: the same for the team's two largest such players only (the debut reserve's driver
+# from 2026-10-22: bounded by construction, see DEBUT_DRIVER)
+PRE_TEAM_COLS = ("pre_new_tg", "pre_new_top2")
 DEBUT_BINS = (0, 1, 5, 15)      # team games into the season: {0}, {1-4}, {5-14}, {15+}
 PRE_MAX_TGS = 20     # V1_PRESEASON set to NaN from this many team games on (None: never)
 
@@ -636,8 +658,8 @@ def preseason_columns(h: History, p: pd.DataFrame) -> pd.DataFrame:
             for c in np.unique(cut):
                 ri = rows[cut == c]
                 a, teams = _preseason_agg(Pl[Pl["date"] < c], T[T["date"] < c])
-                out["pre_new_tg"][ri] = _new_player_minutes(h, Pl[Pl["date"] < c],
-                                                            T[T["date"] < c], p.iloc[ri])
+                out["pre_new_tg"][ri], out["pre_new_top2"][ri] = _new_player_minutes(
+                    h, Pl[Pl["date"] < c], T[T["date"] < c], p.iloc[ri])
                 a = a.set_index(["player_id", "team"])
                 key = pd.MultiIndex.from_arrays([pids[ri], tms[ri]])
                 has = key.isin(a.index)
@@ -664,13 +686,14 @@ def preseason_columns(h: History, p: pd.DataFrame) -> pd.DataFrame:
 
 
 def _new_player_minutes(h: History, pl: pd.DataFrame, tm: pd.DataFrame, rows: pd.DataFrame
-                        ) -> np.ndarray:
+                        ) -> tuple[np.ndarray, np.ndarray]:
     """Per row (team, date): sum over the team's preseason players with no box row strictly
-    before the date of their preseason minutes / the team's preseason games (DNP = 0). NaN for a
-    team without preseason games."""
+    before the date of their preseason minutes / the team's preseason games (DNP = 0), and the
+    same over the two largest of them. NaN for a team without preseason games."""
     out = np.full(len(rows), np.nan)
+    top = np.full(len(rows), np.nan)
     if not len(tm):
-        return out
+        return out, top
     n_tg = tm.groupby("team").size()
     q = pl[pl["min"] > 0].groupby(["team", "player_id"])["min"].sum().reset_index()
     q["mtg"] = q["min"] / n_tg.reindex(q["team"]).to_numpy()
@@ -681,15 +704,28 @@ def _new_player_minutes(h: History, pl: pd.DataFrame, tm: pd.DataFrame, rows: pd
     new = ~(m["first"] < m["date"])                    # no box row before the date (NaN first)
     m["v"] = np.where(new & m["mtg"].notna(), m["mtg"], 0.0)
     s = m.groupby(["team", "date"])["v"].sum()
+    s2 = m.sort_values("v", ascending=False, kind="mergesort").groupby(
+        ["team", "date"])["v"].apply(lambda x: float(x.iloc[:2].sum()))
     has = set(n_tg.index)
     for i, (t, d) in enumerate(zip(rows["team"], rows["date"])):
         if t in has:
             out[i] = float(s.get((t, d), 0.0))
-    return out
+            top[i] = float(s2.get((t, d), 0.0))
+    return out, top
 
 
 DEBUT_D_Q = 0.95                # the new players' preseason minutes are winsorised at this
 DEBUT_MAX = 40.0                # training quantile (stored in reserve_debut); reserve cap
+# Driver of the debut reserve (2026-10-22, docs/PLAYERS.md minutes-fix results): the camp's two
+# largest new players' preseason minutes per team game, capped at the training maximum. The sum
+# over all new players (`pre_new_tg`, the first design) grows with camp invitees who never play
+# (OKC 2026-27: 126 vs a training p95 of 70); two players cannot, and they predict the debut
+# minutes as well or better leave-one-season-out (game-0 MAE 11.0 vs 11.2 over 2019-26, 11.2 vs
+# 12.2 on the 28 openers of 2026-27). reserve_debut stores the driver code after the cap:
+# 2 = top-2 (absent: the sum, the first design's params read unchanged).
+DEBUT_DRIVER = "pre_new_top2"
+DEBUT_DRIVER_Q = 1.0
+_DEBUT_CODES = {2.0: "pre_new_top2"}
 
 
 def _debut_design(tgs, d, cap: float | None = None) -> np.ndarray:
@@ -708,14 +744,17 @@ def _debut_design(tgs, d, cap: float | None = None) -> np.ndarray:
 
 def debut_reserve(params: MinutesParams, p: pd.DataFrame) -> np.ndarray:
     """Per row: team minutes expected to go to players with no box row before the date
-    (params.reserve_debut = coefficients of `_debut_design` + the cap of its input; clipped to
-    [0, DEBUT_MAX]). Rows without `tgs` get 0."""
+    (params.reserve_debut = coefficients of `_debut_design` + the cap of its input [+ the driver
+    code, DEBUT_DRIVER; absent = the first design's `pre_new_tg`]; clipped to [0, DEBUT_MAX]).
+    Rows without `tgs` get 0."""
     if not params.reserve_debut or "tgs" not in p or not len(p):
         return np.zeros(len(p))
     k = 2 * len(DEBUT_BINS)
     coef = np.asarray(params.reserve_debut[:k], float)
     cap = params.reserve_debut[k] if len(params.reserve_debut) > k else None
-    d = p["pre_new_tg"].to_numpy(float) if "pre_new_tg" in p else np.zeros(len(p))
+    col = (_DEBUT_CODES.get(float(params.reserve_debut[k + 1]), "pre_new_tg")
+           if len(params.reserve_debut) > k + 1 else "pre_new_tg")
+    d = p[col].to_numpy(float) if col in p else np.zeros(len(p))
     return np.clip(_debut_design(p["tgs"].to_numpy(float), d, cap) @ coef, 0.0, DEBUT_MAX)
 
 
@@ -1353,6 +1392,8 @@ def base_and_pplay(p: pd.DataFrame, params: MinutesParams, absent=None
                          0.01, 0.995)
         base = v1_base(p, params, absent, base).view(V1Base)
         base.s_rows = s_rows
+        if params.minfix:
+            pp = mf_pplay(q, params, np.asarray(base), absent)
     if params.reserve_debut:
         if not isinstance(base, V1Base):
             base = base.view(V1Base)
@@ -1377,6 +1418,142 @@ def forced_as_roster(p: pd.DataFrame) -> pd.DataFrame:
     q.loc[f, "missed_now"] = 0.0
     q.loc[f, "gsr_now"] = 10.0
     return q
+
+
+# --- minutes fix (COURTSIDE_MINFIX) ----------------------------------------------------------
+#
+# Diagnosis (docs/PLAYERS.md, minutes-fix results): on the avail harness the v1 P(plays |
+# available) logit reads only the players' history (EWMAs, appearances, missed games, the v0.5
+# depth rank), not the GBM's plan for the night. Players the GBM plans below their recent minutes
+# (E[min | plays] < 0.9 x last-10: a starter or teammate back, the deep bench after DNPs) play
+# less often than it says (P(play) +0.05..0.06), players planned above them more often (-0.06..
+# -0.07); the minutes when they play are close. MF_PLAN_FEATURES add the plan to the logit (log
+# plan and log plan / EWMAs / median of 5), fit on the out-of-fold GBM plans of the training
+# panel. The noise model is fit net of the margin curve: the sims add g(margin) and then the
+# noise, but the v1 noise was fit on log(actual / plan), which already holds the margin effect.
+
+MF_VERSION = 1
+MF_PLAN_FEATURES = ("mf_lb", "mf_lrf", "mf_lrs", "mf_lrm")
+MF_RANKS = (5, 7, 8, 9, 10, 11, 12)
+# fit options (`fit_v1(minfix=...)`; True = MF_DEFAULT): pplay "logit" (plan features) |
+# "logit_rank" (+ dummies of the depth rank by the plan); noise "net" (MLE net of the margin
+# curve) | "calib" (then location / scale per tier calibrated by simulation on the training
+# projections). A LightGBM classifier was tried and dropped (it learns the oracle's "available
+# regulars always play" rule: base_ew >= REGULAR_MIN defines who can be absent).
+MF_DEFAULT = {"pplay": "logit_rank", "noise": "calib"}
+MF_CAL_SIMS = 60
+MF_CAL_ITERS = 4
+
+
+def mf_plan_columns(p: pd.DataFrame, base: np.ndarray) -> np.ndarray:
+    """(n, 4) plan features: log plan, log plan / fast EWMA, / slow EWMA, / median of 5."""
+    b = np.maximum(np.asarray(base, float), 0.5)
+    lb = np.log(b)
+    cols = [lb]
+    for c in ("ew_f", "ew_s", "med5"):
+        cols.append(lb - np.log(np.maximum(p[c].to_numpy(float), 1.0)))
+    return np.column_stack(cols)
+
+
+def mf_design(q: pd.DataFrame, params: MinutesParams, base: np.ndarray, absent: np.ndarray,
+              kind: str) -> np.ndarray:
+    """The minfix P(plays) design of the available-and-absent panel q (avail_rank / n_avail
+    set): the v1 logit's columns (forced extras as roster) + the plan [+ dummies of the depth
+    rank by the plan among the available ("logit_rank")]."""
+    cols = [design(forced_as_roster(q), params.pplay_features), mf_plan_columns(q, base)]
+    if kind == "logit_rank":
+        rk, _ = avail_rank(q, np.asarray(base, float), np.asarray(absent, bool))
+        cols.append(np.column_stack([(rk <= MF_RANKS[0]).astype(float)]
+                                    + [(rk == k).astype(float) for k in MF_RANKS[1:]]))
+    return np.column_stack(cols)
+
+
+def mf_pplay(q: pd.DataFrame, params: MinutesParams, base: np.ndarray, absent: np.ndarray
+             ) -> np.ndarray:
+    """P(plays | available) of the minfix model (q: panel with avail_rank / n_avail)."""
+    mf = params.minfix
+    X = mf_design(q, params, base, absent, mf["pplay"])
+    pr = 1.0 / (1.0 + np.exp(-(X @ np.asarray(mf["pplay_coef"], float))))
+    return np.clip(pr, 0.01, 0.995)
+
+
+def _mf_fit_pplay(prm: MinutesParams, q: pd.DataFrame, plan: np.ndarray, absent: np.ndarray,
+                  keep: np.ndarray, y: np.ndarray, kind: str) -> dict:
+    """Fit the minfix P(plays) logit on the training rows `keep` (plans = out-of-fold GBM
+    bases; the depth rank by plan among the training panel's available rows)."""
+    if kind not in ("logit", "logit_rank"):
+        raise ValueError(f"unknown minfix pplay {kind!r}")
+    X = mf_design(q, prm, plan, absent, kind)[keep]
+    return {"pplay_coef": _logit(X, y).tolist()}
+
+
+def _mf_sim_stats(prm: MinutesParams, r: pd.DataFrame, sims: int, seed: int
+                  ) -> pd.DataFrame:
+    """Per played training row: the mean and 10 / 90 % quantiles of its simulated minutes given
+    that it plays (`sample_minutes` at the game's actual margin and overtime), the actual box
+    minutes and the tier of its plan."""
+    rng = np.random.default_rng(seed)
+    out = []
+    cols = ["p_play", "pf36", "reserve", "mean0"]
+    ms = r["margin"].to_numpy(float)
+    ot = r["n_ot"].fillna(0).to_numpy(float)
+    for _, idx in r.groupby("key", sort=False).indices.items():
+        d = r.iloc[idx]
+        pl = d["played"].to_numpy(bool) & (d["mean0"].to_numpy(float) > 0)
+        if not pl.any():
+            continue
+        proj = d[cols].rename(columns={"mean0": "mean"})
+        x = sample_minutes(proj, prm, np.full(sims, ms[idx[0]]), rng,
+                           n_ot=np.full(sims, ot[idx[0]]))
+        x = np.where(x > 0, x, np.nan)[:, pl]
+        ok = np.isfinite(x).sum(0) >= 5
+        if not ok.any():
+            continue
+        with np.errstate(all="ignore"):
+            q = np.nanquantile(x[:, ok], [0.1, 0.9], axis=0)
+            mu = np.nanmean(x[:, ok], axis=0)
+        out.append(pd.DataFrame({"mean0": d["mean0"].to_numpy(float)[pl][ok], "sim": mu,
+                                 "q10": q[0], "q90": q[1],
+                                 "y": d["act_min"].to_numpy(float)[pl][ok]}))
+    f = pd.concat(out, ignore_index=True)
+    f["tier"] = tier_of(f["mean0"].to_numpy(float))
+    return f
+
+
+def _mf_calibrate_noise(prm: MinutesParams, r: pd.DataFrame, log: Callable[[str], None],
+                        sims: int = MF_CAL_SIMS, iters: int = MF_CAL_ITERS) -> dict:
+    """Location (mu) and scale (sigma) of the noise per tier, calibrated by simulation on the
+    training projections `r` (out-of-fold plans, the oracle scenario, the actual margin and
+    overtime of each game): per tier, the simulated minutes given that a player plays match the
+    actual box minutes of the rows that played on average, and their 10-90 % interval covers
+    80 % of them. The margin curve and the early exits stay as fitted."""
+    from scipy.stats import norm
+    nt = len(TIER_EDGES) + 1
+    z80 = float(norm.ppf(0.9))
+    mu = np.asarray(prm.mu, float).copy()
+    sg = np.asarray(prm.sigma, float).copy()
+    hist = []
+    for it in range(iters):
+        prm.mu, prm.sigma = mu.tolist(), sg.tolist()
+        f = _mf_sim_stats(prm, r, sims, seed=17 + it)
+        step = []
+        for t in range(nt):
+            q = f[f["tier"] == t]
+            if len(q) < 200:
+                step.append((t, len(q), 1.0, -1.0))           # too few rows: unchanged
+                continue
+            ratio = float(q["y"].mean() / max(q["sim"].mean(), 1e-6))
+            cov = float(((q["q10"] <= q["y"]) & (q["y"] <= q["q90"])).mean())
+            z = float(norm.ppf(np.clip((1.0 + cov) / 2.0, 0.55, 0.995)))
+            mu[t] += np.log(np.clip(ratio, 0.8, 1.25))
+            sg[t] = float(np.clip(sg[t] * np.clip(z80 / z, 0.7, 1.4), 0.02, 2.0))
+            step.append((t, len(q), ratio, cov))
+        hist.append(step)
+        log(f"  fit_v1 minfix: noise calibration {it}: " + ", ".join(
+            f"t{t} n {n} mean x{rt:.3f} cov {cv:.3f}" for t, n, rt, cv in step))
+    prm.mu, prm.sigma = mu.tolist(), sg.tolist()
+    return {"calib": [[[int(a), int(b), round(float(c), 4), round(float(d), 4)]
+                       for a, b, c, d in st] for st in hist]}
 
 
 def departed(h: History, panel: pd.DataFrame) -> np.ndarray:
@@ -2117,11 +2294,12 @@ def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = p
         deb = debut_minutes(h, panel)
         rcoef = _fit_reserve(panel, base_tr, pp_tr, minus=deb)
         kk = panel.drop_duplicates("key")
-        d = kk["pre_new_tg"].to_numpy(float) if "pre_new_tg" in kk else np.zeros(len(kk))
+        d = kk[DEBUT_DRIVER].to_numpy(float) if DEBUT_DRIVER in kk else np.zeros(len(kk))
         d0 = d[(kk["tgs"].to_numpy(float) == 0) & np.isfinite(d)]
-        cap = float(np.quantile(d0, DEBUT_D_Q)) if len(d0) >= 20 else 1e9
+        cap = float(np.quantile(d0, DEBUT_DRIVER_Q)) if len(d0) >= 20 else 1e9
+        code = {v: c for c, v in _DEBUT_CODES.items()}[DEBUT_DRIVER]
         rdeb = _ols(_debut_design(kk["tgs"].to_numpy(float), d, cap),
-                    deb.reindex(kk["key"]).to_numpy(float), ridge=1.0).tolist() + [cap]
+                    deb.reindex(kk["key"]).to_numpy(float), ridge=1.0).tolist() + [cap, code]
         log(f"  fit {season}: debut reserve {np.round(rdeb, 3).tolist()}")
     # league starter minutes per group and the top bench player's minutes
     hs = h.hist[h.hist["season"].isin(seasons) & (h.hist["season_type"] == "Regular Season")]
@@ -2176,7 +2354,8 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
            shares: "PairShares | None", log: Callable[[str], None] = print,
            use_share: bool = False, max_rounds: int = 3000, gbm_params: dict | None = None,
            nmu_grid=(0.0, 0.5, 1.0), k_grid=(0.0, 0.15, 0.3), share_grid=(0.0, 0.15, 0.3),
-           cv_grid=(0.2, 0.4, 0.6), features=None) -> MinutesParams:
+           cv_grid=(0.2, 0.4, 0.6), features=None, minfix: bool | dict = False
+           ) -> MinutesParams:
     """v1 on top of a v0.5 fit, all on the same training panel (seasons < S, oracle scenario).
 
     1. LightGBM (L2) for E[regulation minutes | plays] on V1_FEATURES (+ V1_SHARE if
@@ -2190,7 +2369,10 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
        training MAE on a FIXED population: played rows whose OOF GBM base is >= 10. (The
        v0.5 criterion, rows projected >= 15, depends on the candidate itself: pushing bench
        players below 15 shrinks it, and it picked a leftover that over-projects starters.)
-    3. Refit the margin curve g and the noise model on the OOF projections."""
+    3. Refit the margin curve g and the noise model on the OOF projections.
+    minfix (COURTSIDE_MINFIX): P(plays | available) is refit with the plan (MF_PLAN_FEATURES on
+    the out-of-fold GBM base, `prm.minfix["pplay_coef"]`) before step 2, and step 3 fits the
+    noise net of the margin curve."""
     import lightgbm as lgb
     import time as _time
     t0 = _time.time()
@@ -2244,6 +2426,16 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
     keep = ~ab & ~dep
     Z1 = design(forced_as_roster(q[keep]), prm.pplay_features)
     prm.pplay_coef_v1 = _logit(Z1, q.loc[keep, "played"].to_numpy(float)).tolist()
+    if minfix:
+        opts = dict(MF_DEFAULT, **(minfix if isinstance(minfix, dict) else {}))
+        # the plan each training row had out of fold (the v0.5 base where the GBM falls back)
+        bmf = np.where(np.isfinite(oof), np.clip(oof, 0.5, 44.0), b0)
+        mf = _mf_fit_pplay(prm, q, bmf, ab | dep, keep, q.loc[keep, "played"].to_numpy(float),
+                           opts["pplay"])
+        prm.minfix = {"version": MF_VERSION, "pplay": opts["pplay"], "noise": opts["noise"],
+                      "noise_net_of_margin": True, **mf}
+        log(f"  fit_v1 minfix: P(plays) {opts['pplay']}, plan coef "
+            f"{np.round(mf['pplay_coef'][len(prm.pplay_features):], 3).tolist()}")
     # stage 2 on the OOF base
     tp = panel.copy()
     tp["_v1_oof"] = oof
@@ -2275,6 +2467,8 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
         setattr(prm, name, cur[1])
         best = cur
     cnt_min, nok = _fit_margin_noise(prm, best[2])
+    if prm.minfix.get("noise") == "calib":
+        prm.minfix["calibration"] = _mf_calibrate_noise(prm, best[2], log)["calib"]
     prm.diagnostics = dict(prm.diagnostics, v1={
         "n_rounds": n_rounds, "folds": folds, "train_rows": int(rows.sum()),
         "fallback_share_train": round(float((~ok & ~ab).sum() / max((~ab).sum(), 1)), 4),
@@ -2335,14 +2529,36 @@ def _fit_margin_noise(prm: MinutesParams, r: pd.DataFrame) -> tuple[int, bool]:
     gv = tab[tiers, won, b]
     prm.g_center = [float(gv[tiers == t].mean()) if (tiers == t).any() else 0.0
                     for t in range(nt)]
-    # noise on log ratio, played, mean >= 5
+    # noise on log ratio, played, mean >= 5 (minfix: net of the margin curve, as the sims draw
+    # minutes = (plan + g(margin)) x noise)
     rn = r[r["played"] & (r["mean0"] >= 5)]
-    lr = np.log(np.maximum(rn["act_min_r"].to_numpy(float), 0.5) / rn["mean0"].to_numpy(float))
+    lvl = rn["mean0"].to_numpy(float)
+    if prm.minfix.get("noise_net_of_margin"):
+        lvl = np.maximum(lvl + _g_rows(prm, tier_of(lvl), rn["margin"].to_numpy(float)), 1.0)
+    lr = np.log(np.maximum(rn["act_min_r"].to_numpy(float), 0.5) / lvl)
     sub = np.random.default_rng(0).permutation(len(lr))[:80000]
     mu, sg, q0, q1, ok = _fit_noise(lr[sub], tier_of(rn["mean0"].to_numpy(float))[sub],
                                     rn["pf36"].to_numpy(float)[sub])
     prm.mu, prm.sigma, prm.q0, prm.q1 = mu, sg, q0, q1
     return int(cnt.min()), ok
+
+
+def _g_rows(prm: MinutesParams, tiers: np.ndarray, margins: np.ndarray) -> np.ndarray:
+    """g_tier(|m|, won) - c_tier per row (each row its own tier and margin), as g_value."""
+    tab = np.asarray(prm.g_table, float)
+    cen = np.asarray(prm.g_center, float)
+    edges = np.asarray(MARGIN_BINS, float)
+    mids = 0.5 * (edges[:-1] + edges[1:])
+    mids[-1] = edges[-2] + 4.0
+    m = np.nan_to_num(np.asarray(margins, float))
+    am, won = np.abs(m), (m > 0).astype(int)
+    out = np.zeros(len(m))
+    for t in np.unique(tiers):
+        for r in (0, 1):
+            sel = (tiers == t) & (won == r)
+            if sel.any():
+                out[sel] = np.interp(am[sel], mids, tab[t, r]) - cen[t]
+    return out
 
 
 # --- live / single team-game API -------------------------------------------------------------
