@@ -34,6 +34,12 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   (`pathA-v0.2+c1`, `pathA-v0.3+c1`, `pathA-v0.4+c1`). Seeds stay on SEED_VERSION, so a v1 run
   shares the environment / availability / minutes draws of its v0 arm. With COPULA "v0" none
   of it runs and every arm is bit-identical to the code before it.
+  **Copula v1 retune** (v1r, ``COURTSIDE_COPULA=v1r``): the same simulator with params from
+  `copula.fit_copula_v1r` (dispersion and within-player correlation fit on the context arm's
+  residuals, a per-stat shape map of the count marginals, no winner/loser shift unless the
+  minutes carry the blowout stage). Bundle `<arm's bundle>_c1r.json`, version `<arm>+c1r`
+  (`pathA-v0.3+c1r+p2`, `pathA-v0.3+mf+c1r+p2`); seeds unchanged. "v0" / "v1": nothing of it
+  runs.
 * **P(play) v2** (p2, 2026-10-21, `pplay_v2_fix`), behind `PPLAY` (default "v1"; env
   ``COURTSIDE_PPLAY=v2``): on the live candidate paths only, (1) a listed, not-Out player's
   P(plays | available) is 1, so his total P(play) is the report cell (fit on *played*; the engine's
@@ -146,6 +152,12 @@ COPULA_DEFAULT = "v0"                  # shipping v1 = "v1" here (env still over
 COPULA_ENV = "COURTSIDE_COPULA"
 COPULA_V1_SUFFIX = "_c1"
 COPULA_V1_TAG = "+c1"
+# Copula v1 retune (v1r): v1's simulator with params refit on the context arm's residuals
+# (`copula.fit_copula_v1r`). COURTSIDE_COPULA=v1r; bundle `<arm>_c1r`, version `<arm>+c1r`;
+# seeds unchanged. With "v0" / "v1" none of it runs.
+COPULA_V1R_SUFFIX = "_c1r"
+COPULA_V1R_TAG = "+c1r"
+COPULA_V1_VERSIONS = ("v1", "v1r")     # copula versions that run `copula.simulate_game_v1`
 # P(play) v2 (p2, 2026-10-21; `pplay_v2_fix`). "v1" by default (env COURTSIDE_PPLAY=v2 / v1
 # overrides; `set_pplay` at run time). v2 = a version suffix on whatever arm is active
 # (`pathA-v0.3+p2`, `pathA-v0.3+c1+p2`); the bundle is unchanged (the fringe model ships in the
@@ -204,6 +216,8 @@ def _env_flag(name: str, default: bool = False) -> bool:
 
 def _copula_flag(name: str, default: str = "v0") -> str:
     v = os.environ.get(name, "").strip().lower()
+    if v == "v1r":
+        return "v1r"
     if v in ("v1", "1", "true", "yes", "on"):
         return "v1"
     if v in ("v0", "0", "false", "no", "off"):
@@ -256,6 +270,8 @@ def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool =
         vs, mv = vs + MINRATIO_SUFFIX, mv + MINRATIO_TAG
     if copula == "v1":
         return vs + COPULA_V1_SUFFIX, mv + COPULA_V1_TAG
+    if copula == "v1r":
+        return vs + COPULA_V1R_SUFFIX, mv + COPULA_V1R_TAG
     return vs, mv
 
 
@@ -288,10 +304,10 @@ def set_context(on: bool, ext: bool | None = None) -> None:
 
 
 def set_copula(version: str) -> None:
-    """Flip the copula switch at run time ("v0" | "v1"): updates COPULA, the bundle suffix and
-    MODEL_VERSION together (the context switches are kept)."""
+    """Flip the copula switch at run time ("v0" | "v1" | "v1r"): updates COPULA, the bundle
+    suffix and MODEL_VERSION together (the context switches are kept)."""
     global COPULA, _VS, MODEL_VERSION
-    if version not in ("v0", "v1"):
+    if version not in ("v0", "v1", "v1r"):
         raise ValueError(f"unknown copula version {version!r}")
     COPULA = version
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
@@ -573,6 +589,8 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
         return _load_bundle_mr(conn, season, ctx, refit=refit, log=log)
     if COPULA == "v1":
         return _load_bundle_v1(conn, season, ctx, refit=refit, log=log)
+    if COPULA == "v1r":
+        return _load_bundle_v1r(conn, season, ctx, refit=refit, log=log)
     if BLOWOUT:
         return _load_bundle_bo(conn, season, ctx, refit=refit, log=log)
     if MINFIX:
@@ -639,6 +657,31 @@ def _load_bundle_v1(conn: sqlite3.Connection, season: str, ctx: Context | None, 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(b.to_json())
     say(f"bundle {season} + copula v1 fitted in {time.time() - t0:.0f}s -> {path}")
+    return b
+
+
+def _load_bundle_v1r(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
+                     refit: bool, log) -> Bundle:
+    """The copula v1 retune's bundle: the arm's v0 bundle (loaded or fitted the v0 way) plus
+    `copula_v1` = `copula.fit_copula_v1r` on seasons < S (the arm's context layer and minutes
+    params), cached as `bundle_<S><arm>_c1r.json`."""
+    say = log or (lambda m: None)
+    path = cache_dir() / f"bundle_{season}{_VS}.json"
+    if path.exists() and not refit:
+        b = Bundle.from_json(path.read_text())
+        if b.copula_v1 is not None and b.copula_v1.version == C.COPULA_V1R_VERSION:
+            return b
+    set_copula("v0")
+    try:
+        b = load_bundle(conn, season, ctx, refit=refit, log=log)
+    finally:
+        set_copula("v1r")
+    t0 = time.time()
+    b.copula_v1 = C.fit_copula_v1r(conn, season, b.state, b.copula, b.context, b.minutes,
+                                   log=say)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(b.to_json())
+    say(f"bundle {season} + copula v1r fitted in {time.time() - t0:.0f}s -> {path}")
     return b
 
 
@@ -925,7 +968,7 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
             pl["tier_state"] = r["tier"].to_numpy(int)
             pl["star"] = p["_star"].to_numpy(bool)
             pl["rotation"] = pl["mpg"].to_numpy() >= 15.0
-            if COPULA == "v1":                # position group for the T2.7 tier x position cells
+            if COPULA in COPULA_V1_VERSIONS:  # position group for the T2.7 tier x position cells
                 pl["grp"] = r["grp"].to_numpy(int)
             pm = p.drop(columns=["_star"])
             if pp_fix:
@@ -1114,7 +1157,7 @@ def summarize_games(sims: list) -> tuple[pd.DataFrame, pd.DataFrame]:
 def run_games(specs: list, b: Bundle, n_sims: int, seed: int, day: date,
               log: Callable[[str], None] | None = None) -> DayResult:
     t0 = time.time()
-    if COPULA == "v1":
+    if COPULA in COPULA_V1_VERSIONS:
         v1 = b.copula_v1 or C.default_copula_v1_params(b.season, b.copula)
         sims = [C.simulate_game_v1(gs, b.copula, v1, b.minutes, b.state, n_sims,
                                    game_seed(seed, gs.game_id)) for gs in specs]

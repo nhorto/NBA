@@ -824,6 +824,7 @@ COMP_STATS = DK_STATS                          # pts, fg3m, reb, ast, stl, blk, 
 N_COMP = len(COMP_STATS)
 DD_STATS = ("pts", "reb", "ast", "stl", "blk")
 COPULA_V1_VERSION = "copula-v1.0"
+COPULA_V1R_VERSION = "copula-v1r.1"            # v1r params (`fit_copula_v1r`)
 NU = 4096                                      # quantile cells per mean grid row
 N_MEAN = 321                                   # mean grid rows (0 .. MEAN_MAX)
 KMAX = 255                                     # counts are uint8
@@ -872,9 +873,15 @@ class CopulaV1Params:
     corr: dict = field(default_factory=dict)           # T2.7 PM table (+ "source")
     diagnostics: dict = field(default_factory=dict)
     version: str = COPULA_V1_VERSION
+    # v1r only (`fit_copula_v1r`): per-stat shape map of the count marginals (`fit_pit_map`);
+    # empty for v1, and then left out of the JSON (a v1 file is byte for byte as before)
+    pit_map: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), sort_keys=True)
+        d = asdict(self)
+        if not d["pit_map"]:
+            d.pop("pit_map")
+        return json.dumps(d, sort_keys=True)
 
     @classmethod
     def from_json(cls, s: str) -> "CopulaV1Params":
@@ -916,6 +923,7 @@ class CountTables:
         from scipy import stats as sps
         from scipy.special import ndtri
         self.step, self.tab, self.h_row, self.mean_row, self.var_row = {}, {}, {}, {}, {}
+        self.mono: dict = {}
         edges = ndtri(np.arange(NU + 1) / NU)
         dens = np.exp(-0.5 * np.nan_to_num(edges, posinf=0.0, neginf=0.0) ** 2) / np.sqrt(2 * np.pi)
         dens[0] = dens[-1] = 0.0
@@ -935,15 +943,29 @@ class CountTables:
             tab = np.empty((N_MEAN, NU), np.uint8)
             for i in range(N_MEAN):
                 tab[i] = np.minimum(np.searchsorted(cdf[i], u_mid, side="left"), KMAX)
+            pm = v1.pit_map.get(s) if v1.pit_map else None
+            if pm:                                       # v1r: shape map of the marginal
+                tab = _remap_rows(tab, grid, pm, u_mid)
             self.step[s] = grid[1] - grid[0]
             self.tab[s] = tab.ravel()
             tf = tab.astype(float)
             self.h_row[s] = tf @ wz
             self.mean_row[s] = tf.mean(1)
             self.var_row[s] = tf.var(1)
+            if pm:          # rows are no longer at the grid means: place a mean by row means
+                mono = np.maximum.accumulate(self.mean_row[s]) + np.arange(N_MEAN) * 1e-9
+                self.mono[s] = mono
+
+    def _pos(self, s: str, m, top: float) -> np.ndarray:
+        """Fractional row of mean m: the grid position (v1), or by the remapped rows' own
+        means (v1r shape map), so E[count] stays exactly m."""
+        if s in self.mono:
+            x = np.interp(np.asarray(m, float), self.mono[s], np.arange(N_MEAN, dtype=float))
+            return np.clip(x, 0.0, top)
+        return np.clip(np.asarray(m, float) / self.step[s], 0.0, top)
 
     def _row(self, s: str, m: np.ndarray, rnd: np.ndarray) -> np.ndarray:
-        x = np.clip(np.asarray(m, float) / self.step[s], 0.0, N_MEAN - 1 - 1e-9)
+        x = self._pos(s, m, N_MEAN - 1 - 1e-9)
         lo = np.floor(x)
         return (lo + (rnd < (x - lo))).astype(np.int64)
 
@@ -953,12 +975,29 @@ class CountTables:
         return self.tab[s][self._row(s, m, rnd) * NU + col]
 
     def h(self, s: str, m) -> np.ndarray:
-        x = np.clip(np.asarray(m, float) / self.step[s], 0.0, N_MEAN - 1)
+        x = self._pos(s, m, N_MEAN - 1)
         return np.interp(x, np.arange(N_MEAN), self.h_row[s])
 
     def var(self, s: str, m) -> np.ndarray:
-        x = np.clip(np.asarray(m, float) / self.step[s], 0.0, N_MEAN - 1)
+        x = self._pos(s, m, N_MEAN - 1)
         return np.interp(x, np.arange(N_MEAN), self.var_row[s])
+
+
+def _remap_rows(tab: np.ndarray, grid: np.ndarray, pm: dict, u_mid: np.ndarray) -> np.ndarray:
+    """v1r shape map: row i (NB at grid mean grid[i]) is read at u' = G_i^-1(u) instead of u,
+    G_i^-1 interpolated in the level between the map's level centres (clamped). If the
+    randomised NB PIT of the actual counts has CDF G at a level, Q_NB(G^-1(U)) has the actual
+    counts' distribution (discrete or not)."""
+    mu = np.asarray(pm["mu"], float)
+    knots = np.asarray(pm["u"], float)
+    q = np.asarray(pm["q"], float)                       # (levels, knots), monotone in a row
+    out = np.empty_like(tab)
+    for i in range(tab.shape[0]):
+        qi = np.array([np.interp(grid[i], mu, q[:, k]) for k in range(len(knots))])
+        up = np.interp(u_mid, knots, qi)
+        col = np.minimum((up * NU).astype(np.int64), NU - 1)
+        out[i] = tab[i][col]
+    return out
 
 
 _TABLES: dict[str, CountTables] = {}
@@ -966,7 +1005,8 @@ _TABLES: dict[str, CountTables] = {}
 
 def count_tables(v1: CopulaV1Params) -> CountTables:
     """CountTables of `v1`'s dispersion (built once per process per dispersion table)."""
-    key = json.dumps([v1.disp_mu, v1.disp_c2], sort_keys=True)
+    key = json.dumps([v1.disp_mu, v1.disp_c2] + ([v1.pit_map] if v1.pit_map else []),
+                     sort_keys=True)
     t = _TABLES.get(key)
     if t is None:
         if len(_TABLES) > 8:
@@ -1239,6 +1279,64 @@ def v1_frame(conn: sqlite3.Connection, season: str, sp: dict, alpha: float, *,
     return out[ok].reset_index(drop=True)
 
 
+def v1r_frame(conn: sqlite3.Connection, season: str, sp: dict, alpha: float, context, *,
+              seasons: Sequence[str] | None = None, n_seasons: int = 2,
+              mp: M.MinutesParams | None = None, frame: pd.DataFrame | None = None
+              ) -> pd.DataFrame:
+    """`v1_frame`'s columns on the context arm's rates (v1r): the regular-season rows of
+    `seasons` (default the `n_seasons` before `season`) of the feature store frame of `season`
+    (`features.build_frame(conn, season, sp)`, the frame the arm's context layer is fit on),
+    conditional means given ACTUAL minutes and ACTUAL team points with the EB rate x the
+    context multiplier of `context` (a `context.ContextModel`; None = the EB rates), the
+    minutes multiplier and the tier bump (as the sims read them). `mp` with a blowout stage:
+    the per-minute multiplier at the minutes net of the margin curve (as `v1_frame`)."""
+    from . import features as FX
+    s0 = int(season[:4])
+    if seasons is None:
+        seasons = [_season_label(s0 - k) for k in range(n_seasons, 0, -1)]
+    n_train = int((context.meta.get("n_train_seasons") if context is not None else None)
+                  or FX.store.N_TRAIN)
+    fr = frame if frame is not None else FX.build_frame(conn, season, sp, n_train=n_train)
+    groups = list(context.groups) if context is not None else []
+    ext = [g for g in groups if g in FX.EXTENSION_GROUPS or g in FX.MARKET_GROUPS]
+    if ext:
+        fr = FX.extend_frame(conn, fr, ext, season=season, cache=frame is None)
+    w = fr[fr["season"].isin(list(seasons))
+           & (fr["season_type"] == "Regular Season")].reset_index(drop=True)
+    lo, hi = min(seasons), max(seasons)
+    tp = pd.read_sql_query(
+        "SELECT t.game_id, t.team, t.pts AS team_pts, t.pts - o.pts AS margin FROM team_games t "
+        "JOIN team_games o ON o.game_id = t.game_id AND o.team != t.team "
+        "WHERE t.season >= ? AND t.season <= ?", conn, params=(lo, hi))
+    w = w.merge(tp, on=["game_id", "team"], how="inner").reset_index(drop=True)
+    mult = context.predict(w) if context is not None and context.boosters else {}
+    mins = w["min"].to_numpy(float)
+    mpg = w["mpg"].to_numpy(float)
+    role = w["bump_role"].to_numpy(int)
+    meff = mins
+    if mp is not None and mp.blowout:
+        meff = mins * M.bo_minutes_factor_rows(mp, mpg, w["margin"].to_numpy(float))
+    raw = {}
+    for s in COMP_STATS:
+        b = np.array([1.0, ST.bump_for(sp, "star", s), ST.bump_for(sp, "rotation", s)])
+        raw[s] = (w[f"r_{s}"].to_numpy(float) * mins * ST.minutes_multiplier(sp, s, meff, mpg)
+                  * b[role] * (np.asarray(mult[s], float) if s in mult else 1.0))
+    key = (w["game_id"] + "|" + w["team"]).to_numpy()
+    rp = pd.Series(raw["pts"]).groupby(key).transform("sum").to_numpy()
+    g = w["team_pts"].to_numpy(float) / np.maximum(rp, 1.0)
+    out = pd.DataFrame({"game_id": w["game_id"].to_numpy(), "team": w["team"].to_numpy(),
+                        "player_id": w["player_id"].to_numpy(), "season": w["season"].to_numpy(),
+                        "margin": w["margin"].to_numpy(float), "g": g, "min": mins, "mpg": mpg})
+    for s in COMP_STATS:
+        out[f"y_{s}"] = w[s].to_numpy(float)
+        out[f"m_{s}"] = raw[s] * (g if s == "pts" else g ** alpha)
+    out["tier"] = role_tiers(key, (w["r_dk"] * w["mpg"]).to_numpy(), w["mpg"].to_numpy())
+    out["dk_act"] = dk_from_components({s: out[f"y_{s}"].to_numpy() for s in COMP_STATS})
+    out["mu_dk"] = sum(DK_W[s] * out[f"m_{s}"] for s in COMP_STATS)
+    ok = (out["g"] > 0.5) & (out["g"] < 2.0) & (out["mu_dk"] > 0.5)
+    return out[ok].reset_index(drop=True)
+
+
 def fit_wl(f: pd.DataFrame, k: float = WL_K) -> tuple[list, dict, dict]:
     """Winner/loser factors: per stat and tier, the ratio sum(y) / sum(m) in each signed-margin
     bin over the tier's overall ratio, shrunk to 1 by n / (n + k), clipped to WL_BOUNDS.
@@ -1469,4 +1567,161 @@ def fit_copula_v1(conn: sqlite3.Connection, season: str, sp: dict, cp: CopulaPar
                       v1.corr.get("source")}
     say(f"copula v1 fit {season}: n {len(f)}, corr {v1.corr.get('source')}, "
         f"r(pts,fg3m) star {v1.r_within['star'][0][1]:.2f}")
+    return v1
+
+
+# ------------------------------------------------------------------------------ v1r (retune)
+#
+# Copula v1 retune (`pipeline.COPULA` "v1r", `+c1r`; docs/PLAYERS.md §0.4). The simulator is v1's
+# (`simulate_game_v1`); only the fitted params differ:
+#   * the NB2 dispersion by level and the within-player correlation are fit on the CONTEXT
+#     ARM's conditional residuals (`v1r_frame`: the EB rate x the arm's context multiplier,
+#     given actual minutes and team points) instead of the plain EB rates;
+#   * no winner / loser per-minute shift unless the arm's minutes carry the blowout stage
+#     (`MinutesParams.blowout`): on the OFF / +mf minutes, whose stars keep most of their minutes
+#     in simulated blowouts, the shift (fit given ACTUAL minutes) put a per-minute boost on top of
+#     those minutes and added margin-driven spread; dropping it improved v1's DK CRPS by 2.4 SE
+#     (stars 2.8 SE) in 2024-25. Without the shift the dispersion holds the margin's per-minute
+#     effect, as v0's CV does;
+#   * a per-stat SHAPE MAP of the count marginals (`fit_pit_map`): on the same rows, the CDF G
+#     of the randomised NB PIT of the actual counts by level; the count tables are read at
+#     G^-1(u) (`_remap_rows`), so given minutes each stat's distribution matches the residuals'
+#     (points: a heavier left tail and a shorter right one than NB2; under-dispersed bins below
+#     the Poisson floor), with E[count] kept exactly at the mean (`CountTables._pos`).
+# The minutes and environment draws are the arm's (common random numbers with v0 / v1).
+
+PIT_KNOTS = 40                 # knots of a level's G^-1 (uniform in u)
+PIT_K = 300.0                  # pseudo-rows shrinking a level's G^-1 to the identity
+PIT_MIN_N = 300
+
+
+def nb_pit(y: np.ndarray, m: np.ndarray, c2: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Randomised PIT of counts y under NB2(mean m, excess c2): F(y-1) + v (F(y) - F(y-1))."""
+    from scipy import stats as sps
+    c2 = np.maximum(np.asarray(c2, float), C2_MIN)
+    r = 1.0 / c2
+    p = r / (r + np.maximum(np.asarray(m, float), 1e-9))
+    y = np.asarray(y, float)
+    lo = np.where(y > 0, sps.nbinom.cdf(y - 1, r, p), 0.0)
+    hi = sps.nbinom.cdf(y, r, p)
+    return lo + np.asarray(v, float) * (hi - lo)
+
+
+def _pit_rows(pit: np.ndarray, m: np.ndarray, u: np.ndarray, n_bins: int, min_n: int,
+              k: float) -> tuple[list, list]:
+    """Level centres and G^-1 rows (knots u) of the PITs in quantile bins of m, each shrunk to
+    the identity by n / (n + k)."""
+    qb = np.unique(np.quantile(m, np.linspace(0, 1, n_bins + 1)))
+    b = np.clip(np.searchsorted(qb, m, side="right") - 1, 0, len(qb) - 2)
+    cen, rows = [], []
+    for i in range(len(qb) - 1):
+        sel = b == i
+        n = int(sel.sum())
+        if n < min_n:
+            continue
+        q = np.quantile(pit[sel], u)
+        q[0], q[-1] = 0.0, 1.0
+        w = n / (n + k)
+        c = float(m[sel].mean())
+        cen.append(c)
+        rows.append(w * q + (1.0 - w) * u)
+    return cen, rows
+
+
+def _smooth_rows(rows: list, smooth: bool) -> np.ndarray:
+    q = np.asarray(rows)
+    if smooth and len(q) >= 3:
+        sm = q.copy()
+        sm[1:-1] = (q[:-2] + q[1:-1] + q[2:]) / 3.0
+        q = sm
+    return np.maximum.accumulate(np.clip(q, 0.0, 1.0), axis=1)
+
+
+def fit_pit_map(f: pd.DataFrame, v1: CopulaV1Params, *, n_bins: int = DISP_BINS,
+                knots: int = PIT_KNOTS, k: float = PIT_K, min_n: int = PIT_MIN_N,
+                smooth: bool = True, seed: int = 11) -> dict:
+    """Per stat: in quantile bins of the conditional mean m (as `fit_dispersion`), G^-1 of the
+    randomised PIT of y under v1's NB2 at m, on `knots` + 1 uniform knots, shrunk to the
+    identity by n / (n + k) and smoothed over neighbouring bins. {stat: {mu, u, q}}.
+    (Per role tier maps were tested on the training-window holdout, fit on S-2 and checked on
+    S-1, and dropped: no better than the pooled map.)"""
+    rng = np.random.default_rng(seed)
+    u = np.linspace(0.0, 1.0, knots + 1)
+    out = {}
+    for s in COMP_STATS:
+        y, m = f[f"y_{s}"].to_numpy(float), f[f"m_{s}"].to_numpy(float)
+        ok = m > 0.01
+        y, m = y[ok], m[ok]
+        c2 = np.maximum(np.interp(m, v1.disp_mu[s], v1.disp_c2[s]), C2_MIN)
+        pit = nb_pit(y, m, c2, rng.random(len(y)))
+        cen, rows = _pit_rows(pit, m, u, n_bins, min_n, k)
+        if not rows:
+            continue
+        q = _smooth_rows(rows, smooth)
+        out[s] = {"mu": cen, "u": u.round(6).tolist(), "q": q.round(6).tolist()}
+    return out
+
+
+def _calib_check(f: pd.DataFrame, tables: CountTables, seed: int = 3) -> dict:
+    """Per stat, given actual minutes: 80 / 50 % coverage of the actual counts under the tables
+    (exact randomised PIT of the two table rows a mean is drawn from)."""
+    rng = np.random.default_rng(seed)
+    k = np.arange(KMAX + 2)
+    out = {}
+    for s in COMP_STATS:
+        y, m = f[f"y_{s}"].to_numpy(float), f[f"m_{s}"].to_numpy(float)
+        ok = m > 0.01
+        y, m = y[ok].astype(np.int64), m[ok]
+        tab = tables.tab[s].reshape(N_MEAN, NU)
+        cdf = np.stack([np.searchsorted(np.sort(r), k - 1, side="right") / NU for r in tab])
+        x = tables._pos(s, m, N_MEAN - 1 - 1e-9)
+        lo = np.floor(x).astype(np.int64)
+        w = x - lo
+        yy = np.minimum(y, KMAX + 1)
+
+        def F(c, lo=lo, w=w, cdf=cdf):                  # P(count <= c - 1) at each row's mean
+            return (1 - w) * cdf[lo, c] + w * cdf[lo + 1, c]
+        a, b = F(yy), F(np.minimum(yy + 1, KMAX + 1))
+        pit = a + rng.random(len(y)) * (b - a)
+        out[s] = {"cov80": round(float(((pit >= 0.1) & (pit <= 0.9)).mean()), 4),
+                  "cov50": round(float(((pit >= 0.25) & (pit <= 0.75)).mean()), 4),
+                  "pit_mean": round(float(pit.mean()), 4)}
+    return out
+
+
+def fit_copula_v1r(conn: sqlite3.Connection, season: str, sp: dict, cp: CopulaParams,
+                   context=None, mp: M.MinutesParams | None = None, *, n_seasons: int = 2,
+                   frame: pd.DataFrame | None = None, log=None) -> CopulaV1Params:
+    """The v1r params on the regular seasons before `season` (section v1r): `fit_copula_v1`'s
+    pieces on the context arm's residuals (`v1r_frame` with `context`, the arm's
+    `context.ContextModel`; None = the EB rates) plus the per-stat shape map. `mp` with a
+    blowout stage: the per-minute multiplier is read net of the margin curve."""
+    say = log or (lambda m: None)
+    f = frame if frame is not None else v1r_frame(conn, season, sp, cp.alpha, context,
+                                                  n_seasons=n_seasons, mp=mp)
+    v1 = default_copula_v1_params(season, cp)
+    v1.version = COPULA_V1R_VERSION
+    v1.train_seasons = sorted(f["season"].unique().tolist())
+    if any(s >= season for s in v1.train_seasons):
+        raise ValueError(f"copula v1r {season}: training rows from {v1.train_seasons}")
+    wl_n: dict = {}
+    if mp is not None and mp.blowout:     # the minutes move with the margin: shift per minute
+        v1.wl_centres, v1.wl_factor, wl_n = fit_wl(f)
+        f = apply_wl(f, v1)
+    v1.disp_mu, v1.disp_c2 = fit_dispersion(f)
+    before = _calib_check(f, count_tables(v1))
+    v1.pit_map = fit_pit_map(f, v1)
+    tables = count_tables(v1)
+    v1.r_within, wdiag = fit_within(f, tables)
+    c = corr_from_t27(season, conn, log=say)
+    if c:
+        v1.corr = c
+    v1.diagnostics = {"n": int(len(f)), "within": wdiag, "wl_n": wl_n,
+                      "wl": bool(v1.wl_factor),
+                      "rates": "context" if context is not None else "eb",
+                      "calib_nb": before, "calib_map": _calib_check(f, tables),
+                      "dk_by_level": _dk_check(f, v1, tables),
+                      "corr_source": v1.corr.get("source")}
+    say(f"copula v1r fit {season}: n {len(f)}, rates {v1.diagnostics['rates']}, pts cov80 "
+        f"given minutes {before['pts']['cov80']} -> {v1.diagnostics['calib_map']['pts']['cov80']}")
     return v1
