@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-21 ~17:40 ET (day 2; live model pathA-v0.3+p2).*
+*Last updated 2026-10-21 ~23:10 ET (day 2; live model pathA-v0.3+p2).*
 
 ## 0. Where we are, in one paragraph
 
@@ -57,6 +57,13 @@ Operational notes:
 - **X factor (`xf-v1`, live, commit 099e370/8a05151).** DFS pool tag + "Big-night chance" column: chance of DK ≥ 6 × salary/$1k from the run's sims, recalibrated per tier (`proj/dfs/xfactor.py`, `docs/research/xfactor.md`). Tag = bench/role, P(play) ≥ 0.85, proxy band Low, chance ≥ 1 in 3, not among the slate's 10 best projections per $1k, max 5. Contest builder shows how many lineups carry one. UI: the pool defaults to the top 40 by projection, so some tagged players need "Show all" or the Big-night sort; on phones the column needs a sideways scroll.
 - **#3 minutes after injury (research, a73d9f9; `docs/research/return-minutes.md`).** No return multiplier: the real issue is a general per-minute bias tied to projected vs recent minutes (the f(min/mpg) adjustment applied to planned changes). The re-key fix (`COURTSIDE_MINRATIO`, `+mr`) is being finished behind a switch, default OFF. Smaller follow-ups: a "returning" split in the lock−45 Questionable cell (with the lock−10 Q refit); reason parser files "Return to Competition Reconditioning" as G League; parse ESPN full comments for minutes-restriction flags (~January; raw snapshots archived).
 - **Owner's build order after X factor:** #3 fix → #2 preseason minutes + early-season weighting (stats.nba.com `SeasonType='Pre Season'` works; minutes but no starters; 2019-20 includes bubble scrimmages) → #1 prop lines as features → #5 contest builder "how many lineups" curve (chances vs entries from the same sims; bands until calibrated; no spend advice). #5 is in progress alongside the #3 fix, since it doesn't touch the minutes model.
+
+**Added 2026-10-21 evening:**
+- **Preseason history (fe2ad0f, deployed):** migration 15, own tables `preseason_team_games` / `preseason_player_games` (+ `scrimmage`, `vs_non_nba`); `courtside backfill preseason`; 38,101 player rows 2010-11 → 2026-27. Whole minutes, no starters (optional boxscore starters crawl ~850 requests, not run).
+- **#5 curve (76bdbd5, deployed):** contest builder shows chances by number of entries (nested greedy portfolio on the same sims). Chances are against our modelled field, which is far weaker than a real DK field, so they read high (1 lineup ~65–80% in the money); the note says so, and bands stay until ≥ 10 uploaded standings. N=150 takes ~200 s.
+- **#3 minutes-ratio re-key (`COURTSIDE_MINRATIO=1`, `+mr`, c8ded64 / 7b9836d): OFF, not shipped.** Design B (pooled) CRPS −2.8 / −2.0 SE (2023-24 / 2024-25), −3.3 / −4.9 SE RotoGuru, live flat, but the bench tier is worse in all six sets. Design C (P-tiered, `PL_TIERS_C`) has bigger CRPS gains but fails four tier checks. Root cause: planned demotions (P < 0.9 × last-10 minutes) get P(play) +0.04–0.06 and E[min] +0.4–0.8 too high, which the old per-minute penalty hid.
+- **#2 preseason minutes (`COURTSIDE_PRESEASON=1`, `+pre`, 7b9836d): OFF, not shipped.** First 15 games: minutes MAE −1.4 / −2.8 / −0.9 SE (2023-24 / 2024-25 / 2025-26); flat after; star tier worse in full-season terms (+1.4 / +2.6 SE). The season-start debut reserve over-reserves (opener: 18–30 min held back for BOS/OKC/PHI/SAS, debutants played 0–13).
+- **In progress (agents):** `COURTSIDE_MINFIX` (`+mf`): fix demotion over-projection + minutes dispersion + a robust debut reserve, then re-evaluate +mf, +mf+mr, +mf+pre. #1 prop lines as an F0 feature group (as-of join, de-vig, readiness report), off by default; only 2 nights of props so far.
 
 **Next (in order):**
 1. Watch tonight's lock runs (first lock 19:00 ET) and tomorrow's 03:00 grading under `pathA-v0.3+p2`; add a `+p2` block to `live_like_baseline.json` once it has a few nights.
