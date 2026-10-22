@@ -1,0 +1,11 @@
+[Unit]
+Description=Courtside nightly backup (pull DB snapshot + var/ from the Mac mini)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Documents/NBA/deploy/backup-pull.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h

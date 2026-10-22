@@ -33,6 +33,8 @@ Operational notes:
 - **LLM prose** comes from the owner's subscription via CLI, never an API key. On geekom1 `claude -p` works. On the Mac, `claude` is "Not logged in" over SSH, so it falls back to `codex exec`, which works.
 - **The owner's client can't show host-path images.** Show UI through a live URL.
 
+- **Backups (since 2026-10-22):** geekom1 pulls a nightly copy of the Mac's data at 04:30 ET (systemd user timer `courtside-backup.timer` → `deploy/backup-pull.sh`; units in `deploy/geekom1/`, symlinked into `~/.config/systemd/user/`). It takes a consistent `courtside.db` snapshot on the Mac (online backup API, read-only source, quick_check), gzipped to `~/Backups/courtside/db/courtside-YYYYMMDD.db.gz` (newest 7 kept), and mirrors `var/` (raw, sims, proj, models, briefs, reports, logs; no `--delete`) to `~/Backups/courtside/var/`. Status: `~/Backups/courtside/last_backup.txt`; log: `journalctl --user -u courtside-backup`. First run ~3 min (337 MB snapshot + 1.5 GB). Restore: `gunzip -c <snapshot> > var/courtside.db` (stop the Mac jobs first). The Mac has no Time Machine destination.
+
 ## 2. State of data and jobs (updated 2026-10-19 ~11:50 ET)
 
 - **Still running on geekom1:** per-game player backfill PID 2962632 (`var/logs/backfill_players.log`; matchups ~2022-23, then tracking/hustle). When it finishes, rsync `var/raw/nba_stats/{boxscorematchupsv3,boxscoreplayertrackv3,boxscorehustlev2}` to the Mac and run `courtside backfill players --per-game all --reparse` there.

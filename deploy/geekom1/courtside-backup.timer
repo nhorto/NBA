@@ -1,0 +1,10 @@
+[Unit]
+Description=Courtside nightly backup at 04:30 (after the 03:00 postgame grading)
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
