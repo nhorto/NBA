@@ -363,6 +363,9 @@ def test_postgame_espn_final_updates_game(net):
     for c in ev["competitions"][0]["competitors"]:
         c["score"] = "101" if c["homeAway"] == "home" else "99"
     ev["status"] = {"type": {"name": "STATUS_FINAL", "state": "post", "completed": True}}
+    # no cdn box yet: once the wall clock passes the fixture tips, a final box would set its
+    # own score over ESPN's, and this test is about the ESPN result
+    net.box_404 = {"0022600001", "0022600002", "0022600003"}
     s = collect.run_postgame(TODAY)
     assert s["steps"]["espn_scoreboard"]["matched"] == 3
     assert q("SELECT status, home_score, away_score FROM games WHERE espn_id=?", ev["id"]) \
