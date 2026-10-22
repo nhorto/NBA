@@ -74,7 +74,7 @@ Operational notes:
 
 **Phase 2 / 2F / 3 summary (2026-10-19):** done — T2.1 harness, T2.2 minutes v1 (+ live-path fix), T2.3 usage v1 (not live), T2.5 sim step-0, T2.7 causal correlations, T2.11 ownership proxy + simulated field (P(cash)/P(top1)/E[payout]/dupes per lineup, labelled proxy/optimistic), T3.0 grading, T3.1 `/health/dfs`, T3.2 `/dfs/results`, lineup sim ranges, `courtside proj live-path-eval`, F0–F2 feature store (P + F2 pass, F1 fails; not live). Use `TMPDIR=~/Documents/NBA/var/tmp` for tests; never `git commit -a` with agents running.
 
-**Open items:** owner to test one DK CSV upload (numeric draftable ids vs "Name (ID)"); wire `why_v0.top_stories` into the Brief; weekly availability refit not yet scheduled; 17 in-progress + 5 stub cdn boxscores to re-fetch. Then Phase 2 (§8).
+**Open items:** owner to test one DK CSV upload (numeric draftable ids vs "Name (ID)"); weekly availability refit not yet scheduled (owner: it changes P(play) weekly). Closed 2026-10-21: `why_v0.top_stories` is wired into the Brief (Player stories); the 22 non-final cdn boxscores (17 in-progress, 5 stubs; 2019-20 except one 2024-04-03 game, of 8,713) are what the cdn serves, and a re-fetch is refused (403); left as is. Then Phase 2 (§8).
 
 **Agent rules** (unchanged): ≤ 3 agents on geekom1, one heavy job; agents don't commit; give each its task row, owned files, acceptance, and the no-browser/no-DK-crawl rules.
 
