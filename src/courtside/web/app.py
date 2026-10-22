@@ -23,7 +23,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import config
-from . import (dfs_contest, dfs_results, dfs_swap, dfs_view, fmt, health, health_dfs,
+from . import (dfs_contest, dfs_results, dfs_swap, dfs_view, dfs_weekly, fmt, health, health_dfs,
                players_view, view)
 from .store import BriefStore
 from .teams import identity
@@ -177,9 +177,11 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
         vm = store.derived(key, lambda: view.tonight_view(g))
         return render("preview.html", t=vm, day=day, page="game")
 
-    # /dfs/results must be registered before dfs_view's '/dfs/{day}'
+    # /dfs/results and /dfs/weekly must be registered before dfs_view's '/dfs/{day}'
     dfs_results.register(app, store=store, render=render, not_found=not_found, today=_today,
                          health_banner=health_banner)
+    dfs_weekly.register(app, store=store, render=render, not_found=not_found, today=_today,
+                        health_banner=health_banner)
     dfs_swap.register(app, store=store, render=render, not_found=not_found, today=_today,
                       health_banner=health_banner)
     dfs_view.register(app, store=store, render=render, not_found=not_found, today=_today,

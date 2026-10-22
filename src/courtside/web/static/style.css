@@ -1388,3 +1388,15 @@ textarea.dfs-input { resize: vertical; min-height: 4.5rem; }
 .pl-foot { margin-top: 28px; max-width: 90ch; }
 /* the top bar carries Players, DFS, Archive, Health: Archive (also in the footer) drops on phones */
 @media (max-width: 520px) { .top-link-x { display: none; } .top-link { padding-inline: 8px; } }
+
+/* ---------------------------------------------------------------- weekly DFS report (/dfs/weekly) */
+.wk-sim-tag { display: inline-block; font-size: .66rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: var(--warn-wash); color: var(--warn); }
+.wk-lines { margin: 0; padding-left: 1.15rem; display: grid; gap: 6px; list-style: disc; color: var(--ink-2); font-size: .95rem; max-width: 90ch; }
+.wk-lines li { padding-left: 2px; }
+.wk-summary { display: grid; gap: 12px; }
+.wk-card { margin-bottom: var(--gap, 14px); }
+.wk-table td, .wk-table th { vertical-align: top; }
+.wk-table td:not(.num) { min-width: 8rem; }
+.wk-after { margin-top: 12px; }
+.wk-foot { margin-top: 28px; max-width: 90ch; }
+

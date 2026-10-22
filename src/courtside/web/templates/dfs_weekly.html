@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set r = v.rep %}
+{% block title %}Weekly report &middot; DFS &middot; Courtside{% endblock %}
+{% block description %}The weekly DFS report: how our projections and lineups did against DraftKings' own FPPG and a salary-only baseline, with standard errors across nights. Paper results and real contest results are kept apart.{% endblock %}
+
+{% block content %}
+<section class="wrap dfs-hero" aria-labelledby="wk-title">
+  <div class="mast-kicker">
+    <span class="kicker">DFS</span>
+    {% if r %}<time datetime="{{ v.week_end }}">Week ending {{ v.week_end|medium_date }}</time>{% endif %}
+  </div>
+  <h1 class="dfs-h1" id="wk-title">Weekly report</h1>
+  <p class="hm-sub">How the projections and lineups did against the real games. Lineups here are <b>paper results</b> (built and scored, never entered); real contest results come only from standings you upload.</p>
+  <nav class="rs-links" aria-label="DFS">
+    <a href="/dfs">Slates</a><a href="/health/dfs">DFS health</a><a href="/dfs/results">Real results</a><a href="/dfs/weekly" aria-current="page">Weekly report</a>
+  </nav>
+  {% if r %}
+  <nav class="daynav dfs-daynav" aria-label="Week">
+    <a class="daynav-a" href="/dfs/weekly/{{ v.prev_end }}">{{ m.icon("back") }} Week ending {{ v.prev_end|short_date }}</a>
+    {% if v.next_end %}<a class="daynav-a" href="/dfs/weekly/{{ v.next_end }}">Week ending {{ v.next_end|short_date }} {{ m.icon("arrow") }}</a>{% else %}<span></span>{% endif %}
+  </nav>
+  {% endif %}
+</section>
+
+{% if not v.has_db %}
+<section class="section wrap">{{ m.empty("No database yet", "The report can be built once the collector has created the database.") }}</section>
+{% else %}
+
+<section class="section wrap" id="summary" aria-labelledby="summary-title">
+  {{ m.sec_head("summary", "00", "In short", r.window["from"]|short_date ~ " to " ~ r.window["to"]|short_date) }}
+  <div class="card wk-summary">
+    <ul class="wk-lines">
+      {% for ln in r.headline %}<li>{{ ln }}</li>{% endfor %}
+    </ul>
+    {% if r.window.n_nights < r.thresholds.min_nights and r.window.n_nights > 0 %}
+    <p class="caveat hm-caveat">Only {{ r.window.n_nights }} night{{ "s" if r.window.n_nights != 1 }} of grades so far. A difference is called a result only from {{ r.thresholds.min_nights }} nights and beyond 2 standard errors; until then these are descriptions, not findings.</p>
+    {% endif %}
+  </div>
+</section>
+
+<nav class="secnav" aria-label="Sections">
+  <div class="wrap secnav-in">
+    {% for sec in r.sections %}<a href="#{{ sec.id }}">{{ sec.nav }}</a>{% endfor %}
+  </div>
+</nav>
+
+{% for sec in r.sections %}
+<section class="section wrap" id="{{ sec.id }}" aria-labelledby="{{ sec.id }}-title">
+  {{ m.sec_head(sec.id, "%02d"|format(loop.index), sec.title) }}
+  {% if sec.id in ("real",) %}
+  <div class="rs-real-banner"><span class="rs-real-tag">Real</span> uploaded standings and your own entries <span class="wk-sim-tag">Simulated</span> our own model's field and the random-lineup proxy</div>
+  {% elif sec.id.startswith("lineups") %}
+  <div class="rs-real-banner"><span class="wk-sim-tag">Paper results</span> built and scored after the games, never entered</div>
+  {% endif %}
+  {% if sec.lede %}<p class="sec-lede">{{ sec.lede }}</p>{% endif %}
+  {% for t in sec.tables %}
+  <div class="card wk-card">
+    <div class="card-head-row"><h3 class="card-title">{{ t.title }}</h3>{% if t.note %}<span class="muted card-note">{{ t.note }}</span>{% endif %}</div>
+    <div class="table-scroll">
+    <table class="table dh-table wk-table">
+      <caption class="sr">{{ t.title }}</caption>
+      <thead><tr>{% for c in t.columns %}<th scope="col"{% if t.num[loop.index0] %} class="num"{% endif %}>{{ c }}</th>{% endfor %}</tr></thead>
+      <tbody>
+      {% for row in t.rows %}
+        <tr>{% for c in row %}{% if loop.first %}<th scope="row">{{ c }}</th>{% else %}<td{% if t.num[loop.index0] %} class="num"{% endif %}>{{ c }}</td>{% endif %}{% endfor %}</tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endfor %}
+  {% if sec.lines %}
+  <ul class="wk-lines wk-after">
+    {% for ln in sec.lines %}<li>{{ ln }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endfor %}
+
+<p class="wrap footnote wk-foot">Standard errors cluster by NBA date. They appear from {{ r.thresholds.min_nights }} nights; a difference is a result only at 2 standard errors or more. Report version {{ r.version }}, built {{ r.generated }}. Same numbers as <code>courtside proj weekly-report</code>.</p>
+{% endif %}
+{% endblock %}

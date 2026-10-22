@@ -6,6 +6,7 @@ Register by adding ``"courtside.proj.cli_proj"`` to ``PROJ_MODULES`` in ``proj/c
     courtside proj day --date 2026-10-20 [--at ISO] [--store]
     courtside proj day --date 2025-01-15 --historical [--protocol avail|reports]
     courtside proj backtest --season 2024-25 --dates 60
+    courtside proj weekly-report [--week-end 2026-10-26] [--days 7] [--json] [--no-write]
 """
 
 from __future__ import annotations
@@ -41,7 +42,17 @@ def add_commands(sub) -> dict:
     b.add_argument("--sims", type=int, default=4_000)
     b.add_argument("--protocol", choices=("avail", "reports"), default="avail")
     b.add_argument("--json", default=None, help="write the summary JSON here")
-    return {"slate": _slate_cmd, "day": _day_cmd, "backtest": _backtest_cmd}
+    w = sub.add_parser("weekly-report", help="weekly DFS report (T3.3): projections and lineups "
+                       "vs the baselines, clustered SEs, real vs simulated kept apart")
+    w.add_argument("--week-end", default=None,
+                   help="last NBA day of the window (default: the newest graded day)")
+    w.add_argument("--days", type=int, default=7)
+    w.add_argument("--json", action="store_true", help="print the JSON instead of the text")
+    w.add_argument("--no-write", action="store_true",
+                   help="do not write var/reports/weekly_dfs_<date>.json")
+    w.add_argument("--out-dir", default=None, help="report directory (default var/reports)")
+    return {"slate": _slate_cmd, "day": _day_cmd, "backtest": _backtest_cmd,
+            "weekly-report": _weekly_report_cmd}
 
 
 def _conn():
@@ -142,4 +153,32 @@ def _backtest_cmd(args) -> int:
     if args.json:
         with open(args.json, "w") as f:
             json.dump(res, f, indent=1, default=str)
+    return 0
+
+
+def _weekly_report_cmd(args) -> int:
+    from datetime import date
+    from pathlib import Path
+
+    from . import reports as RP
+    conn = _conn()
+    try:
+        if args.week_end:
+            end = date.fromisoformat(args.week_end)
+        else:
+            end = RP.latest_graded_day(conn)
+            if end is None:
+                print("nothing has been graded yet; pass --week-end to report an empty window")
+                return 0
+        rep = RP.weekly_dfs_report(conn, end, days=args.days)
+    finally:
+        conn.close()
+    path = None if args.no_write else RP.write_report(
+        rep, Path(args.out_dir) if args.out_dir else None)
+    if args.json:
+        print(json.dumps(rep, indent=1, default=str))
+    else:
+        print(RP.render_text(rep))
+    if path:
+        print(f"wrote {path}")
     return 0
