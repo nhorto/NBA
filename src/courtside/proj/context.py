@@ -255,7 +255,7 @@ def fit_season(conn: sqlite3.Connection, season: str, sp: dict, *,
     t0 = time.time()
     fr = frame if frame is not None else FX.build_frame(conn, season, sp, n_train=n_train,
                                                          log=say)
-    ext = [g for g in groups if g in FX.EXTENSION_GROUPS]
+    ext = [g for g in groups if g in FX.EXTENSION_GROUPS or g in FX.MARKET_GROUPS]
     if ext:
         fr = FX.extend_frame(conn, fr, ext, season=season, cache=frame is None, log=say)
     train = (fr["season"] < season).to_numpy()
@@ -524,7 +524,8 @@ def run_ablation(conn: sqlite3.Connection, season: str, *, n_train: int = 6,
     sp = state_params_for(conn, season)
     fr = frame if frame is not None else FX.build_frame(conn, season, sp, n_train=n_train,
                                                          log=say)
-    ext = sorted({g for v in variants.values() for g in v if g in FX.EXTENSION_GROUPS})
+    ext = sorted({g for v in variants.values() for g in v
+                  if g in FX.EXTENSION_GROUPS or g in FX.MARKET_GROUPS})
     if ext:
         fr = FX.extend_frame(conn, fr, ext, season=season, log=say)
     if base != "E":

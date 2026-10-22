@@ -24,7 +24,8 @@ import pandas as pd
 
 from ... import config
 from .. import state as ST
-from . import matchups, opp_avail, opp_defense, player, schedule, shots, tracking
+from . import (market_props, matchups, opp_avail, opp_defense, player, schedule, shots,
+               tracking)
 from .common import ALL_STATS, base_rows, load_team_games, season_label
 
 FRAME_VERSION = 4
@@ -89,6 +90,8 @@ def attach(rows: pd.DataFrame, tg: pd.DataFrame, pf: pd.DataFrame | None = None
         extra.append(tracking.row_features(out))
     if "f4_lpts_s" in out:
         extra.append(shots.row_features(out))
+    if "f9_mean_pts" in out and "f9_lr_pts" not in out:
+        extra.append(market_props.row_features(out))
     return pd.concat([out] + extra, axis=1)
 
 
@@ -183,9 +186,19 @@ def group_table(conn: sqlite3.Connection, frame: pd.DataFrame, group: str, *,
 def extend_frame(conn: sqlite3.Connection, frame: pd.DataFrame, groups, *, season: str = "",
                  cache: bool = True, log: Callable[[str], None] | None = None) -> pd.DataFrame:
     """`frame` (build_frame) + the columns of the extension groups in `groups` (F3 / F4 / F5 /
-    F6; others are ignored) and their row-level columns. Row order is kept."""
+    F6, and the market group F9; others are ignored) and their row-level columns. Row order
+    is kept."""
     out = frame
     for g in groups:
+        if g == "F9":                 # market lines: never cached (the prop log grows daily)
+            if "f9_mean_pts" in out.columns:
+                continue
+            tab = market_props.build(conn, out)
+            n = len(out)
+            out = out.merge(tab, on=["game_id", "player_id"], how="left")
+            assert len(out) == n
+            out = pd.concat([out, market_props.row_features(out)], axis=1)
+            continue
         if g not in ("F3", "F4", "F5", "F6"):
             continue
         cols = {"F3": tracking.TEAM_COLS, "F5": matchups.TEAM_COLS,

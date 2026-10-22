@@ -15,9 +15,12 @@ before the game date (season-to-date + recency-weighted + shrunk, `common.ew_aso
   F6  schedule context (home, rest, density, travel, time zones, altitude, stage) schedule.py
   F4  shot quality / shooting luck (xFG from the cdn PBP: quality, diet, skill,
       luck inside the EB rates, opponent quality / luck allowed)                  shots.py
+  F9  market player-prop lines as of a lock cutoff (de-vigged implied mean vs the
+      EB rate, has-line flags, moves). Registered, OFF: in no live group set;
+      props exist only from 2026-10-19 (`market_props.readiness`)                 market_props.py
 
 F3 / F4 / F5 / F6 are not in the cached base frame: `extend_frame(conn, frame, groups)` adds them
-(cached per season and group).
+(cached per season and group). F9 too, never cached (the prop log grows every day).
 
 Public API
   GROUPS / Group                       registry (columns(stat), monotone(stat), categorical)
@@ -34,7 +37,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
-from . import matchups, opp_avail, opp_defense, player, schedule, shots, tracking
+from . import (market_props, matchups, opp_avail, opp_defense, player, schedule, shots,
+               tracking)
 
 
 @dataclass(frozen=True)
@@ -63,8 +67,14 @@ GROUPS: dict[str, Group] = {
                 neutral=dict(schedule.NEUTRAL)),
     "F4": Group("F4", "shot quality and shooting luck (xFG)", shots.columns, shots.monotone,
                 neutral=dict(shots.NEUTRAL)),
+    "F9": Group("F9", "market player-prop lines (de-vigged, as of the lock cutoff)",
+                market_props.columns, market_props.monotone,
+                neutral=dict(market_props.NEUTRAL)),
 }
 EXTENSION_GROUPS = ("F3", "F5", "F6", "F4")
+# market groups: added by extend_frame like the extensions, but never by LiveExtras (the live
+# path reads them with `market_props.live_lines`); in no live group set (off by default)
+MARKET_GROUPS = ("F9",)
 
 
 def model_columns(stat: str, groups: Sequence[str]) -> list[str]:
@@ -92,5 +102,5 @@ from .store import (LiveExtras, attach, build_frame, day_features,  # noqa: E402
 
 __all__ = ["GROUPS", "Group", "model_columns", "monotone_for", "categorical_for", "build_frame",
            "team_game_features", "day_features", "attach", "extend_frame", "LiveExtras",
-           "EXTENSION_GROUPS",
-           "opp_avail", "opp_defense", "player", "tracking", "matchups", "schedule", "shots"]
+           "EXTENSION_GROUPS", "MARKET_GROUPS",
+           "market_props", "opp_avail", "opp_defense", "player", "tracking", "matchups", "schedule", "shots"]
