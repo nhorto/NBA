@@ -1,0 +1,33 @@
+{
+ "offsets": {
+  "ns|pa|bench": -0.338804,
+  "ns|pa|rotation": -0.01792,
+  "ns|pa|starter": -0.459975,
+  "ns|q|bench": -0.117019,
+  "ns|q|rotation": 0.003149,
+  "ns|q|starter": -1.479885,
+  "ns|removed": -0.249808
+ },
+ "n": {
+  "ns|pa|bench": 363,
+  "ns|pa|rotation": 438,
+  "ns|pa|starter": 112,
+  "ns|q|bench": 26,
+  "ns|q|rotation": 58,
+  "ns|q|starter": 37,
+  "ns|removed": 26
+ },
+ "ret_n": 3,
+ "meta": {
+  "fit_lo": "2025-12-22",
+  "fit_hi": "2026-04-12",
+  "families": [
+   "ns"
+  ],
+  "ridge": 4.0,
+  "lineup_min": 3,
+  "rows": "lock-10 listed non-starters (box starters = DK flags), 2025-26 regular season",
+  "cells": "availability_params.json (fit on the same window)",
+  "source": "research/pplay_q_refit.py fit; docs/research/pplay-q-refit.md"
+ }
+}

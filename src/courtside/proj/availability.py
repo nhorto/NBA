@@ -419,6 +419,22 @@ class History:
         return out
 
 
+def games_missed(hist: History, pid: int, team: str, day: date, cap: int = 82) -> int:
+    """Games `team` played strictly before `day` since the player's latest appearance (any
+    team) strictly before `day`, capped at `cap`.  -1 = no appearance in the history (rookie /
+    unknown: never 'returning').  Box history only, so nothing on or after `day` is read."""
+    rec = hist.by_player.get(int(pid))
+    if not rec:
+        return -1
+    i = bisect_right(rec[0], (day - timedelta(days=1)).isoformat())
+    if i == 0:
+        return -1
+    dates = hist._tg_dates.get(team, [])
+    lo = bisect_right(dates, rec[0][i - 1])
+    hi = bisect_right(dates, (day - timedelta(days=1)).isoformat())
+    return int(min(max(hi - lo, 0), cap))
+
+
 def load_history(conn: sqlite3.Connection, since: date) -> History:
     pg = pd.read_sql_query(
         "SELECT game_id, player_id, team, game_date, min FROM player_games WHERE game_date >= ?",
@@ -699,6 +715,8 @@ def _slate(conn: sqlite3.Connection, day: date, at: datetime, params: Availabili
     if df.empty:
         return pd.DataFrame(columns=cols)
     df = predict(df, params)
+    if PPLAYQ:                                   # pq refit (default OFF: this line never runs)
+        df["p_play"] = q_refit_frame(df, hist, day, starters)
     df["override"] = False
     if starters:
         m = df["player_id"].isin(starters)
@@ -917,6 +935,163 @@ def fit_fringe_model(df: pd.DataFrame, regime: str, ridge: float = 1.0,
     w = fit_logit(df[feats].to_numpy(float), df["played"].to_numpy(float), ridge,
                   None if weight is None else df[weight].to_numpy(float))
     return {"features": feats, "coef": list(map(float, w))}
+
+
+# --- Questionable refit (pq; opt-in, COURTSIDE_PPLAYQ=1, default OFF) ------------------------
+#
+# docs/research/pplay-q-refit.md, research/pplay_q_refit.py.  Two logit offsets on top of the
+# report cell, each shrunk to 0 (= the cell) by a ridge prior:
+#  (A) lineups known (>= Q_LINEUP_MIN of the team's candidates carry the DK starter flag, i.e.
+#      lock-10): a listed, not-Out player who is NOT flagged a starter.  The flagged ones already
+#      get 0.99 (`_slate`), so the cell, fit on everyone with that status, ran high for the rest:
+#      lock-10 Questionable non-starters P 0.53 vs 0.36 played (starter-role ones 0.63 vs 0.14).
+#      Groups: status (questionable / probable+available / removed) x role.
+#  (B) lineups not known: a Questionable player whose absence is still running (his team has
+#      played >= ret_n games since his last appearance) -- "returning" -- by role.  Kept as a
+#      code path only: it did not pass walk-forward, so the shipped params carry no (B) offsets
+#      and those rows keep their cell.
+# OFF: nothing here runs and `_slate` is unchanged (bit-identical).
+
+def _flag(name: str, default: bool) -> bool:
+    import os
+    v = os.environ.get(name, "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+PPLAYQ_DEFAULT = False                 # shipping = True here (env still overrides)
+PPLAYQ_ENV = "COURTSIDE_PPLAYQ"
+PPLAYQ = _flag(PPLAYQ_ENV, PPLAYQ_DEFAULT)
+PPLAYQ_TAG = "+pq"
+PQ_PATH = Path(__file__).with_name("pplay_q_params.json")
+Q_LINEUP_MIN = 3                       # flagged starters among a team's candidates = lineup out
+Q_RET_N = 3                            # default "returning" threshold (the fit stores its own)
+Q_RIDGE = 4.0                          # prior precision on each offset (~16 rows at p = 0.5)
+_NS_STATUS = {"questionable": "q", "probable": "pa", "available": "pa", "removed": "removed"}
+
+
+def set_pplayq(on: bool) -> None:
+    """Flip the Questionable-refit switch at run time (evaluation scripts, tests)."""
+    global PPLAYQ
+    PPLAYQ = bool(on)
+
+
+@dataclass
+class QRefitParams:
+    offsets: dict[str, float] = field(default_factory=dict)     # group -> logit offset
+    n: dict[str, int] = field(default_factory=dict)             # group -> training rows
+    ret_n: int = Q_RET_N
+    meta: dict = field(default_factory=dict)
+
+    def to_json(self) -> dict:
+        return {"offsets": {k: round(float(v), 6) for k, v in sorted(self.offsets.items())},
+                "n": {k: int(v) for k, v in sorted(self.n.items())}, "ret_n": int(self.ret_n),
+                "meta": self.meta}
+
+    @classmethod
+    def from_json(cls, d: dict) -> "QRefitParams":
+        return cls(offsets={k: float(v) for k, v in d.get("offsets", {}).items()},
+                   n={k: int(v) for k, v in d.get("n", {}).items()},
+                   ret_n=int(d.get("ret_n", Q_RET_N)), meta=d.get("meta", {}))
+
+    def save(self, path: Path | str | None = None) -> Path:
+        path = Path(path) if path else PQ_PATH
+        path.write_text(json.dumps(self.to_json(), indent=1) + "\n")
+        return path
+
+
+_PQ_CACHE: dict[str, QRefitParams] = {}
+
+
+def load_q(path: Path | str | None = None) -> QRefitParams:
+    """The shipped offsets (cached).  Missing file -> no offsets (= the cells)."""
+    path = Path(path) if path else PQ_PATH
+    if str(path) not in _PQ_CACHE:
+        _PQ_CACHE[str(path)] = (QRefitParams.from_json(json.loads(path.read_text()))
+                                if path.exists() else QRefitParams())
+    return _PQ_CACHE[str(path)]
+
+
+def q_group(status: str, role: str, started: bool, lineup_known: bool, missed: int,
+            ret_n: int = Q_RET_N) -> str | None:
+    """The refit group of one candidate row, or None (row keeps its cell)."""
+    if lineup_known:
+        if started or status not in _NS_STATUS:
+            return None
+        s = _NS_STATUS[status]
+        return "ns|removed" if s == "removed" else f"ns|{s}|{role}"
+    if status == "questionable" and missed >= ret_n:
+        return f"ret|q|{role}"
+    return None
+
+
+def q_groups(df: pd.DataFrame, ret_n: int = Q_RET_N) -> list[str | None]:
+    """Vector form over a frame with status, role, started, lineup_known, missed."""
+    return [q_group(s, r, bool(st), bool(lk), int(m), ret_n) for s, r, st, lk, m in
+            zip(df["status"], df["role"], df["started"], df["lineup_known"], df["missed"])]
+
+
+def _logit(p):
+    p = np.clip(np.asarray(p, float), CLAMP[0], CLAMP[1])
+    return np.log(p / (1 - p))
+
+
+def q_apply(p_cell, groups, params: QRefitParams) -> np.ndarray:
+    """sigmoid(logit(cell) + offset[group]); rows without a group (or offset) keep the cell
+    exactly (not round-tripped through the logit)."""
+    p = np.asarray(p_cell, float).copy()
+    off = np.array([params.offsets.get(g, 0.0) if g is not None else 0.0 for g in groups])
+    hit = off != 0.0
+    if hit.any():
+        z = _logit(p[hit]) + off[hit]
+        p[hit] = np.clip(1.0 / (1.0 + np.exp(-z)), CLAMP[0], CLAMP[1])
+    return p
+
+
+def fit_q_offsets(p_cell, y, groups, ridge: float = Q_RIDGE) -> tuple[dict, dict]:
+    """Per group, the ridge-penalised MLE of a logit offset on top of `p_cell` (Newton, 1-D:
+    the groups are disjoint).  Returns ({group: offset}, {group: n})."""
+    z0 = _logit(p_cell)
+    y = np.asarray(y, float)
+    g = np.asarray([x if x is not None else "" for x in groups], object)
+    offs, ns = {}, {}
+    for k in sorted(set(g) - {""}):
+        sel = g == k
+        zk, yk = z0[sel], y[sel]
+        d = 0.0
+        for _ in range(100):
+            pk = 1.0 / (1.0 + np.exp(-(zk + d)))
+            grad = (yk - pk).sum() - ridge * d
+            hess = (pk * (1 - pk)).sum() + ridge
+            step = grad / hess
+            d += step
+            if abs(step) < 1e-10:
+                break
+        offs[k], ns[k] = float(d), int(sel.sum())
+    return offs, ns
+
+
+def q_refit_frame(df: pd.DataFrame, hist: History, day: date, starters: set[int] | None,
+                  params: QRefitParams | None = None) -> np.ndarray:
+    """`_slate` hook: refit P(play) of a predicted candidate frame (status, role, team,
+    player_id, p_play).  Lineups count as known for a team when >= Q_LINEUP_MIN of its
+    candidates are in `starters` (the DK starter flags)."""
+    params = params or load_q()
+    st = set(int(x) for x in (starters or ()))
+    started = df["player_id"].astype(int).isin(st).to_numpy()
+    known_teams = {t for t, n in pd.Series(started).groupby(df["team"].to_numpy()).sum().items()
+                   if n >= Q_LINEUP_MIN}
+    known = df["team"].isin(known_teams).to_numpy()
+    need = (~known) & (df["status"] == "questionable").to_numpy()
+    missed = np.full(len(df), -1)
+    for i in np.where(need)[0]:
+        missed[i] = games_missed(hist, int(df["player_id"].iloc[i]), df["team"].iloc[i], day)
+    frame = pd.DataFrame({"status": df["status"].to_numpy(), "role": df["role"].to_numpy(),
+                          "started": started, "lineup_known": known, "missed": missed})
+    return q_apply(df["p_play"].to_numpy(float), q_groups(frame, params.ret_n), params)
 
 
 # --- evaluation (honest: time split + blocked CV) --------------------------------------------
