@@ -53,8 +53,18 @@ seasons < S:
 Copula v1 params (only with COURTSIDE_COPULA=v1) are kept from the arm's bundle (fit on the old
 table; the combination is wired but not evaluated).
 
-Cache: planned minutes per season under `<data>/proj/minutes_ratio/planned_<X>.parquet`, the
-minutes params of seasons without a bundle under `.../minutes_params_<X>.json`.
+Whose plans (`plans_tag`): the table is keyed on the plans of the ARM'S OWN minutes engine, since
+the sims read P from that engine. With the minutes fix (`pipeline.MINFIX`, `+mf+mr`: the arm's
+minutes params have `minfix`, no blowout stage, no preseason columns) training P is the +mf engine
+walk-forward (season X's `fit_v1(minfix=True)` params, fit on the 5 seasons < X, exactly the
+params that season's +mf backtest uses) and the table records `plans = "mf"`; every other arm
+(OFF, +pre, +bo) keeps the OFF engine's plans and writes no `plans` key, so the OFF-engine +mr
+table, its caches and its bundles are unchanged byte for byte. `table_matches(t, plans)` makes
+`pipeline._load_bundle_mr` refit a cached bundle whose table was keyed on the other engine.
+
+Cache: planned minutes per season under `<data>/proj/minutes_ratio/planned_<X>[_mf].parquet`,
+the minutes params of seasons without a bundle under `.../minutes_params_<X>[_mf].json` (the
+`_mf` files hold the +mf engine's; the OFF engine's names are unchanged).
 """
 
 from __future__ import annotations
@@ -88,8 +98,27 @@ HISTORY_SEASONS = 7                # as pipeline.Context
 WINDOW = 5                         # pipeline.MINUTES_WINDOW
 
 
+PLANS_MF = "mf"                    # table keyed on the minutes-fix engine's plans (+mf+mr)
+
+
 def cache_dir() -> Path:
     return config.data_dir() / "proj" / "minutes_ratio"
+
+
+def plans_tag(mp) -> str:
+    """Whose plans the arm's table is keyed on, from the arm's minutes params: "mf" for the
+    minutes-fix engine (`minfix` set, no blowout stage, no preseason columns), "" (the OFF
+    engine, the original +mr design) for everything else."""
+    if (mp is not None and getattr(mp, "minfix", None) and not getattr(mp, "blowout", None)
+            and not M.uses_preseason(mp)):
+        return PLANS_MF
+    return ""
+
+
+def _sfx(plans: str) -> str:
+    if plans not in ("", PLANS_MF):
+        raise ValueError(f"unknown plans {plans!r}")
+    return f"_{plans}" if plans else ""
 
 
 def season_label(y: int) -> str:
@@ -103,42 +132,55 @@ def _minus(season: str, k: int) -> str:
 # ============================================================================== planned minutes
 
 def minutes_params_for(conn: sqlite3.Connection, season: str, h: M.History | None = None,
-                       panel_tr: pd.DataFrame | None = None, log=None) -> M.MinutesParams:
+                       panel_tr: pd.DataFrame | None = None, log=None, plans: str = ""
+                       ) -> M.MinutesParams:
     """Season X's v1 minutes params (fit on the 5 seasons < X): the pipeline's cached bundle /
-    minutes params when present, else a cached or fresh fit (the pipeline's own recipe)."""
+    minutes params when present, else a cached or fresh fit (the pipeline's own recipe).
+    plans "mf": the minutes-fix engine's (`minutes_params_<X>_v1_mf.json` / the `_mf` bundles of
+    the pipeline, else `fit(..., v1_kw={"minfix": True})` as `pipeline._load_bundle_mf`)."""
     say = log or (lambda m: None)
+    sfx = _sfx(plans)
     pdir = config.data_dir() / "proj"
-    for f in (pdir / f"bundle_{season}_v1.json", pdir / f"minutes_params_{season}_v1.json",
-              cache_dir() / f"minutes_params_{season}.json"):
+    if plans:
+        cands = (pdir / f"minutes_params_{season}_v1{sfx}.json",
+                 pdir / f"bundle_{season}_v1_cx{sfx}.json", pdir / f"bundle_{season}_v1{sfx}.json",
+                 cache_dir() / f"minutes_params_{season}{sfx}.json")
+    else:
+        cands = (pdir / f"bundle_{season}_v1.json", pdir / f"minutes_params_{season}_v1.json",
+                 cache_dir() / f"minutes_params_{season}.json")
+    for f in cands:
         if f.exists():
             d = json.loads(f.read_text())
             d = d.get("minutes", d)
             mp = M.MinutesParams(**d)
-            if mp.version == "v1":
+            if mp.version == "v1" and (not plans or plans_tag(mp) == plans):
                 return mp
     if h is None or panel_tr is None:
         raise ValueError(f"no minutes params for {season} and no history to fit them")
     t0 = time.time()
+    kw = {"v1_kw": {"minfix": True}} if plans == PLANS_MF else {}
     mp = M.fit(h, season, window=WINDOW, log=say, panel=panel_tr,
-               shares=M.PairShares(M.pair_events(panel_tr)), version="v1")
+               shares=M.PairShares(M.pair_events(panel_tr)), version="v1", **kw)
     cache_dir().mkdir(parents=True, exist_ok=True)
-    (cache_dir() / f"minutes_params_{season}.json").write_text(mp.to_json())
-    say(f"minutes params {season} fitted in {time.time() - t0:.0f}s")
+    (cache_dir() / f"minutes_params_{season}{sfx}.json").write_text(mp.to_json())
+    say(f"minutes params {season}{sfx} fitted in {time.time() - t0:.0f}s")
     return mp
 
 
-def planned_season(conn: sqlite3.Connection, season: str, log=None) -> pd.DataFrame:
+def planned_season(conn: sqlite3.Connection, season: str, log=None, plans: str = ""
+                   ) -> pd.DataFrame:
     """Walk-forward planned minutes of every played, non-absent regular-season player-game of
     `season`: the season's minutes engine (params fit on seasons < X) on the avail-oracle panel,
     pair shares from the training window plus the season (lookups strictly before each date),
     as `pipeline.Context` / `copula.ScenarioMinutes` build them. Columns: game_id, team,
-    player_id, season, planned (E[min | plays], regulation, before the margin), p_play."""
+    player_id, season, planned (E[min | plays], regulation, before the margin), p_play.
+    plans "mf": the minutes-fix engine of the season (`minutes_params_for(plans="mf")`)."""
     say = log or (lambda m: None)
     t0 = time.time()
     h = M.load_history(conn, since=_minus(season, HISTORY_SEASONS))
     train = sorted(x for x in h.tg["season"].unique() if x < season)[-WINDOW:]
     panel_tr = M.oracle_panel(h, M.eval_targets(h, train))
-    mp = minutes_params_for(conn, season, h, panel_tr, log=say)
+    mp = minutes_params_for(conn, season, h, panel_tr, log=say, plans=plans)
     panel = M.oracle_panel(h, M.eval_targets(h, [season]))
     shares = M.PairShares(pd.concat([M.pair_events(panel_tr), M.pair_events(panel)],
                                     ignore_index=True))
@@ -150,22 +192,24 @@ def planned_season(conn: sqlite3.Connection, season: str, log=None) -> pd.DataFr
                         "season": season,
                         "planned": r.loc[ok, "mean0"].to_numpy(float),
                         "p_play": r.loc[ok, "p_play"].to_numpy(float)})
-    say(f"planned minutes {season}: {len(out)} rows ({time.time() - t0:.0f}s)")
+    say(f"planned minutes {season}{_sfx(plans)}: {len(out)} rows ({time.time() - t0:.0f}s)")
     return out
 
 
-def planned_rows(conn: sqlite3.Connection, seasons, log=None, compute: bool = True
-                 ) -> pd.DataFrame:
-    """`planned_season` for each season, cached as parquet (computed when missing)."""
+def planned_rows(conn: sqlite3.Connection, seasons, log=None, compute: bool = True,
+                 plans: str = "") -> pd.DataFrame:
+    """`planned_season` for each season, cached as parquet (computed when missing):
+    `planned_<X>.parquet` (OFF engine) / `planned_<X>_mf.parquet` (plans "mf")."""
+    sfx = _sfx(plans)
     parts = []
     for s in sorted(set(seasons)):
-        f = cache_dir() / f"planned_{s}.parquet"
+        f = cache_dir() / f"planned_{s}{sfx}.parquet"
         if f.exists():
             parts.append(pd.read_parquet(f))
             continue
         if not compute:
             raise FileNotFoundError(f)
-        d = planned_season(conn, s, log=log)
+        d = planned_season(conn, s, log=log, plans=plans)
         f.parent.mkdir(parents=True, exist_ok=True)
         d.to_parquet(f)
         parts.append(d)
@@ -277,11 +321,15 @@ def fit_table(rows: pd.DataFrame, stats=ST.STATS, plan_factor: bool | None = Non
     return out
 
 
-def table_matches(t: dict | None) -> bool:
+def table_matches(t: dict | None, plans: str = "") -> bool:
     """A cached table was fit with the current design: PLAN_FACTOR (tables without the field
-    count as g_p-fitted unless every `mult_p` entry is 1) and the P tiers (PL_EDGES; a table
-    without `edges_pl` is the pooled version-1 design)."""
+    count as g_p-fitted unless every `mult_p` entry is 1), the P tiers (PL_EDGES; a table
+    without `edges_pl` is the pooled version-1 design) and on the expected engine's plans
+    (`plans`, `plans_tag` of the arm's minutes params; a table without the key is the OFF
+    engine's)."""
     if not t:
+        return False
+    if t.get("plans", "") != plans:
         return False
     pf = t.get("plan_factor")
     if pf is None:
@@ -307,9 +355,10 @@ def training_frame(conn: sqlite3.Connection, season: str, sp: dict, planned: pd.
 
 
 def fit_state(conn: sqlite3.Connection, season: str, sp: dict, planned: pd.DataFrame,
-              log=None) -> dict:
+              log=None, plans: str = "") -> dict:
     """The arm's rate-state params for S: `sp` + `minutes_adj_mr` fit on the FIT_SEASONS seasons
-    < S, and the usage bump refit on the last 3 of them on top of the new table."""
+    < S, and the usage bump refit on the last 3 of them on top of the new table. `plans`: whose
+    plans `planned` holds (recorded in the table only when not the OFF engine's)."""
     say = log or (lambda m: None)
     t0 = time.time()
     wf = training_frame(conn, season, sp, planned)
@@ -318,10 +367,12 @@ def fit_state(conn: sqlite3.Connection, season: str, sp: dict, planned: pd.DataF
     sp2["minutes_adj_mr"] = fit_table(wf[have])
     sp2["minutes_adj_mr"]["fit_seasons"] = sorted(wf["season"].unique().tolist())
     sp2["minutes_adj_mr"]["plan_share"] = float(have.mean())
+    if plans:                      # absent key: the OFF engine's plans (the original table)
+        sp2["minutes_adj_mr"]["plans"] = _sfx(plans)[1:]
     last3 = sorted(wf["season"].unique())[-3:]
     sp2["usage_bump"] = ST.fit_usage_bump(conn, sp2, last3, wf=wf[wf["season"].isin(last3)])
     t = sp2["minutes_adj_mr"]
-    say(f"minutes-ratio table {season}: {t['n']} rows ({have.mean():.1%} with a plan), "
+    say(f"minutes-ratio table {season}{_sfx(plans)}: {t['n']} rows ({have.mean():.1%} with a plan), "
         f"pts f_u {np.round(t['mult_u']['pts'], 3).tolist()} g_p "
         f"{np.round(t['mult_p']['pts'], 3).tolist()} ({time.time() - t0:.0f}s)")
     for k, c in enumerate(t.get("centers_pl", [])):
@@ -369,15 +420,18 @@ def fit_bundle(conn: sqlite3.Connection, season: str, base, *, fit_context: Call
     """The arm's bundle from the arm's own bundle `base` (pipeline.Bundle, everything fit on
     seasons < S): new state (table + bump), copula v0 refit, context layer refit with re-keyed
     offsets (when `base` has one; `fit_context(sp, frame)` -> ContextModel). Minutes params and
-    copula v1 params are kept."""
+    copula v1 params are kept. Training plans come from the arm's own minutes engine
+    (`plans_tag(base.minutes)`: the +mf engine's for the minutes-fix arm, else the OFF engine's)."""
     from . import context as CX
     from . import copula as C
     from . import features as FX
     say = log or (lambda m: None)
     t0 = time.time()
     n_cx = int(base.context.meta.get("n_train_seasons", CX.LIVE_N_TRAIN)) if base.context else 0
-    planned = planned_rows(conn, plan_seasons(season, n_cx), log=say)
-    sp = fit_state(conn, season, base.state, planned, log=say)
+    plans = plans_tag(base.minutes)
+    say(f"minutes-ratio plans of {season}: {'the minutes-fix engine' if plans else 'OFF engine'}")
+    planned = planned_rows(conn, plan_seasons(season, n_cx), log=say, plans=plans)
+    sp = fit_state(conn, season, base.state, planned, log=say, plans=plans)
     cp = C.fit_copula(conn, season, sp, log=say, planned=planned)
     b = copy.copy(base)
     b.state, b.copula = sp, cp

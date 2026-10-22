@@ -50,6 +50,7 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   unplanned ones). Suffix on any arm: bundle `<arm's bundle>_mr.json` (the arm's bundle with the
   table, the usage bump, copula v0 and the context layer refit on seasons < S), version
   `<arm>+mr` (`pathA-v0.3+mr+p2`); seeds unchanged. OFF: nothing of it runs (bit-identical).
+  With MINFIX the table's training plans are the +mf engine's (`minutes_ratio.plans_tag`).
 * **Preseason minutes** (item #2, `minutes.V1_PRESEASON`), behind `PRESEASON` (default OFF; env
   ``COURTSIDE_PRESEASON=1``): the Context loads the preseason game logs (migration 15 tables; the
   current season's too, so the live path reads them) and the minutes LightGBM base adds the
@@ -778,13 +779,17 @@ def _load_bundle_mr(conn: sqlite3.Connection, season: str, ctx: Context | None, 
                     refit: bool, log) -> Bundle:
     """The minutes-ratio arm's bundle: the same arm's bundle with MINRATIO off (loaded or fitted
     the usual way), then `minutes_ratio.fit_bundle` (table + bump, copula v0, context layer with
-    re-keyed offsets; all on seasons < S), cached as `bundle_<S><arm>_mr[_c1].json`."""
+    re-keyed offsets; all on seasons < S), cached as `bundle_<S><arm>_mr[_c1].json`. The table's
+    training plans are the arm's own minutes engine's (`minutes_ratio.plans_tag`: the +mf
+    engine's with MINFIX, `bundle_<S><arm>_mf_mr.json`; else the OFF engine's), and a cached
+    bundle keyed on the other engine's plans (or with minutes of another arm) is refit."""
     from . import minutes_ratio as MR
     say = log or (lambda m: None)
     path = cache_dir() / f"bundle_{season}{_VS}.json"
     if path.exists() and not refit:
         b = Bundle.from_json(path.read_text())
-        if ST.has_mr(b.state) and MR.table_matches(b.state["minutes_adj_mr"]):
+        if (ST.has_mr(b.state) and bool(b.minutes.minfix) == MINFIX
+                and MR.table_matches(b.state["minutes_adj_mr"], MR.plans_tag(b.minutes))):
             return b
     set_minratio(False)
     try:
