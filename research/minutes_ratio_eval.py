@@ -21,9 +21,18 @@ top-6 gap; return rows (games 0-2, long absences, soft tissue).
 
     python research/minutes_ratio_eval.py pull         # rsync rows from the Mac scratch (mr/out)
     python research/minutes_ratio_eval.py run [--raw var/tmp/mr/raw] [--out var/tmp/mr/out]
+    python research/minutes_ratio_eval.py proxy S [S ..]   # table designs at realised minutes
+                                                           # (needs the DB and the bundles of S)
 
-The switch's design (g_p = 1) is the one reported in docs/PLAYERS.md (Mac `mr/out_b`, pulled to
-var/tmp/mr/raw_b with the shared OFF rows); `mr/out` holds the dropped g_p variant's ON rows.
+Designs: the switch runs design C, f_u by tier of the plan P (`minutes_ratio.PL_EDGES`; Mac
+`mr/out_c`, pulled to var/tmp/mr2/raw_c with the shared OFF rows). Design B (one pooled f_u,
+`mr/out_b` -> var/tmp/mr/raw_b) and the g_p variant (`mr/out`) were dropped (docs/PLAYERS.md).
+The report adds bench cuts (E[min | plays] < 15) by the realised m / P and by P / last-10.
+
+`proxy` fits each candidate table on the training rows of the 5 seasons < S (walk-forward state,
+plans attached) and scores season S's rows at their REALISED minutes (no sims): DK MAE, pts
+Poisson deviance and the calibration RMS over (P tier x m / P bin) cells, against the OFF
+f(m / mpg) table of S's bundle. This is how the P tiers were chosen.
 """
 
 from __future__ import annotations
@@ -225,6 +234,32 @@ def cuts(d: pd.DataFrame) -> dict[str, pd.Series]:
     return {"all": ok}
 
 
+BENCH_U_BINS = [-1, 0.001, 0.4, 0.7, 1.0, 1.3, 1.7, 99]
+BENCH_V_BINS = [0, 0.6, 0.8, 0.9, 1.1, 1.25, 1.5, 99]
+
+
+def bench_cuts(d: pd.DataFrame) -> dict:
+    """Bench rows (E[min | plays] < 15) by the realised m / E[min | plays] (0 = did not play) and
+    by E[min | plays] / last-10 minutes: n, mean shift ON - OFF, DK MAE and CRPS deltas, bias."""
+    b = d[d["tier4"] == "bench"]
+    out = {}
+    cuts_ = {"m/P": pd.cut(b["minutes"] / b["min_c"], BENCH_U_BINS)}
+    if "pre_min" in b:
+        cuts_["P/last10"] = pd.cut(b["min_c"] / b["pre_min"].where(b["pre_min"] >= 1),
+                                   BENCH_V_BINS)
+    for name, c in cuts_.items():
+        for k, q in b.groupby(c, observed=True):
+            y = q["y"].to_numpy(float)
+            out[f"{name} {k}"] = {
+                "n": int(len(q)),
+                "dmean": float((q["mean_on"] - q["mean_off"]).mean()),
+                "dmae": float((np.abs(y - q["mean_on"]) - np.abs(y - q["mean_off"])).mean()),
+                "dcrps": float((q["crps_on"] - q["crps_off"]).mean()),
+                "bias_off": float((q["mean_off"] - y).mean()),
+                "bias_on": float((q["mean_on"] - y).mean())}
+    return out
+
+
 def report(pairs: dict, so: pd.DataFrame | None) -> tuple[str, dict]:
     md, js = [], {}
     for name, (off, on) in pairs.items():
@@ -238,6 +273,7 @@ def report(pairs: dict, so: pd.DataFrame | None) -> tuple[str, dict]:
             mq = metrics(q) if len(q) > 1 else None
             r["cuts"][k] = ({"n": int(len(q)), "mae": mq["mae"], "crps": mq["crps"],
                              "played_bias": played_bias(q)} if mq else {"n": int(len(q))})
+        r["bench_cuts"] = bench_cuts(d)
         if "pre_min" in d:
             ratio = d["min_c"] / d["pre_min"].where(d["pre_min"] >= 5)
             rb = pd.cut(ratio, RATIO_BINS)
@@ -291,6 +327,12 @@ def fmt(name: str, r: dict) -> str:
         for b, v in r["per_minute"].items():
             o, n_ = v["off"], v["on"]
             L.append(f"| {b} | {v['n']} | {o[0]:+.1%} ({o[1]:.1%}) | {n_[0]:+.1%} ({n_[1]:.1%}) |")
+    if r.get("bench_cuts"):
+        L += ["\n| bench rows | n | mean Δ | DK MAE Δ | CRPS Δ | bias OFF → ON |",
+              "|---|---|---|---|---|---|"]
+        for k, v in r["bench_cuts"].items():
+            L.append(f"| {k} | {v['n']} | {v['dmean']:+.3f} | {v['dmae']:+.4f} | "
+                     f"{v['dcrps']:+.4f} | {v['bias_off']:+.2f} → {v['bias_on']:+.2f} |")
     so = r.get("star_out")
     if so:
         a_, b_ = so["star_out"], so["no_star_out"]
@@ -312,6 +354,55 @@ def run(out: Path, raw: Path = WORK / "raw") -> None:
     print(md)
 
 
+PROXY_DESIGNS = {"pooled (B)": (), "P tiers 15": (15.0,), "P tiers 12/18": (12.0, 18.0),
+                 "P tiers 10..30": (10.0, 15.0, 20.0, 25.0, 30.0),
+                 "P tiers 12..30 (C)": (12.0, 18.0, 24.0, 30.0)}
+
+
+def proxy(seasons) -> None:
+    """Table designs at realised minutes (module doc): fit on the 5 seasons < S, score S."""
+    from courtside import config, db
+    from courtside.proj import minutes_ratio as MR
+    from courtside.proj import state as ST
+    conn = db.connect()
+    W = ST.DK_WEIGHTS
+    for S in seasons:
+        off = json.loads((config.data_dir() / "proj" / f"bundle_{S}_v1_cx.json").read_text())
+        off = off["state"]
+        fit = [MR._minus(S, k) for k in range(MR.FIT_SEASONS, 0, -1)]
+        pl = MR.planned_rows(conn, fit + [S], compute=False)
+        d = MR.training_frame(conn, S, off, pl, seasons=fit + [S])
+        d = d[np.isfinite(d["planned"]) & (d["min"] > 0)].reset_index(drop=True)
+        tr, te = d[d["season"] < S], d[d["season"] == S].reset_index(drop=True)
+        m, mpg, P = (te[c].to_numpy(float) for c in ("min", "mpg", "planned"))
+        y = sum(W[s] * te[s].to_numpy(float) for s in W)
+        ypts = te["pts"].to_numpy(float)
+        tier = pd.cut(te["planned"], [0, 10, 15, 24, 30, 99]).astype(str)
+        ub = pd.cut(m / np.maximum(P, 1), [0, 0.4, 0.7, 0.85, 1.0, 1.15, 1.4, 99]).astype(str)
+        sps = {"OFF f(m/mpg)": None}
+        sps.update({k: dict(off, minutes_adj_mr=MR.fit_table(tr, pl_edges=e))
+                    for k, e in PROXY_DESIGNS.items()})
+        rows = {}
+        for name, sp in sps.items():
+            def mult(s):
+                return (ST.minutes_multiplier(off, s, m, mpg) if sp is None
+                        else ST.minutes_multiplier(sp, s, m, mpg, planned=P))
+            p = sum(W[s] * te[f"r_{s}"].to_numpy(float) * m * mult(s) for s in W)
+            pp = te["r_pts"].to_numpy(float) * m * mult("pts")
+            dev = 2 * (np.where(ypts > 0, ypts * np.log(np.maximum(ypts, 1e-9) / pp), 0)
+                       - (ypts - pp))
+            g = pd.DataFrame({"y": y, "p": p, "t": tier, "u": ub, "ae": np.abs(y - p)})
+            cal = g.groupby(["t", "u"]).agg(y=("y", "sum"), p=("p", "sum"), n=("y", "size"))
+            r = {"DK MAE": g["ae"].mean(), "pts deviance": dev.mean(),
+                 "cal RMS": float(np.sqrt(np.average((cal["y"] / cal["p"] - 1) ** 2,
+                                                     weights=cal["n"])))}
+            for t_, q in g.groupby("t"):
+                r[f"MAE P {t_}"] = q["ae"].mean()
+                r[f"err P {t_}"] = q["y"].sum() / q["p"].sum() - 1
+            rows[name] = r
+        print(f"\n## {S} (test rows {len(te)})\n" + pd.DataFrame(rows).round(4).to_string())
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -321,9 +412,13 @@ def main(argv=None) -> None:
     r.add_argument("--raw", default=str(WORK / "raw"),
                    help="rows dir (OFF rows + one design's ON rows; the g_p variant's ON rows "
                         "were kept in a separate dir)")
+    px = sub.add_parser("proxy")
+    px.add_argument("seasons", nargs="+")
     a = ap.parse_args(argv)
     if a.cmd == "pull":
         pull()
+    elif a.cmd == "proxy":
+        proxy(a.seasons)
     else:
         run(Path(a.out), Path(a.raw))
 

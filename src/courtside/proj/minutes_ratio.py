@@ -30,6 +30,18 @@ Both are binned ratio-of-sums tables fit on the regular-season rows of the FIT_S
 centres (as `minutes_adj`); g_p is normalised to 1 at P = mpg. Rows without a plan (call-ups
 outside the engine's candidates) fall back to P = mpg.
 
+Design C (research option, `PL_EDGES = PL_TIERS_C`; the switch runs design B, PL_EDGES = ()):
+f_u per tier of P (table version 2, tiers 12 / 18 / 24 / 30 minutes; each (tier, m/P bin) cell
+shrunk to the pooled f_u with SHRINK_ROWS pseudo-rows), read linearly in P between the tiers'
+mean plans. The pooled f_u is dominated by starters' rows, whose short nights are early exits;
+a bench plan's short nights are spot and garbage-time minutes, so its f_u is flatter below
+m / P ~ 0.6 and lower around 0.8..1.0, and star plans' are flatter too. Out of sample at realised
+minutes C cuts the calibration error over (P tier x m/P) cells by a quarter to a third
+(`research/minutes_ratio_eval.py proxy`) and the harness CRPS gain grows, but its steeper
+mid-P curves widen the rotation / bench intervals, which the sims' minutes already make too wide:
+the rotation tier is worse on the live slice (+1.6 / +2.3 SE CRPS) and the bench tier stays worse
+in 2019-20, so it was not adopted (docs/PLAYERS.md, minutes-ratio results).
+
 The arm's bundle (`bundle_<S><arm>_mr.json`, `fit_bundle`) is the arm's bundle with, all fit on
 seasons < S:
 1. state: + `minutes_adj_mr`; the usage bump refit on top of it (it is a ratio of sums given the
@@ -61,10 +73,13 @@ from .. import config
 from . import minutes as M
 from . import state as ST
 
-TABLE_VERSION = 1
+TABLE_VERSION = 2                  # 2: f_u by tier of the plan P (PL_EDGES); 1: one pooled f_u
 FIT_SEASONS = 5                    # the minutes engine's window
 U_EDGES = ST.RATIO_EDGES           # m / P
 P_EDGES = (0.6, 0.75, 0.85, 0.95, 1.05, 1.15, 1.3, 1.5)   # P / mpg
+PL_TIERS_C = (12.0, 18.0, 24.0, 30.0)  # design C: f_u by tier of P (minutes); research option
+PL_EDGES: tuple = ()               # the switch's design: () = one pooled f_u (design B, version 1)
+SHRINK_ROWS = 300                  # a tier's bin is shrunk to the pooled f_u with this many rows
 ITERS = 4
 MIN_BIN = 300
 PLAN_FACTOR = False                # True: also fit g_p(P / mpg) (research variant; see the docstring)
@@ -189,11 +204,39 @@ def _ratio_bins(y: np.ndarray, pred: np.ndarray, b: np.ndarray, k: int) -> np.nd
     return np.interp(np.arange(k), idx, out[idx])        # empty bins: the nearest neighbours
 
 
-def fit_table(rows: pd.DataFrame, stats=ST.STATS, plan_factor: bool | None = None) -> dict:
+def _tier_bins(y: np.ndarray, pred: np.ndarray, bu: np.ndarray, bt: np.ndarray, fu: np.ndarray,
+               n_tiers: int) -> np.ndarray:
+    """(n_tiers, len(fu)) ratio of sums per (tier of P, bin of m / P), each cell shrunk to the
+    pooled bin `fu` with SHRINK_ROWS pseudo-rows of the cell's own mean prediction:
+    f = (sum y + lam f_pool) / (sum pred + lam), lam = SHRINK_ROWS x sum pred / n. Empty cells
+    are the pooled value."""
+    out = np.tile(np.asarray(fu, float), (n_tiers, 1))
+    for t in range(n_tiers):
+        for j in range(len(fu)):
+            c = (bt == t) & (bu == j)
+            n = int(c.sum())
+            p = float(pred[c].sum())
+            if n == 0 or p <= 0:
+                continue
+            lam = SHRINK_ROWS * p / n
+            out[t, j] = float(np.clip((y[c].sum() + lam * fu[j]) / (p + lam), *CLIP))
+    return out
+
+
+def fit_table(rows: pd.DataFrame, stats=ST.STATS, plan_factor: bool | None = None,
+              pl_edges=None) -> dict:
     """The planned-minutes table from training rows (min > 0, a plan, the pre-game state and the
     actual stats): ratio-of-sums per bin of u = m / P; with `plan_factor` (default PLAN_FACTOR)
-    also per bin of v = P / mpg, backfitted. Without it `mult_p` is all ones."""
+    also per bin of v = P / mpg, backfitted. Without it `mult_p` is all ones.
+
+    Tiers (`pl_edges`, default PL_EDGES; () = one pooled f_u, the version-1 table): f_u is also
+    fit per tier of P (minutes) - `mult_up[stat][tier]` on the tier's own bin centres
+    `centers_up[tier]`, each cell shrunk to the pooled f_u (`_tier_bins`), read linearly in P
+    between the tiers' mean plans `centers_pl` (`state.minutes_multiplier_mr`). A bench plan's
+    short nights are mostly spot / garbage-time minutes, a starter's are early exits (fouls,
+    injuries): the pooled f_u, dominated by starters' rows, is too steep for a bench plan."""
     plan_factor = PLAN_FACTOR if plan_factor is None else bool(plan_factor)
+    pl_edges = tuple(PL_EDGES if pl_edges is None else pl_edges)
     rows = rows[np.isfinite(rows["planned"].to_numpy(float))
                 & (rows["planned"].to_numpy(float) > 0) & (rows["min"].to_numpy(float) > 0)]
     m = rows["min"].to_numpy(float)
@@ -202,11 +245,21 @@ def fit_table(rows: pd.DataFrame, stats=ST.STATS, plan_factor: bool | None = Non
     u, v = m / pl, pl / mpg
     bu, cu = _centers(u, U_EDGES)
     bv, cv = _centers(v, P_EDGES)
-    out = {"version": TABLE_VERSION, "edges_u": list(U_EDGES), "edges_p": list(P_EDGES),
+    out = {"version": TABLE_VERSION if pl_edges else 1, "edges_u": list(U_EDGES),
+           "edges_p": list(P_EDGES),
            "centers_u": [float(c) for c in cu], "centers_p": [float(c) for c in cv],
            "mult_u": {}, "mult_p": {}, "n": int(len(rows)), "plan_factor": plan_factor,
            "n_u": [int((bu == k).sum()) for k in range(len(cu))],
            "n_p": [int((bv == k).sum()) for k in range(len(cv))]}
+    if pl_edges:
+        bt, cpl = _centers(pl, pl_edges)
+        nt = len(cpl)
+        cup = [[float(u[(bt == t) & (bu == j)].mean()) if np.any((bt == t) & (bu == j))
+                else float(cu[j]) for j in range(len(cu))] for t in range(nt)]
+        out.update({"edges_pl": list(pl_edges), "centers_pl": [float(c) for c in cpl],
+                    "centers_up": cup, "mult_up": {}, "shrink_rows": SHRINK_ROWS,
+                    "n_up": [[int(((bt == t) & (bu == j)).sum()) for j in range(len(cu))]
+                             for t in range(nt)]})
     for s in stats:
         y = rows[s].to_numpy(float)
         base = rows[f"r_{s}"].to_numpy(float) * m
@@ -218,18 +271,24 @@ def fit_table(rows: pd.DataFrame, stats=ST.STATS, plan_factor: bool | None = Non
         g1 = float(np.interp(1.0, cv, gp))
         out["mult_u"][s] = [float(x) for x in fu * g1]
         out["mult_p"][s] = [float(x) for x in gp / g1]
+        if pl_edges:
+            ft = _tier_bins(y, base * np.interp(v, cv, gp), bu, bt, fu, nt)
+            out["mult_up"][s] = [[float(x) for x in r * g1] for r in ft]
     return out
 
 
 def table_matches(t: dict | None) -> bool:
-    """A cached table was fit with the current design (PLAN_FACTOR); tables without the field
-    count as g_p-fitted unless every `mult_p` entry is 1."""
+    """A cached table was fit with the current design: PLAN_FACTOR (tables without the field
+    count as g_p-fitted unless every `mult_p` entry is 1) and the P tiers (PL_EDGES; a table
+    without `edges_pl` is the pooled version-1 design)."""
     if not t:
         return False
     pf = t.get("plan_factor")
     if pf is None:
         pf = any(abs(x - 1.0) > 1e-12 for v in t.get("mult_p", {}).values() for x in v)
-    return bool(pf) == PLAN_FACTOR
+    tiers = tuple(float(x) for x in t.get("edges_pl", ()))
+    return (bool(pf) == PLAN_FACTOR and tiers == tuple(float(x) for x in PL_EDGES)
+            and float(t.get("shrink_rows", SHRINK_ROWS)) == float(SHRINK_ROWS))
 
 
 def training_frame(conn: sqlite3.Connection, season: str, sp: dict, planned: pd.DataFrame,
@@ -265,6 +324,8 @@ def fit_state(conn: sqlite3.Connection, season: str, sp: dict, planned: pd.DataF
     say(f"minutes-ratio table {season}: {t['n']} rows ({have.mean():.1%} with a plan), "
         f"pts f_u {np.round(t['mult_u']['pts'], 3).tolist()} g_p "
         f"{np.round(t['mult_p']['pts'], 3).tolist()} ({time.time() - t0:.0f}s)")
+    for k, c in enumerate(t.get("centers_pl", [])):
+        say(f"  tier P ~ {c:.1f}: pts f_u {np.round(t['mult_up']['pts'][k], 3).tolist()}")
     return sp2
 
 

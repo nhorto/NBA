@@ -159,12 +159,13 @@ def test_fit_table_separates_planned_from_unplanned():
 
 
 def test_default_design_is_plain_rekey():
-    """The switch runs g_p = 1: `mult_p` all ones, f_u = ratio of sums by m / P alone, and the
-    cached-bundle guard tells the two designs apart."""
-    assert MR.PLAN_FACTOR is False
+    """The switch runs design B: g_p = 1 (`mult_p` all ones), one pooled f_u = ratio of sums by
+    m / P alone (no P tiers, version 1), and the cached-bundle guard tells the designs apart."""
+    assert MR.PLAN_FACTOR is False and MR.PL_EDGES == ()
     rows, _ = _synthetic_rows(n=40_000, seed=5)
     t = MR.fit_table(rows, stats=("pts",))
     assert t["plan_factor"] is False
+    assert t["version"] == 1 and "mult_up" not in t and "edges_pl" not in t    # design B
     assert all(x == 1.0 for x in t["mult_p"]["pts"])
     u = rows["min"].to_numpy() / np.maximum(rows["planned"].to_numpy(), 1.0)
     b = np.searchsorted(MR.U_EDGES, u, side="right")
@@ -177,6 +178,86 @@ def test_default_design_is_plain_rekey():
     legacy = {k_: v for k_, v in t.items() if k_ != "plan_factor"}          # no field: inferred
     assert MR.table_matches(legacy)
     assert not MR.table_matches(None)
+
+
+def _tiered_rows(n=160_000, seed=11):
+    """Per-minute production by m / P whose steepness depends on the plan: bench plans (P < 12)
+    lose little on short nights (spot minutes), rotation and starter plans a lot (early exits)."""
+    rng = np.random.default_rng(seed)
+    planned = rng.uniform(4, 38, n)
+    u = np.exp(rng.normal(0, 0.3, n))
+    u = np.where(rng.random(n) < 0.1, u * rng.uniform(0.3, 0.8, n), u)
+    m = np.clip(planned * u, 0.5, 52)
+    uu = m / planned
+    flat = np.interp(uu, [0.3, 1.0, 1.6], [0.92, 1.0, 1.03])
+    steep = np.interp(uu, [0.3, 1.0, 1.6], [0.65, 1.0, 1.10])
+    truth = np.where(planned < 12, flat, steep)
+    r = rng.uniform(0.3, 0.8, n)
+    rows = pd.DataFrame({"min": m, "planned": planned, "mpg": planned * np.exp(
+        rng.normal(0, 0.15, n)), "r_pts": r, "pts": rng.poisson(r * m * truth)})
+    return rows, truth
+
+
+def test_tiered_table_by_plan():
+    """Design C (research option), version 2: f_u per tier of P (PL_TIERS_C), shrunk to the
+    pooled f_u, read linearly in P between tier centres; recovers a flatter bench curve the
+    pooled table cannot."""
+    assert MR.TABLE_VERSION == 2
+    rows, truth = _tiered_rows()
+    t = MR.fit_table(rows, stats=("pts",), pl_edges=MR.PL_TIERS_C)
+    assert t["version"] == 2 and t["edges_pl"] == list(MR.PL_TIERS_C)
+    nt = len(MR.PL_TIERS_C) + 1
+    assert len(t["centers_pl"]) == nt and len(t["mult_up"]["pts"]) == nt
+    assert len(t["centers_up"][0]) == len(t["centers_u"])
+    sp = ST.default_params()
+    sp["minutes_adj_mr"] = t
+    m, P, mpg = rows["min"].to_numpy(), rows["planned"].to_numpy(), rows["mpg"].to_numpy()
+    f = ST.minutes_multiplier(sp, "pts", m, mpg, planned=P)
+    pooled = dict(sp, minutes_adj_mr={k: v for k, v in t.items() if k != "mult_up"})
+    f0 = ST.minutes_multiplier(pooled, "pts", m, mpg, planned=P)
+    bench = (P < 8) & (m / P < 0.6)                # short nights on a bench plan (tier 0 only)
+    starter = (P > 26) & (m / P < 0.6)
+    y = rows["pts"].to_numpy()
+    base = (rows["r_pts"] * rows["min"]).to_numpy()
+    for q in (bench, starter):
+        real = y[q].sum() / base[q].sum()
+        tiered = float(np.average(f[q], weights=base[q]))
+        assert abs(tiered - real) < 0.03
+        assert abs(tiered - real) < abs(float(np.average(f0[q], weights=base[q])) - real)
+    # continuous in P (linear between the tier centres), one value per tier at its centre
+    pg = np.linspace(2, 45, 400)
+    g = ST.minutes_multiplier(sp, "pts", 0.5 * pg, pg, planned=pg)
+    assert np.abs(np.diff(g)).max() < 0.01
+    c0 = t["centers_pl"][0]
+    want = np.interp(0.5, t["centers_up"][0], t["mult_up"]["pts"][0])
+    assert ST.minutes_multiplier(sp, "pts", [0.5 * c0], [c0], planned=[c0])[0] == \
+        pytest.approx(want)
+    # every tier equal to the pooled f_u (same centres) -> exactly the pooled multiplier
+    flat_t = dict(t, centers_up=[t["centers_u"]] * nt, mult_up={"pts": [t["mult_u"]["pts"]] * nt})
+    assert np.allclose(ST.minutes_multiplier(dict(sp, minutes_adj_mr=flat_t), "pts", m, mpg,
+                                             planned=P), f0)
+
+
+def test_tiered_shrinkage_and_guard(monkeypatch):
+    """Sparse cells sit near the pooled value; no tiers = the version-1 table; a cached table
+    of another design (pooled, other tiers) is refit."""
+    rows, _ = _tiered_rows(n=30_000, seed=2)
+    t = MR.fit_table(rows, stats=("pts",), pl_edges=MR.PL_TIERS_C)
+    n_up = np.asarray(t["n_up"])
+    fu = np.asarray(t["mult_u"]["pts"])
+    ft = np.asarray(t["mult_up"]["pts"])
+    assert n_up.sum() == t["n"]
+    few = n_up < 30
+    if few.any():
+        assert np.abs(ft - fu[None, :])[few].max() < 0.05
+    t1 = MR.fit_table(rows, stats=("pts",), pl_edges=())
+    assert t1["version"] == 1 and "mult_up" not in t1
+    assert t1["mult_u"] == t["mult_u"]                        # the pooled f_u is the same fit
+    assert MR.table_matches(t1) and not MR.table_matches(t)  # the switch runs design B
+    monkeypatch.setattr(MR, "PL_EDGES", MR.PL_TIERS_C)
+    assert MR.table_matches(t) and not MR.table_matches(t1)
+    assert not MR.table_matches(MR.fit_table(rows, stats=("pts",), pl_edges=(15.0,)))
+    assert MR.fit_table(rows, stats=("pts",))["edges_pl"] == list(MR.PL_TIERS_C)
 
 
 # ------------------------------------------------------------------------- sims

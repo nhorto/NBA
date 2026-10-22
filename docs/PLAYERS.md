@@ -97,7 +97,8 @@ No review item is rejected outright. Three are accepted with a different option 
 | **Path A copula v1 (T2.10) behind a switch, default OFF, not shipped as the DFS default (2026-10-20).** `copula.simulate_game_v1` draws the box components (pts, fg3m, reb, ast, stl, blk, tov) per player and sim: NB2 count marginals given the sim's minutes and environment, with the dispersion fit by level per stat on seasons < S (the v1 CV-by-level fit); a 7 x 7 within-player latent correlation per role tier, fit by simulated moments (pts–fg3m 0.57–0.70); across players the T2.7 causal PM tier x position matrices (`corr_<S>.json`) on each player's latent DK direction; a winner/loser per-minute shift by signed margin and tier (losers' tov up to +17 %, big winners' fg3m / ast +8…20 %; points only move between tiers, so the market total still holds); DK scored exactly from the counts (real DD/TD jumps). Same environment, reconciliation, availability and minutes draws as v0 (common random numbers). Per-stat sims stored as `<run>.stats.npz` (uint8, first 5,000 sims, 7.2 MB per 15-game run); `props.py` reads them, with the NB-given-minutes approximation as the fallback. Switch: `COURTSIDE_COPULA=v1` (or `pipeline.COPULA_DEFAULT`), versions compose as suffixes: `pathA-v0.2+c1` / `v0.3+c1` / `v0.4+c1`, bundle `<arm>_c1.json`. | On top of `pathA-v0.4` (T2.1 harness rows, 2023-24 / 2024-25, paired, date-clustered SE): DK CRPS (exp min ≥ 10) −0.0003 (−0.3 SE) / −0.0011 (−0.9 SE), all rows +1.0 / +0.1 SE, MAE +0.4 / +0.1 SE. 80 % coverage 0.820 → 0.825 / 0.824 → 0.829 (+0.4…0.5 pp, ~7 SE: slightly wider), PIT max deviation 0.007 → 0.008 / 0.011 → 0.012. Per-stat sims calibrated: points PIT max deviation 0.020 vs 0.031–0.033 for the props approximation; reb / ast / 3PM ≤ 0.006 both ways. Blowout curve: stars miss ±1.0 DK in both arms (minutes-driven; v1 fixes the losing side of the signed curve, overshoots big winners). Runtime 15 games x 25k sims on geekom1: 11.7 s warm / 19.0 s cold (v0 5.7 / 11.5). Every arm with the switch off is bit-identical to HEAD (c402c4a). **Ship bar not met** (2024-25 CRPS −0.9 SE, coverage and PIT a little worse); results block under the Phase 2 table |
 | **T2.4 live-like slice (2026-10-21):** each game is run at its own tip − 45 on the live candidate path, with the report of the time, P(play) cells fit leaving the month out, and closing lines (no 2025-26 snapshots). The monitor's thresholds come from the slice: `mlops/live_like_baseline.json` (live-like minutes MAE 4.457, nightly p10–p90 ranges, new info rule `dfs:live_range:<metric>`). Found: listed players' DNP is counted twice (report cell × minutes-engine P(plays∣available)) | live − avail on 104 dates: minutes MAE +0.054 (0.016), DK MAE +0.216 (0.048), CRPS +0.147 (0.032); lock−10 recovers nearly all (+0.04 DK MAE). Listed Q/P/Available: P(play) 0.69 vs 0.79 played, DK bias −1.33 (0.39). Opener inside every band. Results block under Phase 2 |
 | **P(play) v2 (p2, 2026-10-21) behind `COURTSIDE_PPLAY=v2`, default OFF.** Fixes the two T2.4 findings on the live candidate paths only: (1) a listed, not-Out player's P(plays ∣ available) is 1, so his total P(play) is the report cell (the cell is fit on *played*, so it already holds the coach's-decision DNPs); (2) a forced DK-pool player outside the team's last 10 games and not on the report gets an honest fringe P(play) (logistic: mid-season fit on the slice's fringe rows; the season's first 5 team games fit on the RotoGuru DK pools 2017-21 with the DK Classic salary, reweighted to the not-listed population, and players priced ≥ $4.5k keep the engine there; DK starter flag 0.99) instead of being scored as an active roster player. Version suffix `+p2` on any arm (`pathA-v0.3+p2`); bundle and seeds unchanged. With the switch off every arm is bit-identical, and the avail oracle is identical with it on | Slice, v0.3+p2 − v0.3, paired on a fixed population: lock−45 DK MAE −0.069 (0.020), CRPS −0.061 (0.017), unconditional minutes MAE −0.071 (0.019); lock−10 −0.080 (0.020) / −0.067 (0.017); bench tier −0.19…−0.22, stars ±0.01. Listed P(play) 0.62 → 0.71 vs 0.71 played (DK bias −1.46 → −0.31); fringe 0.66 → 0.25 vs 0.25 played (Brier 0.36 → 0.17). Opener: Gray 0.83 → 0.12 (DNP), priced rotation movers unchanged (≥ $4.5k keep the engine at season start), Top-10 actual +5.2 / +4.0 on the two Classic slates. Results block under Phase 2 |
-| **Minutes ratio (mr, 2026-10-21) behind `COURTSIDE_MINRATIO=1`, default OFF.** The per-minute minutes table is re-keyed from realised m / mpg to the unplanned deviation m / P (P = the minutes engine's E[min ∣ plays] of each sim's availability scenario; in training the same engine walk-forward), so planned changes (injury ramps, promotions when a star sits) no longer get the per-minute penalty or boost of unplanned ones (early exits, blowouts). The ON bundle `<arm>_mr.json` refits the table, the usage bump, copula v0 and the context layer (offset E_s re-keyed) on seasons < S. Version `<arm>+mr`; seeds unchanged; with the switch off everything is bit-identical (2024-01-10, opener slate 154575, p2 identity hashes). A second factor g_p(P / mpg) was tested and dropped (weaker; star tier +1.3 SE) | T2.1 avail, paired, date-clustered: DK CRPS −0.0037 (−2.8 SE) / −0.0031 (−2.0 SE) in 2023-24 / 2024-25, DK MAE −0.004 (≈ −1.8 SE); live / live10 + p2 CRPS −0.6 / +0.6 SE. Worst tier CRPS: bench +0.9 SE, but bench DK MAE is +0.013…+0.020 (2.6 SE in 2024-25). Per-minute error at > 1.4× recent: −4.3…−4.7 % → −2.8…−3.1 %. Promoted bias −0.75 → −0.5; game-0 returners +1.6 → +1.1. Star-out gap unchanged. Long-absence returners' minutes over-projection is unmasked on live (−0.95 → −1.24, noise-level). RotoGuru 2019-20 / 2020-21: CRPS −3.3 / −4.9 SE, but bench CRPS +2.9 SE in 2019-20 and no lineup gain (cash −1.0 / −1.4 ± 1.6). The bar is met narrowly (2024-25 at 2.0 SE) and the bench tier is a consistent cost; **not shipped**. Results block under Phase 2 |
+| **Minutes ratio (mr, 2026-10-21) behind `COURTSIDE_MINRATIO=1`, default OFF.** The per-minute minutes table is re-keyed from realised m / mpg to the unplanned deviation m / P (P = the minutes engine's E[min ∣ plays] of each sim's availability scenario; in training the same engine walk-forward), so planned changes (injury ramps, promotions when a star sits) no longer get the per-minute penalty or boost of unplanned ones (early exits, blowouts). The ON bundle `<arm>_mr.json` refits the table, the usage bump, copula v0 and the context layer (offset E_s re-keyed) on seasons < S. Version `<arm>+mr`; seeds unchanged; with the switch off everything is bit-identical (2024-01-10, opener slate 154575, p2 identity hashes). A second factor g_p(P / mpg) was tested and dropped (weaker; star tier +1.3 SE) | Design B (the switch's), T2.1 avail, paired, date-clustered: DK CRPS −0.0037 (−2.8 SE) / −0.0031 (−2.0 SE) in 2023-24 / 2024-25, DK MAE −0.004; live / live10 + p2 CRPS −0.6 / +0.6 SE; RotoGuru 2019-20 / 2020-21 CRPS −3.3 / −4.9 SE. Per-minute error at > 1.4× recent: −4.3…−4.7 % → −2.8…−3.1 %; promoted bias −0.75 → −0.5; game-0 returners +1.6 → +1.1; star-out gap unchanged. Cost: the bench tier (E[min ∣ plays] < 15) is worse in all six sets (DK MAE +0.010…+0.035; CRPS +2.9 SE in 2019-20). **Bench follow-up:** not small-P instability or the context refit. The pooled f_u is too steep for bench plans (refit by P they are flatter at short minutes, lower at m / P 0.8–1.0), and the re-key unmasks the minutes engine's over-projection of planned-demoted bench players (P(play) +0.04…+0.06, E[min] +0.4…+0.8). Design C (f_u by P tier, `PL_TIERS_C`) is the better table at realised minutes and in aggregate: CRPS −3.7 / −2.4 SE, RotoGuru −4.7 / −5.9, live −0.4 / +0.7, bench DK MAE 10–30 % smaller. But bench is still +2.7 SE (2019-20) / +1.03 SE (2024-25), and its steeper mid-P curve widens rotation intervals: rotation +1.6 / +2.3 SE on the live slice. Cash lineups −2.2 / −2.5 (± 1.5 / 1.3). **Bar not met by either design; not shipped.** The switch keeps B, and C is a research option. Next: the minutes side for short-plan players. Results block under Phase 2 |
+| **Preseason minutes + season-start debut reserve (pre, 2026-10-21) behind `COURTSIDE_PRESEASON=1`, default OFF.** The minutes LightGBM gets 9 preseason columns from the migration 15 logs (the row team's preseason only, strictly before the date: games, mpg, last-2-games mpg, share of team minutes, rank, vs prior-season mpg and vs teammates, did-not-play flag; NaN from team game 20 on). Scrimmages are dropped; games against international clubs are kept. Walk-forward finding: the minutes of players outside the candidate set are ~29 per team at game 0 (13 debutants + 16 non-regular arrivals in the oracle) against a season-average fitted reserve of ~3, and ~1–3 later. After game 0, prior-season minutes are not mis-weighted (roster rows' bias is +0.04…+0.10). So the reserve is split: debutants by team games into the season × the camp's new players' preseason minutes (winsorised at the training p95), and the rest. Version `<arm>+pre`, bundle `<arm>_pre.json`; OFF is bit-identical | T2.1 avail ON − OFF, first 15 team games: minutes MAE −0.027 (−1.4 SE) / −0.032 (−2.8 SE) / −0.020 (−0.9 SE) and DK CRPS −1.4 / −3.5 / −0.9 SE in 2023-24 / 2024-25 / 2025-26. Full season ±0. Star tier full-season CRPS +1.4 SE (2023-24) and +2.6 SE (2025-26). Opener 2026-27: the debut reserve takes 18–30 team minutes from BOS / OKC / PHI / SAS, but debutants played 0–13. **Bar not met; not shipped.** Results block under Phase 2 |
 
 ## 1. Scope and design in one paragraph
 
@@ -830,21 +831,22 @@ Tonight 2026-10-21 (preview at each slate's lock−45 with the 10:00 capture and
 - Listed, not Out (23): P 0.35 → 0.56 = the cells (0.56).
 - Team minute sums unchanged (220–240 off and p2, max move 0.2); top-20 projections move −0.9 … +2.9 DK.
 
-**Minutes-ratio results (mr, 2026-10-21; switch default OFF, not shipped).** Switch `COURTSIDE_MINRATIO=1` (`pipeline.MINRATIO`, `MINRATIO_DEFAULT = False`; `set_minratio()`). It is a suffix on any arm: bundle `<arm's bundle>_mr.json` (before a `_c1`), version `<arm>+mr` (`pathA-v0.3+mr+p2`), seeds unchanged (common random numbers with the arm's OFF runs). Code: `proj/minutes_ratio.py`, `state.minutes_multiplier(..., planned=)` / `minutes_multiplier_mr`, `copula._team_minutes(plan_out=)` / `_PlanGrids` (v0 and v1 sims), `copula.fit_copula(planned=)`, `state.fit_usage_bump` (reads a `planned` column), `pipeline._load_bundle_mr`, `features.store._key` (adds the table's hash only when present). Research: `research/minutes_ratio_eval.py` (paired tables); Mac scratch `courtside-compute/mr` on a copy of the prod DB.
+**Minutes-ratio results (mr, 2026-10-21; switch default OFF, not shipped; bench follow-up the same evening: design C tested, not adopted).** Switch `COURTSIDE_MINRATIO=1` (`pipeline.MINRATIO`, `MINRATIO_DEFAULT = False`; `set_minratio()`). It is a suffix on any arm: bundle `<arm's bundle>_mr.json` (before a `_c1`), version `<arm>+mr` (`pathA-v0.3+mr+p2`), seeds unchanged (common random numbers with the arm's OFF runs). Code: `proj/minutes_ratio.py`, `state.minutes_multiplier(..., planned=)` / `minutes_multiplier_mr`, `copula._team_minutes(plan_out=)` / `_PlanGrids` (v0 and v1 sims), `copula.fit_copula(planned=)`, `state.fit_usage_bump` (reads a `planned` column), `pipeline._load_bundle_mr`, `features.store._key` (adds the table's hash only when present). Research: `research/minutes_ratio_eval.py` (`run`: paired tables with bench cuts; `proxy`: table designs at realised minutes); Mac scratch `courtside-compute/mr` on a copy of the prod DB (ON rows: design B `out_b`, design C `out_c`).
 
 The finding (docs/research/return-minutes.md): per-minute DK error moves with E[min ∣ plays] / recent minutes for everyone (+2…9 % under-projected below, −2…−6 % over-projected above 1.2×). The cause: f_stat(m / mpg) (`state.fit_params`, `minutes_adj`) is fit on *realised* minutes, where a low ratio is mostly an unplanned early exit (fouls, injury, blowout) with lower production per minute, and the sims apply it at the drawn minutes over mpg, so a *planned* change (an injury ramp, a promotion when a star sits) gets the same per-minute penalty or boost.
 
 Design:
-- **f is re-keyed on the plan:** E[stat ∣ m] = rate × m × f_u(m / P). P = the minutes engine's E[min ∣ plays] before the margin. In the sims it is the `mean` of each sim's own availability scenario (a promoted player's P is higher in the scenarios where the starter sits), so the draw's deviation from its plan is what gets the per-minute change. In training, P is the same engine walk-forward under the avail oracle (season X's minutes params fit on the 5 seasons < X; 98.3 % of rows have a plan, the rest fall back to P = mpg). f_u is the binned ratio of sums over the 5 seasons < S, on the same 9 bins as f.
+- **f is re-keyed on the plan:** E[stat ∣ m] = rate × m × f_u(m / P). P = the minutes engine's E[min ∣ plays] before the margin. In the sims it is the `mean` of each sim's own availability scenario (a promoted player's P is higher in the scenarios where the starter sits), so the draw's deviation from its plan is what gets the per-minute change. In training, P is the same engine walk-forward under the avail oracle (season X's minutes params fit on the 5 seasons < X; 98.3 % of rows have a plan, the rest fall back to P = mpg). f_u is the binned ratio of sums over the 5 seasons < S, on the same 9 bins as f. This pooled table is **design B, the switch's design** (`minutes_ratio.PL_EDGES = ()`); the P-tiered design C was tested in the bench follow-up below and not adopted.
 - Fitted pts f_u (2023-24): 0.73 / 0.77 / 0.85 / 0.93 / 0.99 / 1.02 / 1.05 / 1.08 / 1.11 at m / P ≈ 0.26 … 1.9, vs f(m / mpg) 0.77 … 1.09. It is a bit steeper: the unplanned deviation is a cleaner signal.
 - **Refit for the ON arm, all on seasons < S:** the usage bump (a ratio of sums given the table), copula v0 (alpha, CV-by-level and correlations are residuals given the table), and the **context layer, with its Poisson offset E_s re-keyed** (E0_s × f_u / f per row, then the market reconciliation recomputed; `minutes_ratio.adjust_offsets`). The layer's F2 inputs keep the old f expectations: they are built the same way in training and live, and live has no plan for other teams' past games. Copula v1 params are kept (the combination is wired, not evaluated). Minutes params and P(play) are untouched, so minutes are bit-identical ON vs OFF.
 - **Variant tested and dropped: a second factor g_p(P / mpg)** (backfitted with f_u, normalised to 1 at P = mpg; `PLAN_FACTOR = True`). The training fit gives g_p ≈ 1.02–1.07 at P = 1.3–1.5 × mpg (per-minute *gain* for planned promotions). Walk-forward it pushes promoted players back up, against the over-projection the finding is about. It is weaker everywhere (CRPS −0.0022 (0.0009) / −0.0020 (0.0009), live −0.0006 (0.0017), live10 +0.0014 (0.0018)) and the star tier is worse in 2023-24 (+1.3 SE), so it fails the bar. The switch runs the plain re-key (g_p ≡ 1). The table records `plan_factor`, and `_load_bundle_mr` refits a cached bundle of the other design.
 
-Bit-identical with the switch off (HEAD 8a05151 via `git archive` vs HEAD + the change, same DB copy and bundles, `pathA-v0.3+p2`):
-- Historical 2024-01-10 (avail, 4,000 sims): players 308 × 36, stats 3,696 × 12, 30 sim arrays (1.23M values) and meta all identical.
-- Live opener slate 154575 at 2026-10-20 22:15Z: players 106 × 38, stats, 9 sim arrays (2.65M values) and meta all identical.
-- `research/p2_identity.py` hashes (live and live10 2026-01-15, avail 2026-01-15 and 2024-01-10, opener 2026-10-20): 5 / 5 identical.
-- `tests/test_proj_minutes_ratio.py` (13 tests: default off and env flag, versions and bundle suffixes compose, off multiplier identity, plan keying, both table designs, the scenario plan changes no draw, a neutral table equals OFF, each sim reads its scenario's plan, re-keyed offsets, frame key unchanged off). `tests/test_proj_{copula,state,pipeline,features,context,pplay_v2,backtest}*` pass.
+Bit-identical with the switch off, final tree. HEAD c8ded64 via `git archive` vs HEAD + this change, same DB copy and bundles, `pathA-v0.3+p2`:
+- Historical 2024-01-10: players 308 × 36, stats 3,696 × 12, 30 sim arrays (1.23M values) and meta all identical. This also matches the 8a05151 output the OFF evaluation rows came from.
+- Opener slate 154575 at 2026-10-20 22:15Z: players 106 × 38, stats 1,272 × 12, 9 sim arrays (2.65M values) and meta all identical.
+- p2_identity: 5 / 5 hashes identical.
+- With the switch ON, design B's outputs on both are unchanged bit for bit (historical 2024-01-10 and slate 154575 vs design B's earlier ON outputs: all identical).
+- `tests/test_proj_minutes_ratio.py`: 15 tests. Two are new: the tiered table recovers a flatter bench curve, is continuous in P and equals the pooled table when its tiers agree; and the shrinkage / version guard. The default design is asserted to be B. `tests/test_proj_{copula,state,pipeline,features,context,pplay_v2,backtest}*` pass (157).
 
 Evaluation, ON − OFF paired on identical rows (E[min] ≥ 10, DNP = 0; avail = T2.1 harness, 4,000 sims, closing lines, every date, each arm's bundles fit < S; live-like = T2.4 slice 2025-26 with p2, 104 dates). SE clustered by date. Minutes and P(play) are identical in every pair.
 
@@ -865,7 +867,7 @@ Evaluation, ON − OFF paired on identical rows (E[min] ≥ 10, DNP = 0; avail =
 | long absence 16+, games 0–2: bias∣played | +1.23 → +0.99 | −0.22 → −0.41 | −0.95 → −1.24 | −0.99 → −1.23 |
 | soft tissue, games 0–2: bias∣played | | | −0.71 → −0.98 | −0.73 → −0.99 |
 | per-minute error, ratio 0.7–0.8 / > 1.4 | +2.9 → +1.2 % / −4.3 → −2.8 % | +3.2 → +1.9 % / −4.7 → −3.1 % | +5.7 → +4.1 % / −3.6 → −2.1 % | +4.8 → +3.1 % / −3.3 → −1.7 % |
-| star out, remaining top 6: bias∣played; gap vs other nights | +0.00 → +0.02; +0.11 → +0.04 | −0.57 → −0.52; −0.40 → −0.46 | −1.01 → −0.94; −0.48 → −0.51 | −0.92 → −0.85; −0.60 → −0.64 |
+| star out, remaining top 6: bias∣played; gap vs other nights | −0.11 → −0.08; −0.04 → −0.10 | −0.57 → −0.52; −0.40 → −0.46 | −1.01 → −0.94; −0.48 → −0.51 | −0.92 → −0.85; −0.60 → −0.64 |
 
 RotoGuru seasons (same harness with DK salaries, so it also has lineup lines; minutes are box minutes):
 
@@ -892,17 +894,136 @@ Reading:
 - **Long-absence and soft-tissue returners get slightly worse on the live path** (−0.95 → −1.24 DK bias, n ≈ 135, SE ≈ 0.85, so noise-level). This is the study's predicted unmasking: their minutes are over-projected by 0.5–1.5, and the old per-minute penalty had been hiding it.
 - **The older seasons agree and are stronger** (CRPS −3.3 / −4.9 SE, DK MAE −3.0 / −4.4 SE). Lineups do not move: cash −1.0 / −1.4 (± 1.6), Top-20 +1.2 / +0.1.
 - **Costs:**
-  - The bench tier (E[min ∣ plays] < 15) is worse in all six sets: DK MAE +0.010…+0.035 (2.4–4.8 SE in 2019-20, 2020-21 and 2024-25), and CRPS is worse too in 2019-20 (+2.9 SE). Its bias given played moves toward 0, so the loss is in the spread of short-minute draws: f_u is steep below m / P ≈ 0.6, and a bench player's draws often land there.
+  - The bench tier (E[min ∣ plays] < 15) is worse in all six sets: DK MAE +0.010…+0.035 (2.4–4.8 SE in 2019-20, 2020-21 and 2024-25), and CRPS is worse too in 2019-20 (+2.9 SE). The first hypothesis (f_u too steep below m / P ≈ 0.6 for bench draws) is only part of it: see the bench follow-up below.
   - Coverage is +0.3…0.5 pp wider and PIT max deviation is slightly worse. The ON mean is about 0.03 DK lower overall.
 
-**Ship bar** (CRPS ≥ 2 SE better in 2023-24 and 2024-25, no tier worse by > 1 SE, live slice not worse):
-- **Met on CRPS:** −2.8 / −2.0 SE. The worst tier is bench +0.9 SE. Live is −0.6 / +0.6 SE.
-- **Marginal:** 2024-25 sits exactly at the bar. On the live path the gain is not distinguishable from zero.
-- **Outside the bar's seasons:** 2019-20 has the bench tier +2.9 SE on CRPS, and the bench DK MAE regression holds in every season.
+**Bench follow-up (2026-10-21 evening): diagnosis, design C tested, not adopted.** Design B's bench tier (E[min ∣ plays] < 15) was worse in all six sets.
+- **Small-P instability: no.** The scored bench rows (E[min] ≥ 10) all have P ≈ 11–15 min, so m / P never explodes.
+- **The pooled table's shape: partly.** Refit by P on the training rows (2019-20 fit), the bench curve (P < 15) is 0.77 / 0.81 / 0.86 / 0.88 / 0.91 / 0.98 / 1.01 / 1.07 / 1.11. For P ≥ 15 it is 0.67 / 0.76 / 0.84 / 0.93 / 0.99 / 1.03 / 1.05 / 1.09 / 1.10.
+  - The bench curve is flatter below m / P ≈ 0.6: a bench player's short nights are spot minutes, a starter's are early exits.
+  - It is 4–8 % lower at 0.8–1.0. So the pooled f_u over-projects bench plans at their usual minutes, even in sample (P 10–15: −0.7 / −1.2 %).
+  - Out of sample at realised minutes (2019-20) B is −4.1 / −1.1 %, where OFF is −1.3 / +1.2 %.
+  - The steep short tail alone is not the story.
+- **The context offset refit: no.** The ON mean shift on bench rows (+0.14 DK) sits on the re-key's own axis: +0.17…+0.38 DK when P < 0.9 × last-10. The copula's alpha and CV-by-level move by ≤ 0.02.
+- **The bench P distribution: yes, the rest.** About 40 % of bench rows are planned demotions (P < 0.9 × last-10).
+  - The re-key is right for them per minute. At realised minutes OFF under-projects them by 6–12 % per minute, B by 0–4 %.
+  - Their *minutes* are over-projected on the avail harness: P(play) +0.04…+0.06 and E[min] +0.4…+0.8 above actual in every season. The old per-minute penalty was hiding this, as it was for the long-absence returners.
+  - The harness loss sits in the bench rows that played little or not at all: rows with 0 minutes have CRPS +0.08…+0.12 each under B.
+  - Bench intervals were already too wide (80 % coverage 0.85–0.87 OFF).
+
+**Design C** (`minutes_ratio.PL_TIERS_C`; set `PL_EDGES = PL_TIERS_C` to run it; table version 2):
+- f_u is fit per tier of the plan P: 12 / 18 / 24 / 30 min, mean plans ≈ 8, 15, 21, 27, 33. Each cell is shrunk to the pooled f_u with 300 pseudo-rows and read linearly in P between the tiers.
+- Fitted pts f_u, 2024-25: P ≈ 8: 0.83 … 0.95 / 0.98 … 1.09; P ≈ 15: 0.69 … 0.93 / 0.99 … 1.12; P ≈ 33: 0.78 … 1.01 / 1.03 … 1.09.
+- At realised minutes (`minutes_ratio_eval.py proxy`: fit < S, scored on S without sims), the calibration RMS over P tier × m / P cells (2019-20 / 2020-21 / 2023-24 / 2024-25) is:
+  - OFF: 0.041 / 0.045 / 0.041 / 0.039
+  - B: 0.039 / 0.038 / 0.035 / 0.028
+  - one split at 15 min: 0.034 / 0.037 / 0.031 / 0.029
+  - C: 0.028 / 0.031 / 0.022 / 0.021
+- C also has the lowest DK MAE in 3 of 4 seasons (tied with finer 10…30 tiers), and bench-tier MAE improves on B in all four.
+
+Design C, ON − OFF, same harness and arms. Design B's value is in brackets:
+
+| | 2023-24 avail | 2024-25 avail | 2025-26 live+p2 | live10+p2 | 2019-20 avail | 2020-21 avail |
+|---|---|---|---|---|---|---|
+| DK MAE Δ | −0.0071 (0.0019) | −0.0051 (0.0023) | −0.0072 (0.0040) | −0.0033 (0.0040) | −0.0081 (0.0019) | −0.0112 (0.0023) |
+| **DK CRPS Δ (SE), z** | −0.0049 (0.0013), **−3.7** [−2.8] | −0.0035 (0.0014), **−2.4** [−2.0] | −0.0009 (0.0026), −0.4 [−0.6] | +0.0017 (0.0027), +0.7 [+0.6] | −0.0062 (0.0013), −4.7 [−3.3] | −0.0081 (0.0014), −5.9 [−4.9] |
+| CRPS z star / starter / rotation / bench | −3.1 / −3.6 / −0.7 / +0.7 | −3.8 / −1.0 / −0.3 / **+1.0** | −2.9 / −0.1 / **+1.6** / +0.2 | −2.2 / +0.8 / **+2.3** / +0.3 | −3.5 / −4.4 / −1.3 / **+2.7** | −4.7 / −4.7 / −1.4 / +0.1 |
+| 80 % coverage / PIT max dev. | 0.823 / 0.0080 | 0.829 / 0.0131 | 0.844 / 0.0187 | 0.842 / 0.0183 | 0.825 / 0.0094 | 0.830 / 0.0129 |
+| bench DK MAE Δ | +0.009 (0.007) [+0.013] | +0.014 (0.007) [+0.020] | +0.007 (0.009) [+0.010] | +0.010 (0.008) [+0.012] | +0.031 (0.007) [+0.035] | +0.016 (0.007) [+0.018] |
+| bench bias (mean − actual), OFF → ON | −0.32 → −0.23 [−0.18] | +0.14 → +0.26 [+0.30] | −0.70 → −0.62 [−0.59] | −0.53 → −0.42 [−0.39] | +0.12 → +0.25 [+0.27] | −0.00 → +0.10 [+0.11] |
+| bench per-minute error (played) | +4.6 → +3.8 % | +3.2 → +2.1 % | +3.6 → +2.9 % | +2.3 → +1.3 % | +1.4 → +0.2 % | +3.7 → +2.7 % |
+| bench P < 0.9 × last-10: P(play) / E[min] bias | +0.045 / +0.81 | +0.038 / +0.54 | +0.011 / +0.04 | +0.023 / +0.20 | +0.061 / +0.40 | +0.038 / +0.71 |
+| 80 % width bench / rotation / star (DK) | +0.4 / +0.6 / −0.4 | +0.4 / +0.6 / −0.3 | +0.3 / +0.5 / −0.3 | +0.4 / +0.5 / −0.4 | +0.4 / +0.6 / −0.4 | +0.4 / +0.6 / −0.4 |
+| promoted: bias∣played | −0.79 → −0.52 | −0.74 → −0.48 | −1.02 → −0.76 | −0.88 → −0.60 | −0.51 → −0.23 | −1.00 → −0.73 |
+| return game 0: bias∣played | +1.55 → +1.17 | +1.62 → +1.27 | +0.71 → +0.33 | +0.78 → +0.43 | +1.84 → +1.28 | +1.96 → +1.43 |
+| long absence 16+ / soft tissue, games 0–2: bias∣played | +1.23 → +1.06 | −0.22 → −0.33 | −0.95 → −1.14 / −0.71 → −0.92 | −0.99 → −1.14 / −0.73 → −0.94 | +2.01 → +1.81 | −0.32 → −0.52 |
+| per-minute error > 1.4× | −4.3 → −2.6 % | −4.7 → −3.1 % | −3.6 → −2.1 % | −3.3 → −1.7 % | −2.7 → −0.8 % | −4.5 → −2.8 % |
+| cash lineup / Top-20, actual DK Δ | | | | | −2.2 ± 1.5 [−1.0] / +1.2 ± 0.4 | −2.5 ± 1.3 [−1.4] / −0.2 ± 0.5 |
+
+Reading:
+- **C is the better per-minute table and the better aggregate.** CRPS gains are larger in every avail season, and DK MAE is lower everywhere, live included.
+- **The gain moves from rotation to stars.** The stars' f_u is flatter at both ends, so their draws are no longer charged the starters' early-exit curve.
+- **The bench cost shrinks but does not go.** On DK MAE it is 10–30 % smaller, and bench per-minute error improves in all six sets.
+- **C costs the rotation tier on the live slice:** +1.6 / +2.3 SE. Its steeper curve at P ≈ 15–21 widens rotation and bench intervals by about 0.5 DK, where the sims' minutes already make them too wide (rotation coverage 0.835 → 0.843 live). Bench 2019-20 stays +2.7 SE, and 2024-25 reaches +1.03.
+- **Lineups:** cash is −2.2 / −2.5 (± 1.5 / 1.3). The swaps are starters (E[min ∣ plays] ≈ 30) on mean differences of 0.1–0.3 DK.
+- **What is left is not the per-minute table.** It is how the sims' minutes treat short-plan players: demoted bench players' P(play) and E[min] are over-projected on the harness, and rotation / bench minutes draws are too dispersed.
+- **Not done:** a per-minute patch for it, such as blending back to m / mpg for short plans or flattening the tail further, would be wrong at realised minutes.
+
+**Ship bar** (CRPS ≥ 2 SE better in 2023-24 and 2024-25, no tier worse by > 1 SE in any set, live slice not worse):
+- **Design B (the switch's design): not met.** CRPS −2.8 / −2.0 SE (2024-25 exactly at the bar); live −0.6 / +0.6 SE; tiers within 1 SE in five sets but bench +2.9 SE in 2019-20 (bench DK MAE worse in all six, 2.4–4.8 SE in three).
+- **Design C: not met.** CRPS −3.7 / −2.4 SE; live −0.4 / +0.7 SE; tier failures in four sets: bench +2.7 (2019-20) and +1.03 (2024-25), rotation +1.6 / +2.3 on the live slice.
+- C has the better aggregate, B the fewer tier failures and the safer live path, so the switch keeps B and C stays a research option (`PL_EDGES = PL_TIERS_C`).
 
 The switch stays OFF. Shipping is the owner's call.
-- Recommended next step: fix the bench tail first, for example by keeping f(m / mpg) below a minutes floor or flattening f_u below u ≈ 0.6 for short-plan players, then re-run the same arms. The structural fix is otherwise consistently, if modestly, better.
-- If it ships, the long-absence returners' minutes over-projection, which the switch unmasks, should be fixed on the minutes side.
+- Next step: the minutes side, not the per-minute table. Fix P(play) and E[min] for players planned below their recent minutes (P < 0.9 × last-10), and check the dispersion of rotation / bench minutes draws (their 80 % intervals cover 0.84–0.87). Then re-run the same arms, B and C. C should then be the better design: it is the better table at realised minutes.
+- If it ships, the long-absence returners' minutes over-projection, which the switch unmasks, should be fixed on the minutes side as well.
+
+**Preseason results (pre, item #2, 2026-10-21; switch default OFF, not shipped).** Switch `COURTSIDE_PRESEASON=1` (`pipeline.PRESEASON`, `PRESEASON_DEFAULT = False`; `set_preseason()`). It is a suffix on any arm: bundle `<arm's bundle>_pre.json` (before `_mr` / `_c1`), version `<arm>+pre` (`pathA-v0.3+pre+p2`), seeds unchanged. The ON bundle is the arm's bundle with the minutes params refit on seasons < S (`minutes_params_<S>_v1_pre.json`). Code: `minutes.Preseason` / `load_preseason` / `attach_preseason` / `preseason_columns` (`V1_PRESEASON`, `PRE_TEAM_COLS`, `PRE_MAX_TGS = 20`), `debut_reserve` / `debut_minutes` / `fit(debut_reserve=True)` (`MinutesParams.reserve_debut`, a JSON key only when set), `project_arrays(reserve_add=)`, `pipeline._load_bundle_pre`, and the Context attaches the logs when ON. Tests: `tests/test_proj_preseason_features.py`. Research: `research/preseason_eval.py`. Mac scratch `courtside-compute/pre`.
+
+Data and features:
+- **Source:** `preseason_player_games` / `preseason_team_games` 2010-11+, NBA teams only.
+  - **Scrimmages are dropped.** These are the July 2020 bubble games (40 minutes long, ~65 games into 2019-20); they are not a camp before an opener.
+  - **Games against international clubs are kept** (~6 % of rows). They are part of the camp rotation, and the per-team-game share normalises them.
+- **Every feature uses the row team's preseason games dated strictly before the date.** A player who changed teams reads as "did not play" rather than carrying his new team's role, so last season's departed players in historical panels do not leak roster moves.
+- **Columns:** games, mpg, mean minutes in the team's last 2 games (DNP = 0), games played among those 2, share of team preseason minutes × 5, rank on the team, mpg − the team's median, mpg / prior-season mpg (regular seasons < S, floor 5), and a did-not-play flag (NaN when the team has no logs).
+- **Decay:** the columns are NaN from team game 20 on. Ungated, the minutes-level walk-forward lost +0.005…+0.011 MAE in games 15–29; LightGBM barely used the columns that late (gain share ≤ 0.3 %).
+- **Live:** the Context loads the current season's logs (2026-27 has 1,991 rows). Checked on 2026-10-21 (11 games, 261 candidates): all 261 have the did-not-play flag and the debut input, and the 186 who played in camp have the full set.
+
+Early-season finding (minutes v1 OFF, walk-forward on the avail oracle, 2023-24 / 2024-25):
+- **Over-projection is concentrated at game 0.** Played rows' E[min ∣ plays] residual is −0.35 / −0.80 in team games 0–4, −0.27…−0.57 in games 5–14, and ≈ 0 after.
+- **The cause is the team total, not the weighting of prior-season minutes.**
+  - At game 0, minutes outside the candidate set are 29 per team-game: 13 from debutants (no box row before) and 16 from non-regular arrivals that the oracle's last-season roster misses.
+  - The fitted reserve is a season-average spline and gives ~3.
+  - From game 1 on, outside minutes are 1–3 against a reserve of 1.4–2.3. Roster rows' unconditional bias is +0.04…+0.10 from game 1, so prior-season minutes are not over-weighted after the opener.
+- **The rate state needs no change.** It already fits its season carry-over (calendar half-life × season-break discount, chosen by NB log-likelihood on seasons < S, early-season cell prior blended with last season); not touched.
+- **The fix (ON only): debutants get their own reserve.**
+  - OLS on seasons < S of debut minutes on the stage bin ({0}, {1–4}, {5–14}, {15+}) × the camp's new players' preseason minutes per team game, winsorised at the training p95 (~70).
+  - Historically that input correlates 0.44–0.71 with opener debut minutes in every season 2018-19 … 2025-26.
+  - The usual spline is refit without the debutants. Fitted (2024-25): game 0 = −6.5 + 0.58 × D; games 1–4 ≈ 0.09 × D.
+  - The non-regular arrivals are an oracle artefact: live, the DK pool forces them in. They are left alone, so part of the game-0 harness gain comes from minutes taken from oracle-only DNP candidates.
+
+Bit-identical with the switch off (HEAD c8ded64 via `git archive` vs HEAD + the change, same DB copy and bundles, `pathA-v0.3+p2`):
+- Historical 2024-01-10 (avail, 4,000 sims): players 308 × 36, stats 3,696 × 12, 30 sim arrays (1.23M values) and meta all identical.
+- Live opener slate 154575 at 2026-10-20 22:15Z: players 106 × 38, stats 1,272 × 12, 9 sim arrays (2.65M values) and meta all identical.
+- `research/p2_identity.py` hashes (live and live10 2026-01-15, avail 2026-01-15 and 2024-01-10, opener 2026-10-20): 5 / 5 identical.
+- OFF reads no preseason table, adds no panel column and writes no new JSON key.
+
+Evaluation setup: ON − OFF paired on identical rows, T2.1 harness, avail, 4,000 sims, closing lines, every date. Both arms' minutes params are refit with the same code (1 LightGBM thread); the cached 2023-24 OFF bundle came from an older DB and differs. The population is E[min] (OFF) ≥ 10 with DNP = 0. SE is clustered by date: first 15 games ≈ 33 dates, game 0 = 3 dates, so the game-0 z values are unreliable. The 2025-26 opener weeks run on avail only: the live-like slice needs official reports, which start 2025-12-22.
+
+| | 2023-24 | 2024-25 | 2025-26 |
+|---|---|---|---|
+| rows first 15 / full | 3,940 / 21,746 | 3,899 / 21,865 | 3,964 / 22,308 |
+| **first 15: minutes MAE** (OFF 4.91 / 4.70 / 4.81) | −0.027 (−1.4 SE) | **−0.032 (−2.8 SE)** | −0.020 (−0.9 SE) |
+| **first 15: DK CRPS** | −0.0137 (−1.4 SE) | **−0.0253 (−3.5 SE)** | −0.0108 (−0.9 SE) |
+| first 15: DK MAE | −0.024 (−1.3 SE) | −0.033 (−3.6 SE) | −0.022 (−1.0 SE) |
+| game 0: minutes MAE / CRPS | −0.21 / −0.16 | −0.23 / −0.15 | −0.33 / −0.19 |
+| games 1–4 / 5–14: CRPS z | −2.3 / +0.6 | −4.2 / −2.6 | −0.2 / +0.5 |
+| full season: minutes MAE / CRPS / DK MAE z | −0.6 / −0.4 / +0.3 | −1.4 / 0.0 / −0.3 | +0.1 / +0.3 / +0.1 |
+| 80 % coverage, full | 0.820 → 0.821 | 0.824 → 0.824 | 0.834 → 0.834 |
+| full-season CRPS z star / starter / rotation / bench | **+1.4** / +0.6 / −1.2 / −0.9 | −0.5 / −0.1 / +0.2 / +0.5 | **+2.6** / −1.7 / +0.1 / +0.5 |
+| first 15 minutes MAE: rookies / new team / returning (n) | −0.039 (−1.3) / −0.061 (−1.8) / +0.03 (30) | −0.019 (−0.7) / −0.025 (−1.2) / −0.38 (23) | −0.022 (−0.8) / 0.000 / +0.15 (26) |
+
+Opener 2026-27 (live path, slate 154575 at lock −45, ON vs OFF):
+- **The debut reserve over-reserves on this sample.** It takes 18–30 team minutes from BOS / OKC / PHI / SAS (OKC 232.5 → 202.6; 175.0 before the winsorisation: its camp's new players averaged 126 minutes per preseason game against a training maximum of ~95). Their actual debut minutes were 0 / 13 / 0 / 3. DET and NYK are unchanged (±1).
+- Player moves: max |Δ DK| 2.8, mean −0.22.
+- That is one night and 6 contenders, against a historical opener mean of 11–19 debut minutes per team. Tonight's 24 openers (reserves 0–32 per team, e.g. LAC 31.7, TOR 30.8) are the real check.
+
+Reading:
+- **Preseason information is real but small.** It is worth ~0.03 minutes MAE over the first 15 team games, concentrated in games 0–4, and nothing after. LightGBM gives the columns ≤ 0.3 % of the gain; recent box minutes dominate as soon as they exist.
+- **About half of the first-15 gain is the game-0 reserve, and part of that is an oracle artefact.**
+  - The oracle's game-0 candidates include last season's departed non-regulars as available DNPs (~110 rows a season with ~6.5 expected minutes).
+  - A larger reserve takes minutes from them. Live, `drop_moved_players` already removes them.
+  - On played rows at game 0 the reserve alone was +0.16…+0.33 MAE (worse); with the features, −0.07…+0.03.
+
+**Ship bar** (first-15 minutes MAE and DK CRPS ≥ 2 SE better in 2023-24 and 2024-25, full season not worse, no tier worse by > 1 SE): **not met.**
+- 2024-25 passes (−2.8 / −3.5 SE). 2023-24 does not (−1.4 / −1.4 SE), and its star tier is +1.4 SE.
+- 2025-26 (outside the bar) is −0.9 SE, with the star tier +2.6 SE over the full season.
+- The full season is flat.
+
+The switch stays OFF. Next steps:
+- Validate the debut reserve on tonight's openers, and refit it as a saturating function before any use.
+- Live, project rookies from their preseason role instead of leaving them to the reserve. `candidate_panel` drops players without box history, so lottery picks get no projection before their debut.
+- If the owner wants the feature part alone, it can be tested without the reserve.
 
 ### Phase 2F: feature program (owner request 2026-10-19: use the depth of the data)
 

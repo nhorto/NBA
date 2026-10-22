@@ -50,6 +50,13 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   unplanned ones). Suffix on any arm: bundle `<arm's bundle>_mr.json` (the arm's bundle with the
   table, the usage bump, copula v0 and the context layer refit on seasons < S), version
   `<arm>+mr` (`pathA-v0.3+mr+p2`); seeds unchanged. OFF: nothing of it runs (bit-identical).
+* **Preseason minutes** (item #2, `minutes.V1_PRESEASON`), behind `PRESEASON` (default OFF; env
+  ``COURTSIDE_PRESEASON=1``): the Context loads the preseason game logs (migration 15 tables; the
+  current season's too, so the live path reads them) and the minutes LightGBM base adds the
+  pre_* columns (preseason mpg, last-2 mpg, share and rank on the team, vs prior-season mpg and
+  teammates, did-not-play flag), refit on seasons < S. Suffix on any arm: bundle
+  `<arm's bundle>_pre.json` (the arm's bundle, minutes params replaced), version `<arm>+pre`
+  (`pathA-v0.3+pre+p2`); seeds unchanged. OFF: no preseason table is read (bit-identical).
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -138,6 +145,16 @@ MINRATIO_DEFAULT = False               # shipping = True here (env still overrid
 MINRATIO_ENV = "COURTSIDE_MINRATIO"
 MINRATIO_SUFFIX = "_mr"
 MINRATIO_TAG = "+mr"
+# Preseason minutes features (item #2, N2; `minutes.V1_PRESEASON`). OFF by default (env
+# COURTSIDE_PRESEASON=1 / 0 overrides; `set_preseason` at run time). ON = a suffix on whatever arm
+# is active: bundle `<arm>_pre` (before `_mr` / `_c1`) = the arm's bundle with the minutes params
+# refit with the pre_* columns (`minutes_params_<S>_v1_pre.json`), version `<arm>+pre`; the
+# Context loads the preseason logs (`minutes.attach_preseason`); seeds unchanged (common random
+# numbers with the arm's OFF runs). OFF: no preseason table is read (bit-identical).
+PRESEASON_DEFAULT = False              # shipping = True here (env still overrides)
+PRESEASON_ENV = "COURTSIDE_PRESEASON"
+PRESEASON_SUFFIX = "_pre"
+PRESEASON_TAG = "+pre"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -168,17 +185,17 @@ def _pplay_flag(name: str, default: str = "v1") -> str:
 
 
 def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1",
-              mr: bool = False) -> tuple[str, str]:
+              mr: bool = False, pre: bool = False) -> tuple[str, str]:
     """(bundle file suffix, MODEL_VERSION) for the context switch (+ the extended layer), the
     copula version (v1 appends `_c1` / `+c1` to whichever arm is active), the P(play)
     version (v2 appends `+p2` to the model version only: same bundle) and the minutes-ratio
     switch (`_mr` / `+mr`, before the copula's)."""
-    vs, mv = _versions_bundle(on, ext, copula, mr)
+    vs, mv = _versions_bundle(on, ext, copula, mr, pre)
     return vs, (mv + PPLAY_V2_TAG if pplay == "v2" else mv)
 
 
-def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool = False
-                     ) -> tuple[str, str]:
+def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool = False,
+                     pre: bool = False) -> tuple[str, str]:
     if not on:
         vs, mv = _VS_BASE, MODEL_VERSION_BASE
     elif ext:
@@ -188,6 +205,8 @@ def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool =
     else:
         mv = CONTEXT_MODEL_VERSION if MINUTES_VERSION == "v1" else f"{MODEL_VERSION_BASE}+cx"
         vs = _VS_BASE + CONTEXT_SUFFIX
+    if pre:
+        vs, mv = vs + PRESEASON_SUFFIX, mv + PRESEASON_TAG
     if mr:
         vs, mv = vs + MINRATIO_SUFFIX, mv + MINRATIO_TAG
     if copula == "v1":
@@ -200,7 +219,8 @@ CONTEXT_EXT = _env_flag(CONTEXT_EXT_ENV, CONTEXT_EXT_DEFAULT)
 COPULA = _copula_flag(COPULA_ENV, COPULA_DEFAULT)
 PPLAY = _pplay_flag(PPLAY_ENV, PPLAY_DEFAULT)
 MINRATIO = _env_flag(MINRATIO_ENV, MINRATIO_DEFAULT)
-_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
+PRESEASON = _env_flag(PRESEASON_ENV, PRESEASON_DEFAULT)
+_VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON)
 # Seeds use the base version in both states: ON and OFF runs of the same slate/day draw common
 # random numbers, so their difference is the layer, not Monte Carlo noise (OFF is unchanged).
 SEED_VERSION = MODEL_VERSION_BASE
@@ -215,7 +235,7 @@ def set_context(on: bool, ext: bool | None = None) -> None:
     CONTEXT_ON = bool(on)
     if ext is not None:
         CONTEXT_EXT = bool(ext)
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON)
 
 
 def set_copula(version: str) -> None:
@@ -225,7 +245,7 @@ def set_copula(version: str) -> None:
     if version not in ("v0", "v1"):
         raise ValueError(f"unknown copula version {version!r}")
     COPULA = version
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON)
 
 
 def set_pplay(version: str) -> None:
@@ -235,7 +255,7 @@ def set_pplay(version: str) -> None:
     if version not in ("v1", "v2"):
         raise ValueError(f"unknown P(play) version {version!r}")
     PPLAY = version
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON)
 
 
 def set_minratio(on: bool) -> None:
@@ -243,7 +263,16 @@ def set_minratio(on: bool) -> None:
     MODEL_VERSION together (the other switches are kept)."""
     global MINRATIO, _VS, MODEL_VERSION
     MINRATIO = bool(on)
-    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON)
+
+
+def set_preseason(on: bool) -> None:
+    """Flip the preseason switch at run time: updates PRESEASON, the bundle suffix and
+    MODEL_VERSION together (the other switches are kept). A Context built while it was off has no
+    preseason logs; `load_bundle` / `Context` attach them when it is on."""
+    global PRESEASON, _VS, MODEL_VERSION
+    PRESEASON = bool(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON)
 
 
 def context_groups() -> tuple:
@@ -336,6 +365,8 @@ class Context:
         since = f"{s0 - HISTORY_SEASONS}-{(s0 - HISTORY_SEASONS + 1) % 100:02d}"
         t0 = time.time()
         self.h = history if history is not None else M.load_history(conn, since=since)
+        if PRESEASON and self.h.pre is None:
+            M.attach_preseason(self.h, conn)
         st_first = f"{s0 - 1 - 6}-{(s0 - 6) % 100:02d}"
         self.games = ST.load_games(conn, since_season=st_first)
         self.pos = ST.load_positions(conn)
@@ -463,6 +494,8 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
         return _load_bundle_mr(conn, season, ctx, refit=refit, log=log)
     if COPULA == "v1":
         return _load_bundle_v1(conn, season, ctx, refit=refit, log=log)
+    if PRESEASON:
+        return _load_bundle_pre(conn, season, ctx, refit=refit, log=log)
     say = log or (lambda m: None)
     path = cache_dir() / f"bundle_{season}{_VS}.json"
     if path.exists() and not refit:
@@ -519,6 +552,46 @@ def _load_bundle_v1(conn: sqlite3.Connection, season: str, ctx: Context | None, 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(b.to_json())
     say(f"bundle {season} + copula v1 fitted in {time.time() - t0:.0f}s -> {path}")
+    return b
+
+
+def _load_bundle_pre(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
+                     refit: bool, log) -> Bundle:
+    """The preseason arm's bundle: the same arm's bundle with PRESEASON off (loaded or fitted the
+    usual way) with its minutes params replaced by a refit on seasons < S that adds
+    `minutes.V1_PRESEASON` to the LightGBM base and the season-start debut reserve
+    (`minutes.debut_reserve`; `minutes_params_<S>_v1_pre.json`), cached as
+    `bundle_<S><arm>_pre.json`. Rate state, copula and context layer are the arm's."""
+    say = log or (lambda m: None)
+    path = cache_dir() / f"bundle_{season}{_VS}.json"
+    if path.exists() and not refit:
+        b = Bundle.from_json(path.read_text())
+        if M.uses_preseason(b.minutes):
+            return b
+    set_preseason(False)
+    try:
+        base = load_bundle(conn, season, ctx, refit=refit, log=log)
+    finally:
+        set_preseason(True)
+    t0 = time.time()
+    mpath = cache_dir() / f"minutes_params_{season}{_VS_BASE}{PRESEASON_SUFFIX}.json"
+    if mpath.exists() and not refit:
+        mp = M.MinutesParams.from_json(mpath.read_text())
+    else:
+        ctx = ctx or Context(conn, season, log=say)
+        if ctx.h.pre is None:
+            M.attach_preseason(ctx.h, conn)
+        panel = ctx.train_panel()
+        mp = M.fit(ctx.h, season, window=MINUTES_WINDOW, log=say, panel=panel,
+                   shares=M.PairShares(M.pair_events(panel)), version=MINUTES_VERSION,
+                   v1_kw={"features": M.preseason_features()}, debut_reserve=True)
+        mpath.parent.mkdir(parents=True, exist_ok=True)
+        mpath.write_text(mp.to_json())
+    b = Bundle(season=season, minutes=mp, state=base.state, copula=base.copula,
+               context=base.context, copula_v1=base.copula_v1)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(b.to_json())
+    say(f"bundle {season} (preseason minutes) in {time.time() - t0:.0f}s -> {path}")
     return b
 
 

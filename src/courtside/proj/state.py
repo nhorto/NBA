@@ -175,7 +175,9 @@ def minutes_multiplier(params: dict, stat: str, minutes, mpg, planned=None) -> n
 def minutes_multiplier_mr(params: dict, stat: str, minutes, planned, mpg) -> np.ndarray:
     """f_u(minutes / planned) x g_p(planned / mpg) from `params["minutes_adj_mr"]` (1.0 for a
     stat the table does not carry). `planned` <= 0 or NaN falls back to `mpg` (no plan known:
-    the deviation is measured from his usual minutes and g_p is read at 1)."""
+    the deviation is measured from his usual minutes and g_p is read at 1). A version-2 table
+    (`mult_up`) has one f_u per tier of P, interpolated linearly in P between the tiers' mean
+    plans (`minutes_ratio.fit_table`)."""
     adj = params["minutes_adj_mr"]
     shape = np.broadcast(np.asarray(minutes), np.asarray(planned), np.asarray(mpg)).shape
     if stat not in adj["mult_u"]:
@@ -186,8 +188,17 @@ def minutes_multiplier_mr(params: dict, stat: str, minutes, planned, mpg) -> np.
     pl = np.maximum(pl, 1.0)
     u = np.asarray(minutes, float) / pl
     v = pl / mpg_
-    return (np.interp(u, adj["centers_u"], adj["mult_u"][stat])
-            * np.interp(v, adj["centers_p"], adj["mult_p"][stat]))
+    g = np.interp(v, adj["centers_p"], adj["mult_p"][stat])
+    if stat not in adj.get("mult_up", {}):
+        return np.interp(u, adj["centers_u"], adj["mult_u"][stat]) * g
+    # tiered table (version 2): f_u of each tier of P, read linearly in P between tier centres
+    cpl = np.asarray(adj["centers_pl"], float)
+    eye = np.eye(len(cpl))
+    f = np.zeros(shape)
+    for t in range(len(cpl)):
+        w = np.interp(pl, cpl, eye[t])
+        f = f + w * np.interp(u, adj["centers_up"][t], adj["mult_up"][stat][t])
+    return f * g
 
 
 def bump_for(params: dict, role: str, stat: str) -> float:

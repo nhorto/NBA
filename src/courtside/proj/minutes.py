@@ -66,8 +66,21 @@ training candidates the live path would have (`departed` removed: live drops mov
 they must not teach "new season -> DNP"), with forced extras scored as roster players
 (`forced_as_roster`). S15: players
 without box history or with < V1_MIN_GP games, and panels without the v1 columns, keep the v0.5
-base (`V1_STATS` counts them). Preseason (N2) and news features are not in the GBM: no
-historical preseason box scores or reports exist to train them (2026-27 / 2025-12-22+ only).
+base (`V1_STATS` counts them). News features are not in the GBM (reports exist from
+2025-12-22 only).
+
+**Preseason (N2, item #2; `pipeline.PRESEASON`, env COURTSIDE_PRESEASON=1, default OFF).** With
+`History.pre` loaded (`attach_preseason`: migration 15 preseason game logs 2010-11+, scrimmages
+dropped, games against international clubs kept), the v1 panel gains `V1_PRESEASON` (the row
+team's preseason only: games, mpg, last-2-games mpg, share of team minutes, rank, vs prior-season
+mpg and vs teammates, did-not-play flag; strictly before the date) and the team-level
+`pre_new_tg` (preseason minutes of camp players with no box row yet). The ON fit
+(`fit(..., v1_kw={"features": preseason_features()}, debut_reserve=True)`) adds them to the GBM
+(LightGBM learns the decay through gp_season / tgs) and splits the reserve: minutes of players
+with no box row before the date (`debut_reserve`: team games into the season x `pre_new_tg`;
+season openers lose ~13 minutes per team to debutants, the season-average reserve gave ~3) and
+everybody else outside the candidates (the usual spline, refit without the debutants).
+With `History.pre` None (OFF) no column, parameter or JSON key changes.
 
 Everything learned lives in `MinutesParams` (JSON-serialisable; v1 stores the LightGBM model
 text), produced by `fit(history, S)` from seasons < S only. Structural constants (EWMA alphas, RECON_CV, SHARE_K, tiers, margin
@@ -166,9 +179,16 @@ class MinutesParams:
     share_coef: float = 0.0           # v1: minutes per (share x vacated minutes) on top
     recon_cv: float = RECON_CV        # reconciliation variance form (v0.5: frozen 0.2)
     pplay_coef_v1: list = field(default_factory=list)   # v1 P(plays | available), see fit_v1
+    # season-start debut reserve (COURTSIDE_PRESEASON, `fit(debut_reserve=True)`): minutes of
+    # players with no box row before the date, by team games into the season and the team's
+    # debutants' preseason minutes. Empty = off (and the key is left out of the JSON).
+    reserve_debut: list = field(default_factory=list)
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self))
+        d = asdict(self)
+        if not d["reserve_debut"]:          # absent key: the format before it, byte for byte
+            del d["reserve_debut"]
+        return json.dumps(d)
 
     @classmethod
     def from_json(cls, s: str) -> "MinutesParams":
@@ -206,6 +226,8 @@ class History:
     coach: "CoachState | None" = None
     births: pd.DataFrame | None = None    # player_id, birth (int days)
     shares: "PairShares | None" = None    # pair shares for the v1 share features (optional)
+    # preseason game logs (COURTSIDE_PRESEASON, `load_preseason`); None -> no pre_* columns
+    pre: "Preseason | None" = None
 
 
 def _days(s: pd.Series) -> np.ndarray:
@@ -462,6 +484,255 @@ def load_history(conn: sqlite3.Connection, since: str = FIRST_SEASON) -> History
     return build_history(pg, tg, load_positions(conn), stints=stints, births=births)
 
 
+# --- preseason (N2, item #2; COURTSIDE_PRESEASON) ---------------------------------------------
+#
+# Source: preseason_player_games / preseason_team_games (migration 15; stats.nba.com game logs
+# 2010-11+, whole minutes, no starter flag). Used: NBA teams' preseason games, INCLUDING games
+# against international clubs (vs_non_nba: ~6% of rows; they are part of the team's camp
+# rotation, and the per-team-game share normalises their length), EXCLUDING `scrimmage` rows
+# (the July 2020 bubble scrimmages filed under 2019-20: 40-minute games ~65 games into the
+# season, not the camp before an opener). Every feature uses preseason games dated strictly
+# before the projected date (the preseason ends before the opener, so in practice the whole
+# preseason of the row's season), and the prior-season mpg uses regular seasons < S only.
+
+class Preseason:
+    """Preseason game logs: `players` (season, player_id, team, game_id, date int days, min) and
+    `teams` (season, team, game_id, date, min) of NBA teams, scrimmages removed."""
+
+    def __init__(self, players: pd.DataFrame, teams: pd.DataFrame):
+        self.players = players.reset_index(drop=True)
+        self.teams = teams.reset_index(drop=True)
+
+    def truncate(self, d: int) -> "Preseason":
+        return Preseason(self.players[self.players["date"] < d], self.teams[self.teams["date"] < d])
+
+
+def load_preseason(conn: sqlite3.Connection, since: str = FIRST_SEASON) -> Preseason:
+    """Preseason logs of seasons >= since (NBA teams only, `scrimmage` = 0). Empty frames when
+    the tables do not exist (DB before migration 15)."""
+    nba = "(SELECT DISTINCT team FROM team_games)"
+    try:
+        pl = pd.read_sql_query(
+            "SELECT season, player_id, team, game_id, game_date, min FROM preseason_player_games "
+            f"WHERE season >= ? AND scrimmage = 0 AND team IN {nba}", conn, params=(since,))
+        tm = pd.read_sql_query(
+            "SELECT season, team, game_id, game_date, min FROM preseason_team_games "
+            f"WHERE season >= ? AND scrimmage = 0 AND team IN {nba}", conn, params=(since,))
+    except Exception:  # pragma: no cover - no migration 15
+        pl = pd.DataFrame(columns=["season", "player_id", "team", "game_id", "game_date", "min"])
+        tm = pd.DataFrame(columns=["season", "team", "game_id", "game_date", "min"])
+    for d in (pl, tm):
+        d["date"] = _days(d["game_date"]) if len(d) else np.zeros(0, np.int64)
+        d.drop(columns=["game_date"], inplace=True)
+        d["min"] = pd.to_numeric(d["min"], errors="coerce").fillna(0.0).astype(float)
+    pl["player_id"] = pl["player_id"].astype(np.int64)
+    tm["min"] = tm["min"].where(tm["min"] > 0, TEAM_MIN)
+    return Preseason(pl, tm)
+
+
+def attach_preseason(h: History, conn: sqlite3.Connection, since: str | None = None) -> History:
+    """`h` with its preseason logs (h.pre) loaded from the seasons of its box history on."""
+    if since is None:
+        since = str(h.tg["season"].min()) if len(h.tg) else FIRST_SEASON
+    h.pre = load_preseason(conn, since)
+    return h
+
+
+V1_PRESEASON = ("pre_gp", "pre_mpg", "pre_mpg_l2", "pre_l2_gp", "pre_share", "pre_rank",
+                "pre_rel_prior", "pre_rel_team", "pre_none")
+# team-level (same on every row of a team-game; input of the debut reserve, not a GBM feature):
+# preseason minutes per team preseason game of the team's camp players with no box row before
+# the date (rookies / new to the league: never minutes-engine candidates)
+PRE_TEAM_COLS = ("pre_new_tg",)
+DEBUT_BINS = (0, 1, 5, 15)      # team games into the season: {0}, {1-4}, {5-14}, {15+}
+PRE_MAX_TGS = 20     # V1_PRESEASON set to NaN from this many team games on (None: never)
+
+
+def preseason_features() -> list:
+    """The v1 GBM feature list of the preseason arm (COURTSIDE_PRESEASON)."""
+    return list(V1_FEATURES) + list(V1_PRESEASON)
+
+
+def uses_preseason(params: "MinutesParams") -> bool:
+    return any(f in V1_PRESEASON for f in (params.gbm_features or ()))
+
+
+def _preseason_agg(pl: pd.DataFrame, tm: pd.DataFrame) -> tuple[pd.DataFrame, set]:
+    """Per (player, team) of one season's (already cut) preseason: games played for that team,
+    mpg, share of the team's preseason minutes x 5 (DNP = 0), mean minutes in the team's last 2
+    games (DNP = 0) and games played among them, rank on the team by share, mpg minus the team's
+    median mpg (players with >= 2 games). Also the set of teams with games. Only the row team's
+    games count, so a player who changed teams (a departed player in a historical panel built
+    from last season's roster) reads as `pre_none`, not as his new team's role."""
+    cols = ["player_id", "team", "pre_gp", "pre_mpg", "pre_share", "pre_mpg_l2", "pre_l2_gp",
+            "pre_rank", "pre_rel_team"]
+    teams = set(tm["team"].unique())
+    pl = pl[pl["min"] > 0]
+    if not len(pl) or not len(tm):
+        return pd.DataFrame(columns=cols), teams
+    tm = tm.sort_values(["team", "date", "game_id"], kind="mergesort")
+    tmin = tm.groupby("team")["min"].sum()
+    last2 = tm.groupby("team", sort=False).tail(2)
+    l2_n = last2.groupby("team").size()
+    l2 = set(zip(last2["team"], last2["game_id"]))
+    g = pl.groupby(["player_id", "team"])["min"]
+    a = pd.DataFrame({"pre_gp": g.size().astype(float), "pre_mpg": g.mean(), "tot": g.sum()})
+    a = a.reset_index()
+    a = a[a["team"].isin(teams)]
+    a["pre_share"] = 5.0 * a["tot"] / tmin.reindex(a["team"]).to_numpy()
+    inl2 = np.array([(t, gid) in l2 for t, gid in zip(pl["team"], pl["game_id"])], bool)
+    ql2 = pl[inl2].groupby(["player_id", "team"])["min"]
+    idx = pd.MultiIndex.from_frame(a[["player_id", "team"]])
+    a["pre_l2_gp"] = ql2.size().reindex(idx).fillna(0.0).to_numpy(float)
+    a["pre_mpg_l2"] = (ql2.sum().reindex(idx).fillna(0.0).to_numpy(float)
+                       / l2_n.reindex(a["team"]).to_numpy())
+    a["pre_rank"] = a.groupby("team")["pre_share"].rank(ascending=False, method="min")
+    med = a[a["pre_gp"] >= 2].groupby("team")["pre_mpg"].median()
+    a["pre_rel_team"] = a["pre_mpg"] - med.reindex(a["team"]).to_numpy()
+    return a[cols].reset_index(drop=True), teams
+
+
+def prior_season_mpg(h: History, seasons: Iterable[str] = ()) -> pd.DataFrame:
+    """player_id, season S, prev_mpg = regular-season mean regulation minutes in his latest
+    season < S, for every season S in h.tg and `seasons` (earlier seasons only)."""
+    r = h.hist[h.hist["season_type"] == "Regular Season"]
+    m = r.groupby(["player_id", "season"])["min_r"].mean().reset_index()
+    m["y"] = m["season"].str[:4].astype(int)
+    frames = []
+    for s in sorted(set(h.tg["season"]) | set(seasons)):
+        q = m[m["y"] < int(s[:4])].sort_values("y", kind="mergesort")
+        q = q.groupby("player_id", sort=False).tail(1)
+        frames.append(pd.DataFrame({"player_id": q["player_id"].to_numpy(np.int64),
+                                    "season": s, "prev_mpg": q["min_r"].to_numpy(float)}))
+    if not frames:
+        return pd.DataFrame(columns=["player_id", "season", "prev_mpg"])
+    return pd.concat(frames, ignore_index=True)
+
+
+def preseason_columns(h: History, p: pd.DataFrame) -> pd.DataFrame:
+    """Add V1_PRESEASON and PRE_TEAM_COLS to a panel (rows: player_id, team, season, date) from
+    h.pre: the aggregates of the row's team's preseason games of the row's season dated strictly
+    before the row's date. pre_none = 1 when the row's team has preseason games but the player
+    played in none of them (injury, rest, late signing, a different team), 0 when he did, NaN
+    when the team has none (no data). pre_rel_prior = pre_mpg / max(prior-season mpg, 5)."""
+    pre = h.pre
+    p = p.copy()
+    n = len(p)
+    out = {c: np.full(n, np.nan) for c in V1_PRESEASON + PRE_TEAM_COLS}
+    if n and pre is not None and len(pre.teams):
+        dates = p["date"].to_numpy(np.int64)
+        seas = p["season"].to_numpy(object)
+        pids = p["player_id"].to_numpy(np.int64)
+        tms = p["team"].to_numpy(object)
+        tsea = {s: d for s, d in pre.teams.groupby("season", sort=False)}
+        psea = {s: d for s, d in pre.players.groupby("season", sort=False)}
+        for s in pd.unique(seas):
+            if s not in tsea:
+                continue
+            T, Pl = tsea[s], psea.get(s, pre.players.iloc[:0])
+            end = int(T["date"].max()) + 1
+            rows = np.flatnonzero(seas == s)
+            cut = np.minimum(dates[rows], end)
+            for c in np.unique(cut):
+                ri = rows[cut == c]
+                a, teams = _preseason_agg(Pl[Pl["date"] < c], T[T["date"] < c])
+                out["pre_new_tg"][ri] = _new_player_minutes(h, Pl[Pl["date"] < c],
+                                                            T[T["date"] < c], p.iloc[ri])
+                a = a.set_index(["player_id", "team"])
+                key = pd.MultiIndex.from_arrays([pids[ri], tms[ri]])
+                has = key.isin(a.index)
+                team_has = np.array([t in teams for t in tms[ri]], bool)
+                out["pre_none"][ri] = np.where(has, 0.0, np.where(team_has, 1.0, np.nan))
+                out["pre_gp"][ri] = np.where(has, np.nan, np.where(team_has, 0.0, np.nan))
+                if not has.any():
+                    continue
+                sub = a.reindex(key[has])
+                for col in ("pre_gp", "pre_mpg", "pre_share", "pre_mpg_l2", "pre_l2_gp",
+                            "pre_rank", "pre_rel_team"):
+                    out[col][ri[has]] = sub[col].to_numpy(float)
+        if np.isfinite(out["pre_mpg"]).any():
+            pm = prior_season_mpg(h, pd.unique(seas))
+            q = p[["player_id", "season"]].merge(pm, on=["player_id", "season"], how="left")
+            out["pre_rel_prior"] = out["pre_mpg"] / np.maximum(q["prev_mpg"].to_numpy(float), 5.0)
+    if PRE_MAX_TGS is not None and "tgs" in p:
+        late = p["tgs"].to_numpy(float) >= PRE_MAX_TGS
+        for c in V1_PRESEASON:
+            out[c][late] = np.nan
+    for c in V1_PRESEASON + PRE_TEAM_COLS:
+        p[c] = out[c]
+    return p
+
+
+def _new_player_minutes(h: History, pl: pd.DataFrame, tm: pd.DataFrame, rows: pd.DataFrame
+                        ) -> np.ndarray:
+    """Per row (team, date): sum over the team's preseason players with no box row strictly
+    before the date of their preseason minutes / the team's preseason games (DNP = 0). NaN for a
+    team without preseason games."""
+    out = np.full(len(rows), np.nan)
+    if not len(tm):
+        return out
+    n_tg = tm.groupby("team").size()
+    q = pl[pl["min"] > 0].groupby(["team", "player_id"])["min"].sum().reset_index()
+    q["mtg"] = q["min"] / n_tg.reindex(q["team"]).to_numpy()
+    first = h.hist.groupby("player_id")["date"].min()
+    q["first"] = first.reindex(q["player_id"]).to_numpy(float)     # NaN = never in the box
+    keys = rows[["team", "date"]].drop_duplicates()
+    m = keys.merge(q[["team", "mtg", "first"]], on="team", how="left")
+    new = ~(m["first"] < m["date"])                    # no box row before the date (NaN first)
+    m["v"] = np.where(new & m["mtg"].notna(), m["mtg"], 0.0)
+    s = m.groupby(["team", "date"])["v"].sum()
+    has = set(n_tg.index)
+    for i, (t, d) in enumerate(zip(rows["team"], rows["date"])):
+        if t in has:
+            out[i] = float(s.get((t, d), 0.0))
+    return out
+
+
+DEBUT_D_Q = 0.95                # the new players' preseason minutes are winsorised at this
+DEBUT_MAX = 40.0                # training quantile (stored in reserve_debut); reserve cap
+
+
+def _debut_design(tgs, d, cap: float | None = None) -> np.ndarray:
+    """Columns: one-hot of DEBUT_BINS (team games into the season) and the same x the team's
+    new players' preseason minutes `d` (NaN -> 0; capped at `cap`: a camp that rests its
+    regulars gives huge values, e.g. OKC 2026-27 126/game vs a training p95 of ~60)."""
+    tgs = np.asarray(tgs, float)
+    d = np.nan_to_num(np.asarray(d, float))
+    if cap is not None:
+        d = np.minimum(d, cap)
+    b = np.clip(np.searchsorted(np.asarray(DEBUT_BINS), tgs, side="right") - 1, 0,
+                len(DEBUT_BINS) - 1)
+    oh = np.eye(len(DEBUT_BINS))[b]
+    return np.column_stack([oh, oh * d[:, None]])
+
+
+def debut_reserve(params: MinutesParams, p: pd.DataFrame) -> np.ndarray:
+    """Per row: team minutes expected to go to players with no box row before the date
+    (params.reserve_debut = coefficients of `_debut_design` + the cap of its input; clipped to
+    [0, DEBUT_MAX]). Rows without `tgs` get 0."""
+    if not params.reserve_debut or "tgs" not in p or not len(p):
+        return np.zeros(len(p))
+    k = 2 * len(DEBUT_BINS)
+    coef = np.asarray(params.reserve_debut[:k], float)
+    cap = params.reserve_debut[k] if len(params.reserve_debut) > k else None
+    d = p["pre_new_tg"].to_numpy(float) if "pre_new_tg" in p else np.zeros(len(p))
+    return np.clip(_debut_design(p["tgs"].to_numpy(float), d, cap) @ coef, 0.0, DEBUT_MAX)
+
+
+def debut_minutes(h: History, panel: pd.DataFrame) -> pd.Series:
+    """Per panel key (game_id|team): regulation minutes of box rows of that team-game by players
+    with no box row before the game's date (the debut reserve's training target)."""
+    keys = panel[["key", "date"]].drop_duplicates("key")
+    gt = keys["key"].str.split("|", n=1, expand=True)
+    keys = keys.assign(game_id=gt[0].to_numpy(), team=gt[1].to_numpy())
+    hh = h.hist[["game_id", "team", "player_id", "date", "min_r"]].merge(
+        keys[["game_id", "team", "key"]], on=["game_id", "team"])
+    first = h.hist.groupby("player_id")["date"].min()
+    deb = first.reindex(hh["player_id"]).to_numpy() >= hh["date"].to_numpy()
+    s = hh[deb].groupby("key")["min_r"].sum()
+    return s.reindex(keys["key"]).fillna(0.0).set_axis(keys["key"].to_numpy())
+
+
 def truncate(h: History, day) -> History:
     """History restricted to games strictly before `day` (for no-lookahead checks)."""
     d = int(np.datetime64(pd.Timestamp(day).date(), "D").astype(np.int64))
@@ -472,7 +743,8 @@ def truncate(h: History, day) -> History:
     return History(hist=hist, sched=sched, targets=h.targets[h.targets["date"] < d],
                    positions=h.positions, tg=tg,
                    coach=h.coach.truncate(d) if h.coach is not None else None,
-                   births=h.births, shares=h.shares)
+                   births=h.births, shares=h.shares,
+                   pre=h.pre.truncate(d) if h.pre is not None else None)
 
 
 # --- coach by date (N4) ----------------------------------------------------------------------
@@ -854,6 +1126,8 @@ def _v1_panel_columns(h: History, p: pd.DataFrame) -> pd.DataFrame:
         tgs[idx] = np.maximum(k - np.array([first[x] for x in sea]), 0)
     p["g_last3d"] = g3
     p["tgs"] = tgs
+    if h.pre is not None:
+        p = preseason_columns(h, p)
     if h.coach is not None:
         cf = h.coach.features(p["team"].to_numpy(), p["date"].to_numpy())
         for c in cf.columns:
@@ -1079,6 +1353,10 @@ def base_and_pplay(p: pd.DataFrame, params: MinutesParams, absent=None
                          0.01, 0.995)
         base = v1_base(p, params, absent, base).view(V1Base)
         base.s_rows = s_rows
+    if params.reserve_debut:
+        if not isinstance(base, V1Base):
+            base = base.view(V1Base)
+        base.res_add = debut_reserve(params, p)
     return base, pp
 
 
@@ -1127,6 +1405,7 @@ class V1Base(np.ndarray):
     keeps from v0.5. project_arrays reads it, so the copula path (base_and_pplay ->
     project_arrays) needs no change. Slices lose it; run_projection passes it explicitly."""
     s_rows = None
+    res_add = None      # per row: the team debut reserve (reserve_debut), see project_arrays
 
 
 # --- v1: LightGBM base with scenario features (T2.2) ------------------------------------------
@@ -1331,7 +1610,7 @@ def nmu_features(g1, g2, ew, st10, share_j, gj: int, cand: np.ndarray) -> np.nda
 
 def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: MinutesParams,
                    starters=None, share=None, n_ot: float = 0.0, detail: bool = False,
-                   s_reserve: float | None = None):
+                   s_reserve: float | None = None, reserve_add: float | None = None):
     """Scenario projection for one team-game.
 
     base, p_avail (P plays | available), g1/g2 (groups), st10, ew (minutes EWMA blend): arrays
@@ -1340,7 +1619,8 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
     share[i, j] = i's historical share of j's minutes when j sat.
     Returns mean minutes conditional on playing (0 for absent) [and a detail dict].
     s_reserve: the reserve input (sum p x base of the available); default `base.s_rows` (v1,
-    the v0.5 base) when present, else sum p x base.
+    the v0.5 base) when present, else sum p x base. reserve_add: team minutes of debutants
+    added to the reserve (params.reserve_debut); default `base.res_add` when present, else 0.
 
     Next man up (S14), per absent expected starter j (in descending base):
       params.nmu_mode == "top": the top candidate of j's group (then adjacent groups) by
@@ -1443,6 +1723,11 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
         s_reserve = float(np.sum(sr)) if sr is not None and len(sr) == n else None
     s_av = float((p * base).sum()) if s_reserve is None else float(s_reserve)
     reserve = float(reserve_minutes(params, s_av, float(avail.sum()))[0])
+    if reserve_add is None:
+        ra = getattr(base, "res_add", None)
+        reserve_add = float(ra[0]) if ra is not None and len(ra) == n and n else None
+    if reserve_add:
+        reserve = float(np.clip(reserve + reserve_add, 0.0, 150.0))
     total = TEAM_MIN + OT_TEAM_MIN * n_ot - reserve
     cap = CAP + 5.0 * n_ot
     if params.recon == "proportional":
@@ -1677,11 +1962,13 @@ def run_projection(panel: pd.DataFrame, params: MinutesParams, starters: bool = 
         share = shares.matrix(int(dates[idx[0]]), pids[idx], ab[idx]) if shares is not None \
             else None
         sr = getattr(base, "s_rows", None)
+        ra = getattr(base, "res_add", None)
         res = project_arrays(np.asarray(base[idx]), pp[idx], ab[idx], g1[idx], g2[idx],
                              st10[idx], ew[idx], tgt[idx], params,
                              starters=None if stt is None else stt[idx], share=share,
                              detail=True,
-                             s_reserve=None if sr is None else float(sr[idx].sum()))
+                             s_reserve=None if sr is None else float(sr[idx].sum()),
+                             reserve_add=None if ra is None else float(ra[idx][0]))
         out_mean[idx] = res[0]
         out_lift[idx] = res[1]["lift"]
         out_prom[idx] = res[1]["promoted"]
@@ -1794,12 +2081,16 @@ def _fit_nmu(r: pd.DataFrame, shares: "PairShares | None", ridge: float = 1.0) -
 def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = print,
         f_grid=(0.4, 0.6, 0.8), panel: pd.DataFrame | None = None,
         shares: "PairShares | None" = None, version: str = "v0.5",
-        v1_kw: dict | None = None) -> MinutesParams:
+        v1_kw: dict | None = None, debut_reserve: bool = False) -> MinutesParams:
     """Fit every parameter on the `window` seasons before `season` (strictly < season).
 
     panel / shares: optional precomputed oracle panel of those seasons and pair shares
     (events from seasons < season only). version "v1": the v0.5 fit, then `fit_v1` on top
-    (the v0.5 base / P(play) / next-man-up stay as the S15 fallback and the stage-2 inputs)."""
+    (the v0.5 base / P(play) / next-man-up stay as the S15 fallback and the stage-2 inputs).
+    debut_reserve (COURTSIDE_PRESEASON): the reserve is split into players with no box row
+    before the date (`debut_minutes`, OLS on `_debut_design`: team games into the season x the
+    team's new players' preseason minutes -> `reserve_debut`) and everybody else outside the
+    candidate set (the usual spline on the available weight, refit without the debutants)."""
     seasons = sorted(s for s in h.tg["season"].unique() if s < season)[-window:]
     if not seasons:
         raise ValueError(f"no seasons before {season}")
@@ -1821,6 +2112,17 @@ def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = p
     # minutes to players outside the candidate set, as a function of the available weight
     pp_tr = 1.0 / (1.0 + np.exp(-(Z @ pcoef)))
     rcoef = _fit_reserve(panel, base_tr, pp_tr)
+    rdeb: list = []
+    if debut_reserve:
+        deb = debut_minutes(h, panel)
+        rcoef = _fit_reserve(panel, base_tr, pp_tr, minus=deb)
+        kk = panel.drop_duplicates("key")
+        d = kk["pre_new_tg"].to_numpy(float) if "pre_new_tg" in kk else np.zeros(len(kk))
+        d0 = d[(kk["tgs"].to_numpy(float) == 0) & np.isfinite(d)]
+        cap = float(np.quantile(d0, DEBUT_D_Q)) if len(d0) >= 20 else 1e9
+        rdeb = _ols(_debut_design(kk["tgs"].to_numpy(float), d, cap),
+                    deb.reindex(kk["key"]).to_numpy(float), ridge=1.0).tolist() + [cap]
+        log(f"  fit {season}: debut reserve {np.round(rdeb, 3).tolist()}")
     # league starter minutes per group and the top bench player's minutes
     hs = h.hist[h.hist["season"].isin(seasons) & (h.hist["season_type"] == "Regular Season")]
     hs = _attach_groups(hs[["player_id", "season", "game_id", "team", "min_r", "started"]],
@@ -1832,6 +2134,7 @@ def fit(h: History, season: str, window: int = 5, log: Callable[[str], None] = p
     prm.base_coef = coef.tolist()
     prm.pplay_coef = pcoef.tolist()
     prm.reserve_coef = rcoef
+    prm.reserve_debut = rdeb
     prm.starter_league = sl
     prm.bench_target = float(bench.mean())
     prm.mean_n_ot = float(tr["n_ot"].mean())
@@ -1991,16 +2294,21 @@ def fit_v1(h: History, prm05: MinutesParams, panel: pd.DataFrame,
     return prm
 
 
-def _fit_reserve(panel: pd.DataFrame, base: np.ndarray, pp_avail: np.ndarray) -> list:
-    """OLS of the minutes outside the candidate set on the available weight (sum p x base)."""
+def _fit_reserve(panel: pd.DataFrame, base: np.ndarray, pp_avail: np.ndarray,
+                 minus: pd.Series | None = None) -> list:
+    """OLS of the minutes outside the candidate set on the available weight (sum p x base);
+    `minus` (per key): minutes taken out of the target first (the debut reserve's)."""
     av = ~panel["absent"].to_numpy(bool)
     w = np.zeros(len(panel))
     w[np.flatnonzero(av)] = pp_avail * base[av]
     k = pd.DataFrame({"key": panel["key"], "w": w, "a": panel["act_min_r"].fillna(0.0),
                       "av": av}).groupby("key").agg(s=("w", "sum"), act=("a", "sum"),
                                                      n=("av", "sum"))
+    y = TEAM_MIN - k["act"].to_numpy()
+    if minus is not None:
+        y = y - minus.reindex(k.index).fillna(0.0).to_numpy(float)
     return _ols(reserve_design(k["s"].to_numpy(), k["n"].to_numpy()),
-                np.clip(TEAM_MIN - k["act"].to_numpy(), 0, None)).tolist()
+                np.clip(y, 0, None)).tolist()
 
 
 def _fit_margin_noise(prm: MinutesParams, r: pd.DataFrame) -> tuple[int, bool]:
