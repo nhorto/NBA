@@ -641,6 +641,73 @@ def _import_zip(conn, data, filename, sha, path, *, contest_id, slate_id, owners
             "members": members}
 
 
+def _ownership_rows(st: "Standings", resolved: dict, cid: str):
+    """({player_id: (cid, player_id, name, pct, fpts)}, cpt, unmatched, duplicate rows).
+
+    DK lists %Drafted once per (player, roster position): a Classic guard has a PG, a G and a
+    UTIL row (2026-10-20: Brunson 35.9 + 14.8 + 1.9 = 52.6% of lineups), so a player's ownership
+    is the SUM of his rows (the rows add up to 800% over the 8 slots). Showdown CPT rows are kept
+    apart (`cpt`); an exact repeat of a (player, position) row is ignored."""
+    own_rows: dict = {}
+    cpt: dict = {}
+    unmatched: dict = {}
+    seen: set = set()
+    dup = 0
+    for p in st.players:
+        key = (p.name, (p.position or "").strip().upper())
+        if key in seen:
+            dup += 1
+            continue
+        seen.add(key)
+        r = resolved.get(p.name) or {}
+        pid = r.get("player_id")
+        if pid is None:
+            u = unmatched.setdefault(p.name, {"name": p.name, "pct": None})
+            if p.pct_drafted is not None:
+                u["pct"] = (u["pct"] or 0.0) + p.pct_drafted
+            continue
+        if "CPT" in key[1] and st.game_type == "showdown":
+            cpt[str(pid)] = {"name": p.name, "pct": p.pct_drafted, "fpts": p.fpts}
+            continue
+        if pid in own_rows:
+            _, _, name, pct, fpts = own_rows[pid]
+            if p.pct_drafted is not None:
+                pct = (pct or 0.0) + p.pct_drafted
+            own_rows[pid] = (cid, int(pid), name, pct, fpts if fpts is not None else p.fpts)
+        else:
+            own_rows[pid] = (cid, int(pid), p.name, p.pct_drafted, p.fpts)
+    return own_rows, cpt, list(unmatched.values()), dup
+
+
+def rebuild_ownership(conn: sqlite3.Connection, contest_id: str | None = None) -> dict:
+    """Re-read the archived standings CSVs and rewrite ``dfs_contest_ownership`` (all uploaded
+    contests, or one). For files imported before per-position rows were summed."""
+    q = ("SELECT upload_id, contest_id, raw_path, detail FROM dfs_uploads WHERE kind='standings' "
+         "AND contest_id IS NOT NULL" + (" AND contest_id=?" if contest_id else "") +
+         " ORDER BY upload_id")
+    done, failed = {}, {}
+    for u in conn.execute(q, (str(contest_id),) if contest_id else ()).fetchall():
+        cid = str(u["contest_id"])
+        try:
+            text = decode_text(Path(u["raw_path"]).read_bytes())
+        except OSError as e:
+            failed[cid] = str(e)
+            continue
+        st = parse_standings(text, Path(u["raw_path"]).name, cid)
+        sid = (_loads(u["detail"], {}) or {}).get("slate_id")
+        resolved = resolve_players(conn, {p.name for p in st.players}, sid)
+        own_rows, _, unmatched, _ = _ownership_rows(st, resolved, cid)
+        with conn:
+            conn.execute("DELETE FROM dfs_contest_ownership WHERE contest_id=?", (cid,))
+            conn.executemany("INSERT OR REPLACE INTO dfs_contest_ownership (contest_id, "
+                             "player_id, name, pct_drafted, fpts) VALUES (?,?,?,?,?)",
+                             list(own_rows.values()))
+        pcts = [r[3] for r in own_rows.values() if r[3] is not None]
+        done[cid] = {"players": len(own_rows), "sum_pct": round(sum(pcts), 1),
+                     "unmatched": len(unmatched)}
+    return {"contests": done, "failed": failed}
+
+
 def _import_standings(conn, text, filename, sha, path, *, contest_id, slate_id, owners,
                       allow_live, now) -> dict:
     dup = _find_upload(conn, sha)
@@ -693,21 +760,7 @@ def _import_standings(conn, text, filename, sha, path, *, contest_id, slate_id, 
 
     res_rows = [(cid, e.rank, entry_hash(e.entry_id), e.points, e.lineup,
                  payout_at(table, e.rank) if table else None, now) for e in st.entries]
-    own_rows, cpt, unmatched, dup_names = {}, {}, [], 0
-    for p in st.players:
-        r = resolved.get(p.name) or {}
-        pid = r.get("player_id")
-        is_cpt = "CPT" in p.position.upper()
-        if pid is None:
-            unmatched.append({"name": p.name, "pct": p.pct_drafted})
-            continue
-        if is_cpt and st.game_type == "showdown":
-            cpt[str(pid)] = {"name": p.name, "pct": p.pct_drafted, "fpts": p.fpts}
-            continue
-        if pid in own_rows:
-            dup_names += 1
-            continue
-        own_rows[pid] = (cid, int(pid), p.name, p.pct_drafted, p.fpts)
+    own_rows, cpt, unmatched, dup_names = _ownership_rows(st, resolved, cid)
 
     with conn:
         if meta is None:
@@ -1157,7 +1210,16 @@ def add_commands(sub) -> dict:
     p.add_argument("--username", default=None, help="your DK username (default: "
                                                     "$COURTSIDE_DK_USERNAME / dk_username.txt)")
     p = sub.add_parser("results-list", help="uploaded contests, your real entries and P&L")
-    return {"results-import": _import_cmd, "results-list": _list_cmd}
+    p = sub.add_parser("results-rebuild-ownership",
+                       help="re-read archived standings and rewrite the real ownership table")
+    p.add_argument("--contest-id", default=None)
+    return {"results-import": _import_cmd, "results-list": _list_cmd,
+            "results-rebuild-ownership": _rebuild_cmd}
+
+
+def _rebuild_cmd(args) -> int:
+    print(json.dumps(rebuild_ownership(_conn(), args.contest_id), indent=2))
+    return 0
 
 
 def _conn():

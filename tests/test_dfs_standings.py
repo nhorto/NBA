@@ -361,3 +361,27 @@ def test_ownership_dataset_joins_pre_lock_inputs(conn):
     assert r["salary_rank"] == len(NAMES) - 2 and r["field_size"] == 10
     assert r["value_proj"] == pytest.approx(27.0 / 3.6)
     assert r["game_type"] == "classic" and r["nba_day"] == DAY
+
+
+def test_ownership_sums_a_players_roster_position_rows(conn, data_dir):
+    """DK lists %Drafted once per (player, roster position): Brunson PG 35.9 + G 14.8 + UTIL 1.9
+    on 2026-10-20. A player's ownership is the sum; an exact repeat row is ignored."""
+    pb = player_block() + [("Joel Embiid", "C", "10.00%", "30.0"),        # 2nd position row
+                           ("Joel Embiid", "UTIL", "2.50%", "30.0"),
+                           ("Joel Embiid", "UTIL", "2.50%", "30.0"),       # exact repeat
+                           ("Mystery Guest", "C", "0.5%", "10"),
+                           ("Mystery Guest", "UTIL", "0.25%", "10")]
+    res = ST.import_upload(conn, standings_csv(ten_entries(), pb), FNAME, owner_names=[])
+    assert res["ownership_rows"] == len(NAMES)
+    assert res["unmatched"] == [{"name": "Mystery Guest", "pct": 0.75}]
+    o = conn.execute("SELECT pct_drafted, fpts FROM dfs_contest_ownership WHERE contest_id=? AND "
+                     "player_id=?", (CONTEST, nba_id(0))).fetchone()
+    assert o["pct_drafted"] == pytest.approx(60.0 + 10.0 + 2.5) and o["fpts"] == 30.0
+    # rebuild from the archive gives the same table (and fixes rows stored the old way)
+    conn.execute("UPDATE dfs_contest_ownership SET pct_drafted=60.0 WHERE player_id=?", (nba_id(0),))
+    conn.commit()
+    out = ST.rebuild_ownership(conn)
+    assert out["failed"] == {} and out["contests"][CONTEST]["players"] == len(NAMES)
+    o = conn.execute("SELECT pct_drafted FROM dfs_contest_ownership WHERE contest_id=? AND "
+                     "player_id=?", (CONTEST, nba_id(0))).fetchone()
+    assert o["pct_drafted"] == pytest.approx(72.5)
