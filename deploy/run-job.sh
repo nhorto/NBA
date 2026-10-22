@@ -131,7 +131,8 @@ if [ -z "$uv_bin" ]; then
 fi
 
 if [ "$job" = "weekly" ]; then
-  # MLOps: train challengers (offline gate), evaluate shadows (online gate), refresh the card.
+  # MLOps: train challengers (offline gate), evaluate shadows (online gate), refresh the card;
+  # then the weekly DFS report.
   rc=0
   for cmd in "retrain --model all" "shadows" "card"; do
     # shellcheck disable=SC2086
@@ -139,6 +140,10 @@ if [ "$job" = "weekly" ]; then
     r="${PIPESTATUS[0]}"
     [ "$r" -ne 0 ] && rc="$r"
   done
+  # Weekly DFS report (T3.3): read-only; a failure is logged but does not fail the job.
+  "$uv_bin" run --frozen courtside proj weekly-report 2>&1 | log_lines
+  r="${PIPESTATUS[0]}"
+  [ "$r" -ne 0 ] && echo "[run-job] weekly-report failed (exit $r), not fatal" | log_lines
 else
   "$uv_bin" run --frozen courtside collect "$job" 2>&1 | log_lines
   rc="${PIPESTATUS[0]}"
