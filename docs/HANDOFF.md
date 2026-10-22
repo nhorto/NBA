@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-21 ~23:10 ET (day 2; live model pathA-v0.3+p2).*
+*Last updated 2026-10-22 ~00:30 ET (day 2; live model pathA-v0.3+p2).*
 
 ## 0. Where we are, in one paragraph
 
@@ -64,6 +64,14 @@ Operational notes:
 - **#3 minutes-ratio re-key (`COURTSIDE_MINRATIO=1`, `+mr`, c8ded64 / 7b9836d): OFF, not shipped.** Design B (pooled) CRPS −2.8 / −2.0 SE (2023-24 / 2024-25), −3.3 / −4.9 SE RotoGuru, live flat, but the bench tier is worse in all six sets. Design C (P-tiered, `PL_TIERS_C`) has bigger CRPS gains but fails four tier checks. Root cause: planned demotions (P < 0.9 × last-10 minutes) get P(play) +0.04–0.06 and E[min] +0.4–0.8 too high, which the old per-minute penalty hid.
 - **#2 preseason minutes (`COURTSIDE_PRESEASON=1`, `+pre`, 7b9836d): OFF, not shipped.** First 15 games: minutes MAE −1.4 / −2.8 / −0.9 SE (2023-24 / 2024-25 / 2025-26); flat after; star tier worse in full-season terms (+1.4 / +2.6 SE). The season-start debut reserve over-reserves (opener: 18–30 min held back for BOS/OKC/PHI/SAS, debutants played 0–13).
 - **In progress (agents):** `COURTSIDE_MINFIX` (`+mf`): fix demotion over-projection + minutes dispersion + a robust debut reserve, then re-evaluate +mf, +mf+mr, +mf+pre. #1 prop lines as an F0 feature group (as-of join, de-vig, readiness report), off by default; only 2 nights of props so far.
+
+**Added 2026-10-22 overnight:**
+- **Lock−10 Questionable refit (`COURTSIDE_PPLAYQ=1`, `+pq`, 2968f08): OFF, clears the bar, owner decision.** At lock−10 flagged starters get 0.99, so the report cell ran high for listed non-starters (Q non-starters 0.53 vs 0.36 played). Logit offsets by status × role once ≥ 3 DK starter flags are out. Lock−10 listed P(play) log loss −3.2 SE walk-forward (−4.1 SE leave-month-out), DFS CRPS on the lock−10 slice −2.7 SE, no tier worse, lock−45 identical. "Returning" split did not pass. OFF bit-identical (36/36 frames). `docs/research/pplay-q-refit.md`. The `+pq` version tag in `pipeline._versions()` is still to wire (after MINFIX lands; lines in the agent report / research doc).
+- **Slice artifact found:** the 2026-10-21 p2 slice (`courtside-compute/p2`) had an empty `data/raw`, so every game ran at 19:30 ET (doubling lock−10 listed rows). Re-run with real tip times: p2 vs v1 CRPS −6.9 SE (lock−45) / −7.4 SE (lock−10), no tier worse, so p2 stands. `live_like_baseline.json` now has a `pathA-v0.3+p2` per-model block from the real-tip run (3b1c069). return-minutes.md's live+p2 numbers used the artifact frames.
+- **Weekly DFS report (T3.3, 53439d6, deployed):** `courtside proj weekly-report`, `/dfs/weekly` (linked from /dfs and /dfs/results). Not in the weekly job yet (hook: a non-fatal step in the collect weekly job calling `proj.reports.weekly_dfs_report` + `write_report`).
+- **Grader fix (d18b963, deployed):** manual runs count in player snapshots only on nights without scheduled runs (night 1 showed 8.71 vs 7.14 DK MAE from 11 manual pathA-v0.1 rows).
+- **#1 F9 prop lines (f3c86c1): built, OFF.** Readiness ~Nov 9–14; PLAYERS.md §7.1 L6 (props never features) needs an owner amendment before F9 can ship. No free historical prop source (The Odds API from 2023-05 is paid).
+- Fixed a wall-clock-dependent test (`test_postgame_espn_final_updates_game`).
 
 **Next (in order):**
 1. Watch tonight's lock runs (first lock 19:00 ET) and tomorrow's 03:00 grading under `pathA-v0.3+p2`; add a `+p2` block to `live_like_baseline.json` once it has a few nights.
