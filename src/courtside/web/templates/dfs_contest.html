@@ -26,7 +26,7 @@
 {% endif %}
 
 <div class="wrap dfs-body">
-  <p class="caveat dfc-sim"><strong>{{ v.sim_label }}.</strong> Every number on this page comes from our simulations of tonight&rsquo;s games, scored against a modelled field. Ownership and the field are a <b>proxy</b> built from public information, not real entries. A modelled field is likely weaker than a real DraftKings field, so raw payouts would run far above what real contests return. Until real standings calibrate them, the page compares lineup sets and shows chances as ranges instead of dollar forecasts.</p>
+  <p class="caveat dfc-sim"><strong>{{ v.sim_label }}.</strong> Every number on this page comes from our simulations of tonight&rsquo;s games, scored against a modelled field. Ownership and the field are a <b>proxy</b> built from public information, not real entries. On the first slate with real standings, the modelled field scored about like the real contests, but our lineups finished in the money less often than the simulations said; one slate cannot tell luck from bias. Until real standings from more slates calibrate them, the page compares lineup sets and shows chances as ranges instead of dollar forecasts.</p>
 </div>
 
 {# ================================================================ RESULT #}
@@ -89,7 +89,7 @@
     </table>
   </div>
   <p class="muted dfc-note">Chance that at least one entry finishes in each range; fees under each count. Every row is scored on the same simulated nights: when the core players have a bad night, all the entries suffer together, so the chances climb more slowly than separate tries would.{% if cv.has_subset %} Smaller rows are picked from this set{% if cv.has_extended %}; larger rows add lineups that are not in its CSV{% endif %}.{% elif cv.has_extended %} Larger rows add lineups that are not in this set&rsquo;s CSV.{% endif %}{% if cv.short %} Only {{ cv.short.entries }} lineups fit the limits for {{ cv.short.requested }} entries.{% endif %}</p>
-  {% if not cv.calibrated %}<p class="caveat dfc-note">These chances are against our modelled field, which is much weaker than a real DraftKings field, so real chances are far lower. Use the table to see how the chances grow with more entries, not as real odds. Rough ranges until real standings from {{ cv.cal_needed }} slates are uploaded to check the payout model ({{ cv.cal_slates }} so far).</p>{% endif %}
+  {% if not cv.calibrated %}<p class="caveat dfc-note">These chances are against our modelled field and assume our projections are as good as the simulations say. On the first slate with real standings, our lineups finished in the money in double-ups about half the time where the simulations had said about 7 in 10, so real chances are likely lower. Use the table to see how the chances grow with more entries, not as real odds. Rough ranges until real standings from {{ cv.cal_needed }} slates are uploaded to check the payout model ({{ cv.cal_slates }} so far).</p>{% endif %}
   {% endif %}
   {% if sm.stopped %}<p class="caveat">Only {{ sm.entries }} of {{ sm.requested }} lineups fit the exposure and shared-player limits. Loosen them to get more.</p>{% endif %}
   <div class="dfs-actions dfc-dl">

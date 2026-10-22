@@ -29,7 +29,10 @@ What is written (migration 12 tables, plus the two snapshot tables of migration 
   cap or under min games/teams). The cash line comes only from an uploaded standings file
   (``dfs_contest_results``): ``cash_line_source`` 'real' with ``cash_line`` = the lowest score
   that was paid, ``would_cash``, ``est_rank`` (1 + entries scoring more) and ``est_payout`` (the
-  contest payout table at that rank). Without one the source is 'none' and those columns stay
+  contest payout table at that rank). A double-up uploaded without a payout table (known only
+  from its standings and the contest history) gets DK's round(0.435 x entries) paid places at
+  2x the fee: the line is still a real score, the per-contest ``line_source`` says
+  'inferred double-up'. Without one the source is 'none' and those columns stay
   NULL: nothing is invented. ``detail_json`` carries the day, mode, rank, run kind, whether the
   lineup was the one in effect at lock ("effective": the reference run's lineup, replaced by its
   swap version), per-player actuals, unresolved players and the per-contest numbers.
@@ -75,6 +78,7 @@ import pandas as pd
 from ... import config
 from .. import metrics as MT
 from .. import store as SO
+from . import field as F
 from . import optimizer as O
 from . import rules as R
 
@@ -471,6 +475,11 @@ def contest_results(conn, slate_id: str) -> list[dict]:
     if _has_table(conn, "dfs_entries"):
         cids |= {r[0] for r in conn.execute("SELECT DISTINCT contest_id FROM dfs_entries WHERE "
                                             "slate_id=? AND contest_id IS NOT NULL", (str(slate_id),))}
+    hist = {}
+    if _has_table(conn, "dfs_entries"):
+        for r in conn.execute("SELECT contest_id, entry_fee, note FROM dfs_entries WHERE "
+                              "slate_id=? AND contest_id IS NOT NULL", (str(slate_id),)):
+            hist.setdefault(r[0], (r[1], r[2]))
     out = []
     for cid in sorted(c for c in cids if c):
         rows = conn.execute("SELECT points, payout FROM dfs_contest_results WHERE contest_id=? "
@@ -483,21 +492,36 @@ def contest_results(conn, slate_id: str) -> list[dict]:
                             "WHERE contest_id=?", (cid,)).fetchone()
         table = _loads(meta["payout_json"], []) if meta else []
         table = [t for t in (table or []) if isinstance(t, dict) and "min_pos" in t]
-        line = None
+        name = meta["name"] if meta else None
+        fee = meta["entry_fee"] if meta else None
+        h_fee, h_note = hist.get(cid, (None, None))
+        if not name and h_note:                 # contest-history import: "history: <Entry> (1/3)"
+            name = h_note.replace("history:", "").split(" (")[0].strip() or None
+        fee = fee if fee else h_fee
+        line, source = None, None
         paid = pts[np.nan_to_num(pay, nan=0.0) > 0]
         if len(paid):
-            line = float(paid.min())
+            line, source = float(paid.min()), "paid rows"
         elif table:
             places = max((t["max_pos"] for t in table if (t.get("payout") or 0) > 0), default=0)
             srt = np.sort(pts)[::-1]
             if 0 < places <= len(srt):
-                line = float(srt[places - 1])
-        out.append({"contest_id": cid, "name": meta["name"] if meta else None,
-                    "entry_fee": meta["entry_fee"] if meta else None,
+                line, source = float(srt[places - 1]), "payout table"
+        elif name and F.is_double_up(name) and len(pts) >= 2:
+            # no payout table was captured (a contest known only from the upload and the contest
+            # history): DK double-ups pay 2x the fee to round(0.435 x entries) places (exact on
+            # the 2026-10-20 uploads: 125 / 287, 500 / 1,149, 200 / 459). The score at that rank
+            # is still a real score; only the paid rank is inferred.
+            places = F.du_paid_places(len(pts))
+            line, source = float(np.sort(pts)[::-1][places - 1]), "inferred double-up"
+            if fee:
+                table = [{"min_pos": 1, "max_pos": places, "payout": 2.0 * float(fee)}]
+        out.append({"contest_id": cid, "name": name, "entry_fee": fee,
                     "field_size": int(len(pts)), "points": np.sort(pts)[::-1],
                     "payouts": pay[np.argsort(-pts, kind="stable")], "table": table,
-                    "cash_line": line})
+                    "cash_line": line, "line_source": source})
     return out
+
 
 
 def _cash_fields(actual: float, contests: list[dict], lineup: dict) -> tuple[dict, list[dict]]:
@@ -513,7 +537,8 @@ def _cash_fields(actual: float, contests: list[dict], lineup: dict) -> tuple[dic
         else:
             payout = 0.0
         per.append({"contest_id": c["contest_id"], "name": c["name"], "field": c["field_size"],
-                    "cash_line": c["cash_line"], "est_rank": rank, "est_payout": payout,
+                    "cash_line": c["cash_line"], "line_source": c.get("line_source"),
+                    "est_rank": rank, "est_payout": payout,
                     "would_cash": (None if c["cash_line"] is None
                                    else int(actual >= c["cash_line"] - 1e-9))})
     if not per:
@@ -522,9 +547,10 @@ def _cash_fields(actual: float, contests: list[dict], lineup: dict) -> tuple[dic
     pick = None
     if lineup.get("contest_id"):
         pick = next((p for p in per if p["contest_id"] == lineup["contest_id"]), None)
-    if pick is None and lineup["mode"] == "cash":
-        pick = next((p for p in per if p["name"] and any(
-            k in p["name"].lower() for k in ("double up", "50/50", "h2h", "head"))), None)
+    if pick is None and lineup["mode"] == "cash":       # the largest cash-style contest
+        cash_like = [p for p in per if p["name"] and any(
+            k in p["name"].lower() for k in ("double up", "50/50", "h2h", "head"))]
+        pick = max(cash_like, key=lambda p: p["field"]) if cash_like else None
     if pick is None:
         pick = max(per, key=lambda p: p["field"])
     return {"cash_line": pick["cash_line"], "cash_line_source": "real",

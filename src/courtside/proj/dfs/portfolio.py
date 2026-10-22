@@ -98,7 +98,11 @@ MIN_CAL_SLATES = F.MIN_FIT_SLATES   # dollar E[payout] / ROI headlines only from
 TRUTH_BETA = 0.18
 TRUTH_TAU = 0.18
 # Field strength = how informed the field's projection is: the share of ours in its public blend
-# (default 0.5) moves -0.25 / 0 / +0.25; the optimizer-built share stays at medium's 40 %.
+# (default 0.5) moves -0.25 / 0 / +0.25; the optimizer-built share stays at the archetype's
+# default (field.ARCHETYPES "mix": 40 % cash / small GPP, 20 % large GPP since field-proxy-1.1).
+# The first real standings (2026-10-20, docs/research/real-standings-2026-10-20.md) put the
+# medium field's cash line at the ACTUAL box scores within the real contests' spread (double-ups
+# 248 vs 237-248 real, GPP 253 vs 253), so medium stays the headline.
 # PLAYERS.md S12's mix-based strengths (20/80, 40/60, 70/30) do not order: the optimizer part is
 # resampled from ~200 solves, so a 70 % optimizer field had 4.4k unique lineups vs 11.3k soft, a
 # lower top tail, and scored as the EASIEST field for a fixed set (soft 748 / medium 563 / sharp

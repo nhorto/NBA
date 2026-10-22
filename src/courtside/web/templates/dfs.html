@@ -51,7 +51,7 @@
 {% if lu.p_cash is not none and not v.payout_calibrated %}
 <details class="dfs-simdet">
   <summary>Details <span class="muted">(simulated vs a modelled field, uncalibrated)</span></summary>
-  <p>Chance to cash in the slate&rsquo;s largest captured double-up: <b>{{ pband(lu.p_cash) }}</b>. This is simulated against a modelled field built from public information (a proxy), and the range includes &plusmn;3 points of field-sampling error. Real double-up fields are tougher, so it runs high until uploaded standings calibrate it.</p>
+  <p>Chance to cash in the slate&rsquo;s largest captured double-up: <b>{{ pband(lu.p_cash) }}</b>. This is simulated against a modelled field built from public information (a proxy), and the range includes &plusmn;3 points of field-sampling error. On the first slate with real standings, our lineups finished in the money less often than this estimate said, so treat it as high until more uploaded standings calibrate it.</p>
 </details>
 {% endif %}
 {%- endmacro %}

@@ -18,22 +18,28 @@ Four parts:
    slates). The allocation is a softmax per roster slot, balanced Sinkhorn-style so that every
    slot column sums to its count (Σ own = 800 % Classic, 600 % Showdown with the CPT column as
    the captain split) and no player exceeds `row_cap`. A salary "shadow price" λ (bisection)
-   makes the expected lineup spend Σ own_i*salary_i equal the field's spend (≈ 99 % of the cap),
-   so the proxy is affordable on average. `conc` depends on the contest archetype (cash is
-   chalkier). `fit_from_uploads` re-estimates the b's from real %Drafted.
+   makes the expected lineup spend Σ own_i*salary_i equal the field's spend (SPEND, 99.7 % of
+   the cap), so the proxy is affordable on average. `conc` depends on the contest archetype
+   (cash is much more concentrated). `fit_from_uploads` re-estimates the b's from real %Drafted.
 
 2. **Field proxy** (`build_field`). F lineups (F up to the field size, or a 10-20k sample for big
    GPPs; each sampled lineup is a weight of M/F entries), a labelled mixture (S12):
-   * `mix` (default 0.40, "medium") **optimizer-like**: `n_solves` CP-SAT solves on the public
+   * `mix` (default: the archetype's, 0.40 / 0.20 large GPP) **optimizer-like**: `n_solves`
+     CP-SAT solves on the public
      projection x exp(N(0, σ²)), resampled with replacement (reproduces optimizer dupes);
    * 1 - mix **ownership-sampled**: slots filled in scarcity order from the per-slot ownership
      allocation, with salary feasibility at every step and a per-lineup spend floor drawn from the
-     salary-use behaviour (most of the field spends >= 98 % of the cap); invalid lineups (games /
+     salary-use behaviour (most of the field spends >= 99 % of the cap); invalid lineups (games /
      teams minimums) are dropped. The per-slot weights get a few iterative-proportional-fitting
      steps so that the *whole field's* ownership reproduces the proxy where the optimizer part
      allows it.
-   Archetypes: cash (sharper projections, more chalk, tighter salary use), small GPP, large GPP.
-   Strengths: soft 20/80, medium 40/60, sharp 70/30 (`STRENGTHS`).
+   Archetypes (`ARCHETYPES`): cash (more concentrated ownership, low optimizer noise so entries
+   duplicate as in real double-ups), small GPP, large GPP (a smaller optimizer share: real big
+   GPPs are mostly unique lineups); all spend ~99.7 % of the cap on average. Calibrated in
+   direction and scale on the 2026-10-20 standings (field-proxy-1.1), not fitted.
+   The default mix is the archetype's (`mix=None` / "medium"); "soft" 20/80 and "sharp" 70/30
+   (`STRENGTHS`) remain for explicit use. The contest builder varies the field's information
+   (`portfolio.STRENGTH_W`), not the mix.
 
 3. **Scoring against the sims** (`evaluate`). Player DK points of the projection run (npz, S x n)
    are quantised to 1/32 point so lineup sums are exact (dupes tie exactly); field scores are one
@@ -48,7 +54,11 @@ Four parts:
 4. **Store** (`score_run`): `dfs_ownership_proxy` for the run and P(cash) / P(top 1 %) /
    E[payout] / dupes on the run's cash + Top N rows of `dfs_lineups`.
 
-CLI: `courtside dfs field --slate ID [--contest ID] [--n 5000]` (`add_commands`).
+CLI: `courtside dfs field --slate ID [--contest ID] [--n 5000]` (`add_commands`);
+`courtside dfs field-calib [--fit [--save]]`: what the uploaded standings say (partial calibration
+report: real lineup structure and concentration vs the proxy, the cash / GPP concentration
+exponent per slate) and, from MIN_FIT_SLATES slates, the ownership refit. The field-at-actual
+comparison (cash line, top-1 % line vs the real standings) is research/real_standings_calib.py.
 """
 
 from __future__ import annotations
@@ -73,9 +83,9 @@ from .rules import PoolPlayer, Rules, SlatePool
 log = logging.getLogger(__name__)
 
 LABEL = "proxy"
-MODEL = "own-proxy-1.0"
+MODEL = "own-proxy-1.1"              # 1.1: per-archetype concentration + spend from real standings
 HANDSET_VERSION = f"{MODEL}-handset"
-FIELD_VERSION = "field-proxy-1.0"
+FIELD_VERSION = "field-proxy-1.1"    # 1.1: cash optimizer noise, salary use (2026-10-20 standings)
 MIN_FIT_SLATES = 10                 # §9: show bands until >= 10 calibrated slates
 PARAMS_FILE = "dfs_ownership_params.json"
 
@@ -94,20 +104,41 @@ DEFAULT_PARAMS: dict[str, float] = {
     "w_ours": 0.50,         # public projection = w*ours + (1-w)*DK FPPG
 }
 ROW_CAP = 0.92              # no player above 92 % (one slot per lineup)
-SPEND = 0.99                # field's expected spend / cap (salary-use behaviour)
+SPEND = 0.997               # field's expected spend / cap: real fields average $49,820-49,920
+                            # of $50,000 (4 contests, 31k lineups, 2026-10-20); 1.0 used 0.99
 HARD_FLOOR = 0.90           # sampled lineups below 90 % of the cap are rejected
 MIN_PUB_PROJ = 2.0          # the field never drafts players projected under 2 DK points
 BANDS = ((0.25, "High"), (0.10, "Med"), (0.0, "Low"))
 
 # Contest archetypes: concentration of the ownership utility (cash is chalkier), projection noise
-# of the optimizer-like part (cash fields are sharper), and salary use (share spending >= 98 %).
+# of the optimizer-like part (cash fields are sharper and duplicate more), salary use (share of
+# sampled lineups spending >= 99 % of the cap; the rest >= 98 % / 96 %) and expected spend.
+# Calibrated in direction and scale on the first real standings (2026-10-20, slate 154575, three
+# double-ups + one 29.7k GPP; docs/research/real-standings-2026-10-20.md), NOT fitted (1 slate):
+# * conc: double-up ownership ~ (GPP ownership) ** k on the same slate, k = 2.05 / 2.20 / 3.00
+#   (MAE-best power fit of real %Drafted, `sharpen_exponent`); 1.0 had cash / large GPP = 1.39.
+#   Cash 1.60 (= 1.78 x) is a compromise: higher matches the real concentration but piles onto
+#   the players our proxy wrongly favours (MAE up). Large GPP keeps 0.9 (best MAE vs the real
+#   GPP). small_gpp: no data, unchanged.
+# * noise: real double-ups put 18-35 % of entries on ONE lineup and 62-89 % on duplicated ones;
+#   at 0.10 our cash field had ~1 % / 23-50 % and a top-1 % line 10 points above the real one
+#   (293 vs 283.5 at the actual box scores). 0.03 gives ~8 % / 40-54 % and a 286 top-1 % line;
+#   the cash line at the actual box scores stays inside the real spread (248 vs 237-248).
+# * full_spend: 95-97 % of real lineups used >= $49,500 (99-100 % >= $49,000).
+# * mix (the default = "medium" optimizer-like share): the real 29.7k GPP had 82 % unique
+#   lineups and 28 % of entries in duplicated ones (3,000-entry draws); at 0.40 our large-GPP
+#   field had 62 % / 48 % (the optimizer part resamples ~200 solves), at 0.20 80 % / 30 %, with
+#   the same cash line at the actual box scores (253.4 vs 253.25 real) and the real field's mean
+#   projection (ours 248.8 / public 256.9 vs 247.6 / 256.0 real). Cash and small GPP keep 0.40.
 ARCHETYPES: dict[str, dict[str, float]] = {
-    "cash": {"conc": 1.25, "noise": 0.10, "full_spend": 0.90},
-    "small_gpp": {"conc": 1.00, "noise": 0.15, "full_spend": 0.82},
-    "large_gpp": {"conc": 0.90, "noise": 0.18, "full_spend": 0.78},
+    "cash": {"conc": 1.60, "noise": 0.03, "full_spend": 0.97, "mix": 0.40},
+    "small_gpp": {"conc": 1.00, "noise": 0.15, "full_spend": 0.95, "mix": 0.40},
+    "large_gpp": {"conc": 0.90, "noise": 0.18, "full_spend": 0.95, "mix": 0.20},
 }
+FLOOR_FULL, FLOOR_MOST, FLOOR_REST = 0.99, 0.98, 0.96   # per-lineup spend floors (x cap) ...
+FLOOR_SPLIT = 0.8           # ... of the lineups below FLOOR_FULL, this share gets FLOOR_MOST
 STRENGTHS = {"soft": 0.20, "medium": 0.40, "sharp": 0.70}    # optimizer-like share (S12)
-DEFAULT_MIX = STRENGTHS["medium"]
+DEFAULT_MIX = STRENGTHS["medium"]   # mix=None / "medium" use the archetype's "mix" instead
 SMALL_GPP_MAX = 1000        # field size up to which a GPP is "small"
 FIELD_MAX = 20_000          # sampled lineups for big GPPs (§5.5.3)
 FIELD_MIN = 5_000           # population sample for small contests (opponents drawn per sim)
@@ -253,14 +284,27 @@ def pool_inputs(pool: SlatePool | Sequence[PoolPlayer], *, proj: Mapping[str, fl
     return pd.DataFrame(rows)
 
 
-def slate_inputs(conn: sqlite3.Connection, slate_id, run_id: str | None = None
-                 ) -> tuple[SlatePool, pd.DataFrame, dict]:
+def capture_at(conn: sqlite3.Connection, slate_id, ts: str | None) -> str | None:
+    """The slate's latest `dfs_salaries` capture at or before `ts` (None: no capture that early,
+    or no `ts`)."""
+    if not ts:
+        return None
+    r = conn.execute("SELECT MAX(captured_at) FROM dfs_salaries WHERE slate_id=? AND "
+                     "captured_at<=?", (str(slate_id), ts)).fetchone()
+    return r[0] if r else None
+
+
+def slate_inputs(conn: sqlite3.Connection, slate_id, run_id: str | None = None, *,
+                 as_of: str | None = None) -> tuple[SlatePool, pd.DataFrame, dict]:
     """(pool, inputs, info) for a live DK slate from its latest salary capture, the projection run
-    (`run_id`, default the newest run with sims), line snapshots and recent box-score minutes."""
+    (`run_id`, default the newest run with sims), line snapshots and recent box-score minutes.
+    `as_of` (ISO UTC) uses the latest capture at or before it instead (statuses, starter flags
+    and FPPG as the public saw them then: the ownership refit and the real-standings research
+    rebuild a past run's inputs this way; live runs leave it None = the newest capture)."""
     from . import rules as R
     from .. import ids as IDS
     sid = str(slate_id)
-    pool = R.build_pool(conn, sid)
+    pool = R.build_pool(conn, sid, captured_at=capture_at(conn, sid, as_of))
     run = None
     if run_id is None:
         run = latest_run(conn, sid)
@@ -441,8 +485,10 @@ def sinkhorn(weights: np.ndarray, counts: np.ndarray, row_cap: float = ROW_CAP,
 def ownership_proxy(inputs: pd.DataFrame, pool: SlatePool | Sequence[PoolPlayer],
                     rules: Rules | None = None, *, archetype: str = "large_gpp",
                     params: Mapping[str, float] | None = None, version: str | None = None,
-                    spend: float = SPEND, row_cap: float = ROW_CAP) -> OwnershipProxy:
-    """The ownership proxy (Σ own = number of slots). See the module docstring."""
+                    spend: float | None = None, row_cap: float = ROW_CAP) -> OwnershipProxy:
+    """The ownership proxy (Σ own = number of slots). See the module docstring. `spend`
+    (fraction of the cap the field spends on average) defaults to SPEND."""
+    spend = SPEND if spend is None else float(spend)
     rules = rules or (pool.rules if isinstance(pool, SlatePool) else None)
     if rules is None:
         raise ValueError("no rules")
@@ -534,6 +580,15 @@ def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.corrcoef(ra, rb)[0, 1])
 
 
+def _slate_lock(conn, slate_id) -> str | None:
+    try:
+        r = conn.execute("SELECT lock_utc FROM dfs_slates WHERE slate_id=?",
+                         (str(slate_id),)).fetchone()
+    except (AttributeError, sqlite3.Error):
+        return None
+    return r[0] if r else None
+
+
 def fit_from_uploads(conn: sqlite3.Connection, *, save: bool = True,
                      min_slates: int = MIN_FIT_SLATES, maxiter: int = 400,
                      loso: bool | int = True) -> dict:
@@ -559,9 +614,10 @@ def fit_from_uploads(conn: sqlite3.Connection, *, save: bool = True,
     for cid, g in ds.groupby("contest_id"):
         sid = str(g["slate_id"].iloc[0])
         if sid not in cache:
-            try:
+            try:                                 # inputs as the public saw them at lock
                 cache[sid] = slate_inputs(conn, sid, g["run_id"].dropna().iloc[0]
-                                          if g["run_id"].notna().any() else None)[:2]
+                                          if g["run_id"].notna().any() else None,
+                                          as_of=_slate_lock(conn, sid))[:2]
             except Exception as e:  # noqa: BLE001
                 log.warning("ownership fit: slate %s skipped (%s)", sid, e)
                 cache[sid] = None
@@ -637,6 +693,122 @@ def fit_from_uploads(conn: sqlite3.Connection, *, save: bool = True,
     return rep
 
 
+# ============================================================================== calibration report
+
+def sharpen(p: np.ndarray, k: float, total: float, cap: float = 0.97) -> np.ndarray:
+    """p ** k rescaled so the column sums to `total` (each value capped): the power map from one
+    contest type's ownership to a more (k > 1) or less concentrated one."""
+    x = np.power(np.maximum(np.asarray(p, float), 1e-5), k)
+    lo, hi = 1e-12, 1e12
+    for _ in range(200):
+        c = math.sqrt(lo * hi)
+        if np.minimum(cap, c * x).sum() > total:
+            hi = c
+        else:
+            lo = c
+    return np.minimum(cap, math.sqrt(lo * hi) * x)
+
+
+def sharpen_exponent(gpp: Mapping[str, float], cash: Mapping[str, float],
+                     grid: Sequence[float] = tuple(np.arange(1.0, 3.01, 0.05))) -> float:
+    """k minimising the MAE of cash ownership ~ sharpen(GPP ownership, k) (same slate). The
+    proxy's cash / large-GPP `conc` ratio should be about this k."""
+    keys = sorted(set(gpp) | set(cash))
+    g = np.array([gpp.get(x, 0.0) for x in keys])
+    c = np.array([cash.get(x, 0.0) for x in keys])
+    keep = (g > 0.001) | (c > 0.001)
+    errs = [float(np.mean(np.abs(sharpen(g, k, c.sum())[keep] - c[keep]))) for k in grid]
+    return float(grid[int(np.argmin(errs))])
+
+
+def calibration_report(conn: sqlite3.Connection) -> dict:
+    """What uploaded standings say about the field proxy, per contest: real lineup structure
+    (unique lineups, entries in duplicated lineups, the most duplicated lineup's share),
+    concentration (top-5 / top-10 %Drafted sums) and the ownership proxy's errors at the
+    contest's archetype (inputs at lock), plus per slate the cash vs large-GPP concentration
+    exponent (`sharpen_exponent`). A PARTIAL calibration: it reports the parameters one slate
+    can inform (ARCHETYPES conc ratio, noise / dupes, spend) and changes nothing;
+    `fit_from_uploads` refits the ownership weights from MIN_FIT_SLATES slates."""
+    from . import standings as ST
+    rows = conn.execute(
+        "SELECT DISTINCT r.contest_id, c.slate_id FROM dfs_contest_results r JOIN dfs_contests c "
+        "ON c.contest_id=r.contest_id WHERE c.slate_id IS NOT NULL ORDER BY c.slate_id").fetchall()
+    nba2dk = {}
+    try:
+        from .. import ids as IDS
+        nba2dk = {v: k for k, v in IDS.nba_ids(conn, IDS.DK).items()}
+    except Exception:  # noqa: BLE001 - optional mapping
+        pass
+    ds = ST.ownership_dataset(conn)
+    run_of = dict(zip(ds["contest_id"].astype(str), ds["run_id"])) if len(ds) else {}
+    out: dict = {"label": LABEL, "version": f"{MODEL}/{FIELD_VERSION}", "contests": [],
+                 "slates": {}, "n_slates": len({r[1] for r in rows}), "needed": MIN_FIT_SLATES}
+    cache: dict = {}
+    by_slate: dict = {}
+    for cid, sid in rows:
+        c = load_contest(conn, cid)
+        res = conn.execute("SELECT lineup_text FROM dfs_contest_results WHERE contest_id=?",
+                           (cid,)).fetchall()
+        keys = []
+        for (txt,) in res:
+            pr = ST.parse_lineup(txt)
+            if pr:
+                keys.append(tuple(sorted(n for _, n in pr)))
+        cnt = pd.Series(keys).value_counts() if keys else pd.Series(dtype=int)
+        m = max(1, len(keys))
+        own = {}
+        for pid, pct in conn.execute("SELECT player_id, pct_drafted FROM dfs_contest_ownership "
+                                     "WHERE contest_id=?", (cid,)):
+            k = nba2dk.get(int(pid))
+            if k is not None and pct is not None:
+                own[str(k)] = own.get(str(k), 0.0) + float(pct) / 100.0
+        top = np.sort(np.array(list(own.values()) or [0.0]))[::-1]
+        row = {"contest_id": cid, "slate_id": sid, "name": c.name if c else None,
+               "archetype": c.archetype if c else None, "payouts": c.source if c else None,
+               "entries": len(keys), "unique_share": len(cnt) / m,
+               "dupe_entry_share": float(cnt[cnt > 1].sum()) / m if len(cnt) else 0.0,
+               "max_dupe_share": float(cnt.max()) / m if len(cnt) else 0.0,
+               "own_top5": float(top[:5].sum()), "own_top10": float(top[:10].sum())}
+        if c is not None and own:
+            if sid not in cache:
+                try:
+                    run = run_of.get(str(cid))
+                    cache[sid] = slate_inputs(conn, sid, run if isinstance(run, str) else None,
+                                              as_of=_slate_lock(conn, sid))[:2]
+                except Exception as e:  # noqa: BLE001
+                    log.warning("calibration report: slate %s inputs failed (%s)", sid, e)
+                    cache[sid] = None
+            pred = None
+            if cache[sid] is not None:
+                try:
+                    pred = ownership_proxy(*cache[sid], archetype=c.archetype).as_dict()
+                except (ValueError, KeyError) as e:
+                    log.warning("calibration report: no proxy for slate %s (%s)", sid, e)
+            if pred is not None:
+                ks = sorted(set(pred) | set(own))
+                pp = np.array([pred.get(x, 0.0) for x in ks])
+                yy = np.array([own.get(x, 0.0) for x in ks])
+                keep = (pp > 0.001) | (yy > 0.001)
+                o = np.argsort(-yy)[:10]
+                row["proxy"] = {"mae_pp": float(np.mean(np.abs(pp - yy)[keep]) * 100),
+                                "spearman": _spearman(pp[keep], yy[keep]),
+                                "top10_mae_pp": float(np.mean(np.abs(pp - yy)[o]) * 100),
+                                "top10_bias_pp": float(np.mean((pp - yy)[o]) * 100),
+                                "own_top10": float(np.sort(pp)[::-1][:10].sum())}
+        by_slate.setdefault(sid, []).append((row, own))
+        out["contests"].append(row)
+    for sid, items in by_slate.items():
+        gpp = [o for r, o in items if r["archetype"] == "large_gpp" and o]
+        cash = [(r, o) for r, o in items if r["archetype"] == "cash" and o]
+        if gpp and cash:
+            g = max(gpp, key=len)
+            ks = [sharpen_exponent(g, o) for _, o in cash]
+            out["slates"][sid] = {"cash_vs_gpp_exponent": ks,
+                                  "proxy_conc_ratio": ARCHETYPES["cash"]["conc"]
+                                  / ARCHETYPES["large_gpp"]["conc"]}
+    return out
+
+
 # ============================================================================== contests
 
 @dataclass
@@ -663,7 +835,38 @@ class Contest:
         return pay[: self.field_size + 1]
 
 
+DU_PAID_FRAC = 0.435        # DK double-ups pay 2x the fee to round(0.435 x entries) places
+
+
+def is_double_up(name: str | None) -> bool:
+    n = (name or "").lower()
+    return "double up" in n or "double-up" in n or "50/50" in n
+
+
+def du_paid_places(entries: int) -> int:
+    """Paid places of a DK double-up with `entries` entries (exact on the 2026-10-20 uploads:
+    125 / 287, 500 / 1,149, 200 / 459)."""
+    return max(1, min(int(entries), int(round(DU_PAID_FRAC * int(entries)))))
+
+
+def _history_entry(conn: sqlite3.Connection, contest_id: str) -> tuple[str | None, float | None]:
+    """(contest name, entry fee) from the owner's contest-history entries ("history: NBA $2
+    Double Up (1/3)"), for contests known only from an upload."""
+    try:
+        r = conn.execute("SELECT note, entry_fee FROM dfs_entries WHERE contest_id=? AND note "
+                         "LIKE 'history:%' LIMIT 1", (str(contest_id),)).fetchone()
+    except sqlite3.OperationalError:
+        return None, None
+    if r is None:
+        return None, None
+    name = (r[0] or "").replace("history:", "").split(" (")[0].strip() or None
+    return name, _f(r[1])
+
+
 def load_contest(conn: sqlite3.Connection, contest_id: str) -> Contest | None:
+    """A captured contest. A contest known only from an uploaded standings file (no name, fee or
+    payout table) takes its name and fee from the owner's contest history; a double-up among
+    those gets DK's double-up table (source 'inferred'), so it is classified as cash."""
     r = conn.execute("SELECT * FROM dfs_contests WHERE contest_id=?", (str(contest_id),)).fetchone()
     if r is None:
         return None
@@ -674,10 +877,16 @@ def load_contest(conn: sqlite3.Connection, contest_id: str) -> Contest | None:
     except ValueError:
         attrs = {}
     m = int(d["field_size"] or 0)
+    name, fee, source = (d["name"] or "").strip(), float(d["entry_fee"] or 0), "captured"
+    if not pays and (not name or not fee):
+        h_name, h_fee = _history_entry(conn, str(d["contest_id"]))
+        name, fee = name or (h_name or ""), fee or (h_fee or 0.0)
+        if is_double_up(name) and m >= 2 and fee:
+            pays = [{"min_pos": 1, "max_pos": du_paid_places(m), "payout": 2.0 * fee}]
+            source = "inferred"
     arch = classify_contest({"attrs": {k: attrs.get(k) for k in ("lobby", "selected_as")},
                              "payouts": pays, "field_size": m})
-    return Contest(str(d["contest_id"]), (d["name"] or "").strip(), float(d["entry_fee"] or 0),
-                   m, pays, arch)
+    return Contest(str(d["contest_id"]), name, fee, m, pays, arch, source)
 
 
 def slate_contests(conn: sqlite3.Connection, slate_id) -> list[Contest]:
@@ -859,8 +1068,9 @@ class _Sampler:
 
     def floors(self, B: int, rng) -> np.ndarray:
         u = rng.random(B)
-        f = np.where(u < self.full_spend, 0.98,
-                     np.where(u < self.full_spend + (1 - self.full_spend) * 0.7, 0.96, 0.92))
+        f = np.where(u < self.full_spend, FLOOR_FULL,
+                     np.where(u < self.full_spend + (1 - self.full_spend) * FLOOR_SPLIT,
+                              FLOOR_MOST, FLOOR_REST))
         return f * self.cap
 
     def sample(self, W: np.ndarray, B: int, rng: np.random.Generator) -> np.ndarray:
@@ -910,10 +1120,14 @@ class _Sampler:
         return out[:, order]
 
 
-def _strength(mix) -> float:
+def _strength(mix, archetype: str | None = None) -> float:
+    """Optimizer-like share: None / "medium" = the archetype's default (field-proxy-1.1),
+    "soft" / "sharp" or a number as given."""
+    if mix is None or mix == "medium":
+        return float(ARCHETYPES.get(archetype or "", {}).get("mix", DEFAULT_MIX))
     if isinstance(mix, str):
         return STRENGTHS[mix]
-    return DEFAULT_MIX if mix is None else float(mix)
+    return float(mix)
 
 
 def build_field(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
@@ -931,7 +1145,7 @@ def build_field(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
     players = pool.players if isinstance(pool, SlatePool) else tuple(pool)
     contest = contest or preset_contest("gpp", 10_000)
     archetype = archetype or contest.archetype
-    mix = _strength(mix)
+    mix = _strength(mix, archetype)
     rng = np.random.default_rng(seed)
     if n is None:
         n = int(min(max(contest.field_size, FIELD_MIN), FIELD_MAX))
@@ -1330,10 +1544,11 @@ def store_ownership(conn: sqlite3.Connection, run_id: str, op: OwnershipProxy, *
 
 
 def prepare(conn: sqlite3.Connection, slate_id, run_id: str | None = None, *,
-            n_sims: int | None = None, seed: int = 0) -> dict:
-    """Pool, inputs, rules and aligned sims of a slate run (shared by `score_run` and the CLI)."""
+            n_sims: int | None = None, seed: int = 0, as_of: str | None = None) -> dict:
+    """Pool, inputs, rules and aligned sims of a slate run (shared by `score_run` and the CLI).
+    `as_of`: the salary capture at or before it (re-scoring a past run as it was)."""
     from .. import store as SO
-    pool, inp, info = slate_inputs(conn, slate_id, run_id)
+    pool, inp, info = slate_inputs(conn, slate_id, run_id, as_of=as_of)
     if pool.rules is None:
         raise LookupError(f"no rules for slate {slate_id}")
     sims = None
@@ -1356,7 +1571,7 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
               n_field: int | None = 10_000, n_sims: int | None = None, mix=None,
               n_solves: int = N_SOLVES, seed: int = 0, write: bool = True,
               commit: bool = True, modes: Sequence[str] = ("cash", "topn"),
-              truth: bool = True) -> dict:
+              truth: bool = True, as_of: str | None = None) -> dict:
     """Ownership proxy + field proxies + lineup metrics for one projection run (runner hook).
 
     Writes `dfs_ownership_proxy` (large-GPP archetype, the slate-level "popularity (proxy)") and,
@@ -1378,7 +1593,8 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
         if r is None:
             raise LookupError(f"unknown run {run_id}")
         sid = r[0]
-    ctx = prepare(conn, sid, run_id, n_sims=n_sims, seed=seed)
+    ctx = prepare(conn, sid, run_id, n_sims=n_sims, seed=seed,
+                  **({"as_of": as_of} if as_of else {}))
     pool = ctx["pool"]
     own_gpp = ownership_proxy(ctx["inputs"], pool, archetype="large_gpp")
     if write:
@@ -1531,7 +1747,46 @@ def add_commands(sub) -> dict:
     p.add_argument("--top", type=int, default=20)
     p.add_argument("--write", action="store_true",
                    help="store dfs_ownership_proxy and lineup metrics for the run (score_run)")
-    return {"field": _field_cmd}
+    q = sub.add_parser("field-calib", help="what uploaded DK standings say about the ownership "
+                                           "and field proxy (partial calibration report; "
+                                           "--fit refits the ownership weights from 10 slates)")
+    q.add_argument("--fit", action="store_true", help="also run fit_from_uploads (needs "
+                                                      f"{MIN_FIT_SLATES} slates)")
+    q.add_argument("--save", action="store_true", help="with --fit: save the fitted weights")
+    q.add_argument("--json", action="store_true")
+    return {"field": _field_cmd, "field-calib": _calib_cmd}
+
+
+def _calib_cmd(args) -> int:
+    from ... import db
+    conn = db.connect()
+    rep = calibration_report(conn)
+    if args.fit:
+        rep["fit"] = fit_from_uploads(conn, save=args.save)
+    if args.json:
+        print(json.dumps(rep, indent=1, default=float))
+        return 0
+    print(f"FIELD CALIBRATION (proxy {rep['version']}): {rep['n_slates']} slate(s) of uploaded "
+          f"standings; the ownership refit needs {rep['needed']}")
+    for r in rep["contests"]:
+        px = r.get("proxy") or {}
+        print(f"  {r['contest_id']} {str(r['name'] or '')[:34]:<34} {r['archetype'] or '?':<9} "
+              f"{r['entries']:>6,} entries  unique {r['unique_share']:.0%}  in dupes "
+              f"{r['dupe_entry_share']:.0%}  top lineup {r['max_dupe_share']:.1%}  top-10 own "
+              f"{r['own_top10'] * 100:.0f}%"
+              + (f" (proxy {px['own_top10'] * 100:.0f}%, MAE {px['mae_pp']:.1f} pp, top-10 MAE "
+                 f"{px['top10_mae_pp']:.1f} pp)" if px else ""))
+    for sid, v in rep["slates"].items():
+        print(f"  slate {sid}: cash ~ GPP ownership ** k, k = "
+              + ", ".join(f"{k:.2f}" for k in v["cash_vs_gpp_exponent"])
+              + f"; proxy conc ratio cash / large GPP = {v['proxy_conc_ratio']:.2f}")
+    if args.fit:
+        f = rep["fit"]
+        print(f"  ownership refit: {f['status']} ({f.get('n_slates')} of {f.get('needed', '')} "
+              "slates)" if f["status"] != "fitted" else
+              f"  ownership refit: {f['version']} (in-sample MAE "
+              f"{f['fitted_in_sample']['mae_pp']:.2f} pp vs hand-set {f['handset']['mae_pp']:.2f})")
+    return 0
 
 
 def _field_cmd(args) -> int:

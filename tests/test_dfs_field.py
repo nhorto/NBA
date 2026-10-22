@@ -166,7 +166,8 @@ def built():
 def test_field_lineups_valid(built):
     pool, inp, con, f = built
     assert f.n == 6000 and f.label == "proxy"
-    assert f.n_solves > 0 and f.opt_counts.sum() == round(0.4 * 6000)
+    mix = F.ARCHETYPES[con.archetype]["mix"]          # the archetype's default (medium) share
+    assert f.n_solves > 0 and f.opt_counts.sum() == round(mix * 6000)
     for row in f.lineups:
         check_lineup(row, f, pool, CLASSIC)
 
@@ -403,7 +404,8 @@ def test_fit_from_uploads_recovers_params(tmp_path, monkeypatch):
             rows.append({"contest_id": f"c{s}", "slate_id": str(s), "run_id": None, "dk_id": pid,
                          "pct_drafted": o * 100})
     monkeypatch.setattr(ST, "ownership_dataset", lambda conn: pd.DataFrame(rows))
-    monkeypatch.setattr(F, "slate_inputs", lambda conn, sid, run_id=None: (*pools[sid], {}))
+    monkeypatch.setattr(F, "slate_inputs",
+                        lambda conn, sid, run_id=None, **kw: (*pools[sid], {}))
     monkeypatch.setattr(F, "load_contest", lambda conn, cid: None)
     rep = F.fit_from_uploads(None, maxiter=25, loso=1)
     assert rep["status"] == "fitted" and rep["n_slates"] == 10
