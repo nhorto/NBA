@@ -91,7 +91,7 @@ def test_classic_ownership_sums_to_800(arch):
     op = F.ownership_proxy(inputs_for(pool), pool, archetype=arch)
     assert op.own.sum() == pytest.approx(8.0, abs=1e-6)
     assert np.allclose(op.by_slot.sum(0), op.slot_counts, atol=1e-6)
-    assert op.own.max() <= F.ROW_CAP + 1e-9 and op.own.min() >= 0
+    assert op.own.max() <= op.cap + 1e-9 and op.own.min() >= 0
     assert "proxy" == op.label and op.version.startswith(F.MODEL)
     # expected spend matches the field's salary use
     assert op.spend == pytest.approx(F.SPEND * CLASSIC.salary_cap, rel=0.01)

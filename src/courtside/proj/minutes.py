@@ -96,6 +96,21 @@ noise`). A LightGBM classifier for P(plays) was tested and dropped: it learns th
 own rule (available regulars always play), which does not exist live. With `minfix` empty (OFF)
 nothing changes: the key is left out of the JSON and no code path reads it.
 
+**Reserve extras (rx; `RESERVE_EXTRAS`, env COURTSIDE_RESERVE_EXTRAS=1, default OFF;
+IMPROVEMENTS.md B2b, docs/research/reserve-extras.md).** The reserve is fit on the oracle
+candidates (last-10 roster + regulars who played), so it holds the minutes of everybody else,
+~90 % of them players with box history. The live path forces those players in (DK pool, report),
+so the reserve was held back for players who are already projected. ON, per team-game:
+(1) candidates holding the DK pool (`rx_pool`: `forced`, set by pipeline.candidate_panel, covers
+>= RX_POOL_SHARE of the recent roster): the reserve is refit on that candidate definition = the
+minutes of career debutants (`pool_reserve`: by DEBUT_BINS of team games, seasons < S,
+`reserve_extras_params.json`; ~14 at a season's first game, ~0.15 from game 15); (2) otherwise
+(report-only runs) the fitted reserve on the fit's own candidate set (`_attach_rx`: forced
+extras out of its input, non-regulars the scenario has absent counted as available, as the
+oracle has them), minus the forced extras' planned minutes (p x plan, before the reconcile),
+floored at 0. Same params and bundle; a panel without forced rows (the avail oracle, every fit)
+is unchanged. OFF: no column, attribute or code path of it runs.
+
 Everything learned lives in `MinutesParams` (JSON-serialisable; v1 stores the LightGBM model
 text), produced by `fit(history, S)` from seasons < S only. Structural constants (EWMA alphas, RECON_CV, SHARE_K, tiers, margin
 bins, the 50% shrink) are fixed; RECON_CV and the variance form were chosen on the dev season
@@ -118,7 +133,10 @@ Public API (consumed by T1.4 copula/pipeline)
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+from functools import lru_cache
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Callable, Iterable
 
@@ -1382,6 +1400,7 @@ def base_and_pplay(p: pd.DataFrame, params: MinutesParams, absent=None
     `pplay_coef_v1` with forced extras scored as roster players (see fit_v1)."""
     X = design(p, params.base_features)
     base = np.clip(X @ np.asarray(params.base_coef), 0.5, 44.0)
+    base05 = base
     if absent is None:
         absent = p["absent"].to_numpy(bool) if "absent" in p else np.zeros(len(p), bool)
     absent = np.asarray(absent, bool)
@@ -1404,7 +1423,46 @@ def base_and_pplay(p: pd.DataFrame, params: MinutesParams, absent=None
         if not isinstance(base, V1Base):
             base = base.view(V1Base)
         base.res_add = debut_reserve(params, p)
+    if RESERVE_EXTRAS:
+        base = _attach_rx(p, params, base, base05, absent)
     return base, pp
+
+
+def _attach_rx(p: pd.DataFrame, params: MinutesParams, base: np.ndarray, base05: np.ndarray,
+               absent: np.ndarray) -> np.ndarray:
+    """RESERVE_EXTRAS: the reserve's input on the candidates the fit saw (`oracle_panel`):
+    without the forced extras (`rx_rows`; the oracle has no such rows) and, with
+    RX_ORACLE_ABSENT, with non-regulars the scenario has absent counted as available (the
+    oracle only knows the absences of regulars; a listed-out bench player is an available
+    candidate there). rx_s = v0.5 P(plays) x v0.5 base per row (0 off that set), rx_n = its
+    count. Returns `base` unchanged when no row differs from the fit's candidate set."""
+    rx = rx_rows(p)
+    if rx_pool(p) and "tgs" in p and "season" in p:
+        res = pool_reserve(str(p["season"].iloc[0]), float(p["tgs"].iloc[0]))
+        if res is not None:
+            # the candidates hold every rostered player with box history: the reserve is the
+            # minutes of the career debutants (the fit with the run-time candidate definition)
+            if not isinstance(base, V1Base):
+                base = base.view(V1Base)
+            base.rx_rows = rx
+            base.rx_pool = res
+            return base
+    reg = (p["base_ew"].to_numpy(float) >= REGULAR_MIN if "base_ew" in p
+           else np.ones(len(p), bool))
+    nra = (absent & ~reg & ~rx) if RX_ORACLE_ABSENT else np.zeros(len(p), bool)
+    if not (rx.any() or nra.any()):
+        return base
+    out = (absent & ~nra) | rx                 # not an available candidate of the fit
+    q = p.copy()
+    q["avail_rank"], q["n_avail"] = avail_rank(q, base05, out)
+    pp0 = np.clip(1.0 / (1.0 + np.exp(-(design(q, params.pplay_features)
+                                        @ np.asarray(params.pplay_coef)))), 0.01, 0.995)
+    if not isinstance(base, V1Base):
+        base = base.view(V1Base)
+    base.rx_rows = rx
+    base.rx_s = np.where(out, 0.0, pp0 * base05)
+    base.rx_n = float((~out).sum())
+    return base
 
 
 def forced_as_roster(p: pd.DataFrame) -> pd.DataFrame:
@@ -1851,6 +1909,10 @@ class V1Base(np.ndarray):
     project_arrays) needs no change. Slices lose it; run_projection passes it explicitly."""
     s_rows = None
     res_add = None      # per row: the team debut reserve (reserve_debut), see project_arrays
+    rx_rows = None      # per row: forced extras the reserve fit left out (RESERVE_EXTRAS)
+    rx_s = None         # per row: the reserve input on the fit's candidate set (RESERVE_EXTRAS)
+    rx_n = None         # the count of that set
+    rx_pool = None      # the team's reserve when its candidates hold the DK pool (RESERVE_EXTRAS)
 
 
 # --- v1: LightGBM base with scenario features (T2.2) ------------------------------------------
@@ -2034,6 +2096,84 @@ def reserve_minutes(params: MinutesParams, s_avail, n_avail) -> np.ndarray:
     return np.clip(r, 0.0, 150.0)
 
 
+# Reserve extras (rx, IMPROVEMENTS.md B2b; see the module docstring). Model version `+rx`
+# (pipeline.set_reserve_extras), same bundle and seeds.
+RESERVE_EXTRAS_DEFAULT = True          # shipped 2026-10-23 (owner OK; env still overrides)
+RESERVE_EXTRAS_ENV = "COURTSIDE_RESERVE_EXTRAS"
+RESERVE_EXTRAS_TAG = "+rx"
+
+
+def _rx_flag() -> bool:
+    v = os.environ.get(RESERVE_EXTRAS_ENV, "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return RESERVE_EXTRAS_DEFAULT
+
+
+RESERVE_EXTRAS = _rx_flag()
+
+
+def set_reserve_extras(on: bool) -> None:
+    """Flip the reserve-extras switch at run time (pipeline.set_reserve_extras, tests)."""
+    global RESERVE_EXTRAS
+    RESERVE_EXTRAS = bool(on)
+
+
+RX_ORACLE_ABSENT = True    # count absent non-regulars as available in the input (see _attach_rx)
+RX_POOL_SHARE = 0.5        # a team's candidates hold the DK pool: >= this share of its roster forced
+RX_PATH = Path(__file__).with_name("reserve_extras_params.json")
+
+
+@lru_cache(maxsize=None)
+def _rx_table() -> dict:
+    try:
+        return json.loads(RX_PATH.read_text())["seasons"]
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def pool_reserve(season: str, tgs: float) -> float | None:
+    """E[team minutes of career debutants] (no box row before the date: nobody can project them)
+    for a team-game `tgs` team games into season S, by DEBUT_BINS, pooled over seasons < S
+    (`reserve_extras_params.json`, research/reserve_extras.py fit). None without a table."""
+    t = _rx_table()
+    if not t:
+        return None
+    key = season if season in t else max([x for x in t if x < season] or [min(t)])
+    b = int(np.clip(np.searchsorted(DEBUT_BINS, float(tgs), side="right") - 1, 0,
+                    len(DEBUT_BINS) - 1))
+    return float(t[key]["bins"][b])
+
+
+def rx_pool(p: pd.DataFrame) -> bool:
+    """The team-game's candidates hold the DK pool (or its stand-in): `forced` (set by
+    pipeline.candidate_panel under RESERVE_EXTRAS) covers >= RX_POOL_SHARE of the recent-roster
+    candidates. The report alone forces only its listed players."""
+    if "forced" not in p or "roster" not in p or not len(p):
+        return False
+    r1 = p["roster"].to_numpy() == 1
+    return bool(r1.any() and (p["forced"].to_numpy(bool) & r1).sum() >= RX_POOL_SHARE * r1.sum())
+
+
+def rx_rows(p: pd.DataFrame) -> np.ndarray:
+    """Candidates the reserve fit (`_fit_reserve` on `oracle_panel`) counted outside the
+    candidate set: forced in from outside the recent roster (roster == 0) with box history and
+    not a regular (base_ew < REGULAR_MIN: the oracle keeps roster == 0 regulars who played, so
+    their minutes were never in the reserve). Only extras forced at run time (DK pool, report)
+    match; an oracle panel has none."""
+    n = len(p)
+    if not n or "roster" not in p:
+        return np.zeros(n, bool)
+    f = p["roster"].to_numpy() == 0
+    if "last_date" in p:
+        f &= p["last_date"].notna().to_numpy()
+    if "base_ew" in p:
+        f &= ~(p["base_ew"].to_numpy(float) >= REGULAR_MIN)
+    return f
+
+
 NMU_FEATURES = ("same1", "same2", "adjacent", "ew", "st10", "share", "top_in_group")
 
 
@@ -2163,11 +2303,25 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
                 lift[i] += new - (adj[i] + lift[i])
             pstart[i] = 1.0
     adj = adj + lift
-    if s_reserve is None:
-        sr = getattr(base, "s_rows", None)
-        s_reserve = float(np.sum(sr)) if sr is not None and len(sr) == n else None
-    s_av = float((p * base).sum()) if s_reserve is None else float(s_reserve)
-    reserve = float(reserve_minutes(params, s_av, float(avail.sum()))[0])
+    rx = getattr(base, "rx_rows", None) if s_reserve is None else None
+    rs = getattr(base, "rx_s", None) if rx is not None else None
+    rpool = getattr(base, "rx_pool", None) if rx is not None else None
+    if rpool is not None:
+        # reserve extras, DK pool in the candidates: the career debutants' minutes only
+        reserve = float(np.clip(rpool, 0.0, 150.0))
+        reserve_add = 0.0
+    elif rx is not None and len(rx) == n and rs is not None and len(rs) == n:
+        # reserve extras (RESERVE_EXTRAS): the reserve on the fit's candidate set, minus the
+        # planned minutes of the forced extras it was holding back for
+        rx = np.asarray(rx, bool)
+        reserve = float(reserve_minutes(params, float(np.sum(rs)), float(base.rx_n))[0])
+        reserve = max(0.0, reserve - float(np.sum(np.where(rx & avail, p * adj, 0.0))))
+    else:
+        if s_reserve is None:
+            sr = getattr(base, "s_rows", None)
+            s_reserve = float(np.sum(sr)) if sr is not None and len(sr) == n else None
+        s_av = float((p * base).sum()) if s_reserve is None else float(s_reserve)
+        reserve = float(reserve_minutes(params, s_av, float(avail.sum()))[0])
     if reserve_add is None:
         ra = getattr(base, "res_add", None)
         reserve_add = float(ra[0]) if ra is not None and len(ra) == n and n else None

@@ -1,0 +1,2767 @@
+{
+ "full": {
+  "exposure": [
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "58.2",
+    "min": 0,
+    "name": "P11",
+    "own_band": "Med",
+    "own_proxy": "0.1552805843931314",
+    "player_id": "11",
+    "positions": "SG",
+    "salary": 10400,
+    "share": "0.5",
+    "team": "T0B"
+   },
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "40.2",
+    "min": 2,
+    "name": "P1",
+    "own_band": "High",
+    "own_proxy": "0.34946239471645835",
+    "player_id": "1",
+    "positions": "PG",
+    "salary": 7100,
+    "share": "0.5",
+    "team": "T0A"
+   },
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "38.2",
+    "min": 0,
+    "name": "P65",
+    "own_band": "Med",
+    "own_proxy": "0.16456769500942448",
+    "player_id": "65",
+    "positions": "SG",
+    "salary": 6600,
+    "share": "0.5",
+    "team": "T3B"
+   },
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "36.1",
+    "min": 0,
+    "name": "P32",
+    "own_band": "High",
+    "own_proxy": "0.92",
+    "player_id": "32",
+    "positions": "C",
+    "salary": 4500,
+    "share": "0.5",
+    "team": "T1B"
+   },
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "31.3",
+    "min": 0,
+    "name": "P10",
+    "own_band": "Med",
+    "own_proxy": "0.19086944868121655",
+    "player_id": "10",
+    "positions": "PG",
+    "salary": 5800,
+    "share": "0.5",
+    "team": "T0B"
+   },
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "28.6",
+    "min": 0,
+    "name": "P34",
+    "own_band": "High",
+    "own_proxy": "0.3452238327773918",
+    "player_id": "34",
+    "positions": "SF/PF",
+    "salary": 4900,
+    "share": "0.5",
+    "team": "T1B"
+   },
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "27.0",
+    "min": 0,
+    "name": "P61",
+    "own_band": "Med",
+    "own_proxy": "0.19426153735097412",
+    "player_id": "61",
+    "positions": "SF/PF",
+    "salary": 4900,
+    "share": "0.5",
+    "team": "T3A"
+   },
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "26.4",
+    "min": 0,
+    "name": "P54",
+    "own_band": "High",
+    "own_proxy": "0.8962076380645652",
+    "player_id": "54",
+    "positions": "SG/SF",
+    "salary": 4000,
+    "share": "0.5",
+    "team": "T2B"
+   },
+   {
+    "cap": 3,
+    "count": 3,
+    "locked": false,
+    "mean": "25.5",
+    "min": 0,
+    "name": "P36",
+    "own_band": "High",
+    "own_proxy": "0.7946532446457175",
+    "player_id": "36",
+    "positions": "SG/SF",
+    "salary": 3900,
+    "share": "0.5",
+    "team": "T1B"
+   },
+   {
+    "cap": 3,
+    "count": 2,
+    "locked": false,
+    "mean": "54.5",
+    "min": 0,
+    "name": "P16",
+    "own_band": "Med",
+    "own_proxy": "0.17546180307151488",
+    "player_id": "16",
+    "positions": "SF/PF",
+    "salary": 10300,
+    "share": "0.3333333333333333",
+    "team": "T0B"
+   },
+   {
+    "cap": 3,
+    "count": 2,
+    "locked": false,
+    "mean": "46.0",
+    "min": 0,
+    "name": "P41",
+    "own_band": "Low",
+    "own_proxy": "0.04803175861894509",
+    "player_id": "41",
+    "positions": "C",
+    "salary": 8800,
+    "share": "0.3333333333333333",
+    "team": "T2A"
+   },
+   {
+    "cap": 3,
+    "count": 2,
+    "locked": false,
+    "mean": "45.2",
+    "min": 0,
+    "name": "P57",
+    "own_band": "Low",
+    "own_proxy": "0.074307735631163",
+    "player_id": "57",
+    "positions": "SF",
+    "salary": 8500,
+    "share": "0.3333333333333333",
+    "team": "T3A"
+   },
+   {
+    "cap": 3,
+    "count": 2,
+    "locked": false,
+    "mean": "32.1",
+    "min": 0,
+    "name": "P64",
+    "own_band": "Med",
+    "own_proxy": "0.11126088156513594",
+    "player_id": "64",
+    "positions": "PG",
+    "salary": 6300,
+    "share": "0.3333333333333333",
+    "team": "T3B"
+   },
+   {
+    "cap": 3,
+    "count": 2,
+    "locked": false,
+    "mean": "21.4",
+    "min": 0,
+    "name": "P5",
+    "own_band": "Low",
+    "own_proxy": "0.09473583100477512",
+    "player_id": "5",
+    "positions": "C",
+    "salary": 3700,
+    "share": "0.3333333333333333",
+    "team": "T0A"
+   },
+   {
+    "cap": 3,
+    "count": 2,
+    "locked": false,
+    "mean": "20.7",
+    "min": 0,
+    "name": "P50",
+    "own_band": "Low",
+    "own_proxy": "0.06938833757004492",
+    "player_id": "50",
+    "positions": "C",
+    "salary": 3700,
+    "share": "0.3333333333333333",
+    "team": "T2B"
+   },
+   {
+    "cap": 3,
+    "count": 2,
+    "locked": false,
+    "mean": "19.5",
+    "min": 0,
+    "name": "P13",
+    "own_band": "Med",
+    "own_proxy": "0.12239674453522287",
+    "player_id": "13",
+    "positions": "PF",
+    "salary": 3600,
+    "share": "0.3333333333333333",
+    "team": "T0B"
+   },
+   {
+    "cap": 3,
+    "count": 1,
+    "locked": false,
+    "mean": "60.8",
+    "min": 0,
+    "name": "P45",
+    "own_band": "High",
+    "own_proxy": "0.5619296132035554",
+    "player_id": "45",
+    "positions": "SG/SF",
+    "salary": 10300,
+    "share": "0.16666666666666666",
+    "team": "T2A"
+   },
+   {
+    "cap": 3,
+    "count": 1,
+    "locked": false,
+    "mean": "51.8",
+    "min": 0,
+    "name": "P8",
+    "own_band": "Med",
+    "own_proxy": "0.143023810991108",
+    "player_id": "8",
+    "positions": "PF/C",
+    "salary": 10000,
+    "share": "0.16666666666666666",
+    "team": "T0A"
+   },
+   {
+    "cap": 3,
+    "count": 1,
+    "locked": false,
+    "mean": "48.0",
+    "min": 0,
+    "name": "P9",
+    "own_band": "High",
+    "own_proxy": "0.30632347307158053",
+    "player_id": "9",
+    "positions": "SG/SF",
+    "salary": 8400,
+    "share": "0.16666666666666666",
+    "team": "T0A"
+   },
+   {
+    "cap": 3,
+    "count": 1,
+    "locked": false,
+    "mean": "44.4",
+    "min": 0,
+    "name": "P43",
+    "own_band": "Low",
+    "own_proxy": "0.07580123735505073",
+    "player_id": "43",
+    "positions": "SF/PF",
+    "salary": 9000,
+    "share": "0.16666666666666666",
+    "team": "T2A"
+   },
+   {
+    "cap": 3,
+    "count": 1,
+    "locked": false,
+    "mean": "32.6",
+    "min": 0,
+    "name": "P27",
+    "own_band": "Med",
+    "own_proxy": "0.12351171031250138",
+    "player_id": "27",
+    "positions": "SG/SF",
+    "salary": 6100,
+    "share": "0.16666666666666666",
+    "team": "T1A"
+   },
+   {
+    "cap": 3,
+    "count": 1,
+    "locked": false,
+    "mean": "25.5",
+    "min": 0,
+    "name": "P56",
+    "own_band": "Low",
+    "own_proxy": "0.0723776180218628",
+    "player_id": "56",
+    "positions": "SG",
+    "salary": 4700,
+    "share": "0.16666666666666666",
+    "team": "T3A"
+   },
+   {
+    "cap": 3,
+    "count": 1,
+    "locked": false,
+    "mean": "24.7",
+    "min": 0,
+    "name": "P72",
+    "own_band": "Med",
+    "own_proxy": "0.22004250145853646",
+    "player_id": "72",
+    "positions": "SG/SF",
+    "salary": 4300,
+    "share": "0.16666666666666666",
+    "team": "T3B"
+   }
+  ],
+  "info": {
+   "baselines": {
+    "greedy_uncapped": {
+     "e_payout": "37.40574864197524",
+     "e_payout_se": "4.914831561020805",
+     "p_any_cash": "0.72",
+     "pairs": [
+      [
+       [
+        "PG",
+        "10"
+       ],
+       [
+        "SG",
+        "65"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "11"
+       ],
+       [
+        "F",
+        "61"
+       ],
+       [
+        "UTIL",
+        "41"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "11"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "50"
+       ],
+       [
+        "G",
+        "65"
+       ],
+       [
+        "F",
+        "9"
+       ],
+       [
+        "UTIL",
+        "32"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "10"
+       ],
+       [
+        "SG",
+        "54"
+       ],
+       [
+        "SF",
+        "57"
+       ],
+       [
+        "PF",
+        "8"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "36"
+       ],
+       [
+        "F",
+        "72"
+       ],
+       [
+        "UTIL",
+        "41"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "65"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "61"
+       ],
+       [
+        "C",
+        "41"
+       ],
+       [
+        "G",
+        "47"
+       ],
+       [
+        "F",
+        "27"
+       ],
+       [
+        "UTIL",
+        "32"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "46"
+       ],
+       [
+        "SG",
+        "54"
+       ],
+       [
+        "SF",
+        "66"
+       ],
+       [
+        "PF",
+        "62"
+       ],
+       [
+        "C",
+        "41"
+       ],
+       [
+        "G",
+        "9"
+       ],
+       [
+        "F",
+        "3"
+       ],
+       [
+        "UTIL",
+        "32"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "10"
+       ],
+       [
+        "SG",
+        "11"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "8"
+       ],
+       [
+        "C",
+        "5"
+       ],
+       [
+        "G",
+        "47"
+       ],
+       [
+        "F",
+        "36"
+       ],
+       [
+        "UTIL",
+        "72"
+       ]
+      ]
+     ],
+     "roi": "1.0780971467764022"
+    },
+    "top_individual": {
+     "e_payout": "41.841321481481394",
+     "e_payout_se": "5.174034069931084",
+     "p_any_cash": "0.7066666666666667",
+     "pairs": [
+      [
+       [
+        "PG",
+        "10"
+       ],
+       [
+        "SG",
+        "65"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "11"
+       ],
+       [
+        "F",
+        "61"
+       ],
+       [
+        "UTIL",
+        "41"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "11"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "50"
+       ],
+       [
+        "G",
+        "65"
+       ],
+       [
+        "F",
+        "9"
+       ],
+       [
+        "UTIL",
+        "32"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "10"
+       ],
+       [
+        "SG",
+        "54"
+       ],
+       [
+        "SF",
+        "57"
+       ],
+       [
+        "PF",
+        "8"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "36"
+       ],
+       [
+        "F",
+        "72"
+       ],
+       [
+        "UTIL",
+        "41"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "65"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "61"
+       ],
+       [
+        "C",
+        "41"
+       ],
+       [
+        "G",
+        "47"
+       ],
+       [
+        "F",
+        "27"
+       ],
+       [
+        "UTIL",
+        "32"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "65"
+       ],
+       [
+        "SF",
+        "9"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "54"
+       ],
+       [
+        "F",
+        "36"
+       ],
+       [
+        "UTIL",
+        "11"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "47"
+       ],
+       [
+        "SF",
+        "34"
+       ],
+       [
+        "PF",
+        "13"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "65"
+       ],
+       [
+        "F",
+        "61"
+       ],
+       [
+        "UTIL",
+        "11"
+       ]
+      ]
+     ],
+     "roi": "1.3245178600822998"
+    },
+    "top_individual_capped": {
+     "e_payout": "36.13174469135795",
+     "e_payout_se": "4.9585413194703",
+     "p_any_cash": "0.7481481481481481",
+     "pairs": [
+      [
+       [
+        "PG",
+        "10"
+       ],
+       [
+        "SG",
+        "65"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "11"
+       ],
+       [
+        "F",
+        "61"
+       ],
+       [
+        "UTIL",
+        "41"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "11"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "50"
+       ],
+       [
+        "G",
+        "65"
+       ],
+       [
+        "F",
+        "9"
+       ],
+       [
+        "UTIL",
+        "32"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "10"
+       ],
+       [
+        "SG",
+        "54"
+       ],
+       [
+        "SF",
+        "57"
+       ],
+       [
+        "PF",
+        "8"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "36"
+       ],
+       [
+        "F",
+        "72"
+       ],
+       [
+        "UTIL",
+        "41"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "56"
+       ],
+       [
+        "SF",
+        "34"
+       ],
+       [
+        "PF",
+        "43"
+       ],
+       [
+        "C",
+        "50"
+       ],
+       [
+        "G",
+        "64"
+       ],
+       [
+        "F",
+        "36"
+       ],
+       [
+        "UTIL",
+        "11"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "64"
+       ],
+       [
+        "SG",
+        "27"
+       ],
+       [
+        "SF",
+        "61"
+       ],
+       [
+        "PF",
+        "16"
+       ],
+       [
+        "C",
+        "5"
+       ],
+       [
+        "G",
+        "65"
+       ],
+       [
+        "F",
+        "13"
+       ],
+       [
+        "UTIL",
+        "57"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "10"
+       ],
+       [
+        "SG",
+        "36"
+       ],
+       [
+        "SF",
+        "61"
+       ],
+       [
+        "PF",
+        "16"
+       ],
+       [
+        "C",
+        "5"
+       ],
+       [
+        "G",
+        "45"
+       ],
+       [
+        "F",
+        "13"
+       ],
+       [
+        "UTIL",
+        "1"
+       ]
+      ]
+     ],
+     "roi": "1.007319149519886"
+    },
+    "top_mean": {
+     "e_payout": "30.147319937186857",
+     "e_payout_se": "3.08442393702646",
+     "p_any_cash": "0.8074074074074075",
+     "pairs": [
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "54"
+       ],
+       [
+        "SF",
+        "36"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "45"
+       ],
+       [
+        "F",
+        "9"
+       ],
+       [
+        "UTIL",
+        "65"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "45"
+       ],
+       [
+        "SF",
+        "34"
+       ],
+       [
+        "PF",
+        "61"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "36"
+       ],
+       [
+        "F",
+        "54"
+       ],
+       [
+        "UTIL",
+        "11"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "9"
+       ],
+       [
+        "SF",
+        "45"
+       ],
+       [
+        "PF",
+        "61"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "36"
+       ],
+       [
+        "F",
+        "54"
+       ],
+       [
+        "UTIL",
+        "65"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "9"
+       ],
+       [
+        "SF",
+        "45"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "36"
+       ],
+       [
+        "F",
+        "72"
+       ],
+       [
+        "UTIL",
+        "65"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "56"
+       ],
+       [
+        "SF",
+        "54"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "11"
+       ],
+       [
+        "F",
+        "36"
+       ],
+       [
+        "UTIL",
+        "45"
+       ]
+      ],
+      [
+       [
+        "PG",
+        "1"
+       ],
+       [
+        "SG",
+        "65"
+       ],
+       [
+        "SF",
+        "9"
+       ],
+       [
+        "PF",
+        "34"
+       ],
+       [
+        "C",
+        "32"
+       ],
+       [
+        "G",
+        "54"
+       ],
+       [
+        "F",
+        "36"
+       ],
+       [
+        "UTIL",
+        "11"
+       ]
+      ]
+     ],
+     "roi": "0.674851107621492"
+    }
+   },
+   "candidates": {
+    "by_source": {
+     "min_locked": 8,
+     "noise": 10,
+     "scenario": 30,
+     "topmean": 10
+    },
+    "solves": 78,
+    "unique": 58
+   },
+   "candidates_total": 78,
+   "cash_line": {
+    "cash_mean": "309.5948148148148",
+    "cash_p10": "280.0125",
+    "cash_p25": "294.9375",
+    "cash_p50": "309.375",
+    "cash_p75": "324.125",
+    "cash_p90": "340.14375",
+    "top1_p10": "319.3875",
+    "top1_p50": "349.65625",
+    "top1_p90": "383.30625"
+   },
+   "eval_mode": "drawn",
+   "field": {
+    "archetype": "large_gpp",
+    "contest": {
+     "contest_id": null,
+     "name": "preset GPP (2000)",
+     "source": "preset"
+    },
+    "field_size": 2000,
+    "label": "proxy",
+    "mix_optimizer_like": "0.2",
+    "mix_realized": "0.2",
+    "n_solves": 30,
+    "opt_unique": 30,
+    "own_target_mae_pp": "0.903932319812597",
+    "salary_use": {
+     "max": 50000,
+     "mean_left": "220.75",
+     "min": 48200,
+     "share_ge_96": "1.0",
+     "share_ge_98": "0.998",
+     "share_ge_99": "0.9825"
+    },
+    "sampled": 2000,
+    "unique": 1490,
+    "version": "field-proxy-1.2"
+   },
+   "field_label": "proxy",
+   "gamma": 5,
+   "greedy_pairs": [
+    [
+     [
+      "PG",
+      "10"
+     ],
+     [
+      "SG",
+      "65"
+     ],
+     [
+      "SF",
+      "54"
+     ],
+     [
+      "PF",
+      "34"
+     ],
+     [
+      "C",
+      "32"
+     ],
+     [
+      "G",
+      "11"
+     ],
+     [
+      "F",
+      "61"
+     ],
+     [
+      "UTIL",
+      "41"
+     ]
+    ],
+    [
+     [
+      "PG",
+      "1"
+     ],
+     [
+      "SG",
+      "11"
+     ],
+     [
+      "SF",
+      "54"
+     ],
+     [
+      "PF",
+      "34"
+     ],
+     [
+      "C",
+      "50"
+     ],
+     [
+      "G",
+      "65"
+     ],
+     [
+      "F",
+      "9"
+     ],
+     [
+      "UTIL",
+      "32"
+     ]
+    ],
+    [
+     [
+      "PG",
+      "10"
+     ],
+     [
+      "SG",
+      "54"
+     ],
+     [
+      "SF",
+      "57"
+     ],
+     [
+      "PF",
+      "8"
+     ],
+     [
+      "C",
+      "32"
+     ],
+     [
+      "G",
+      "36"
+     ],
+     [
+      "F",
+      "72"
+     ],
+     [
+      "UTIL",
+      "41"
+     ]
+    ],
+    [
+     [
+      "PG",
+      "1"
+     ],
+     [
+      "SG",
+      "56"
+     ],
+     [
+      "SF",
+      "34"
+     ],
+     [
+      "PF",
+      "43"
+     ],
+     [
+      "C",
+      "50"
+     ],
+     [
+      "G",
+      "64"
+     ],
+     [
+      "F",
+      "36"
+     ],
+     [
+      "UTIL",
+      "11"
+     ]
+    ],
+    [
+     [
+      "PG",
+      "10"
+     ],
+     [
+      "SG",
+      "36"
+     ],
+     [
+      "SF",
+      "61"
+     ],
+     [
+      "PF",
+      "16"
+     ],
+     [
+      "C",
+      "5"
+     ],
+     [
+      "G",
+      "45"
+     ],
+     [
+      "F",
+      "13"
+     ],
+     [
+      "UTIL",
+      "1"
+     ]
+    ],
+    [
+     [
+      "PG",
+      "64"
+     ],
+     [
+      "SG",
+      "27"
+     ],
+     [
+      "SF",
+      "61"
+     ],
+     [
+      "PF",
+      "16"
+     ],
+     [
+      "C",
+      "5"
+     ],
+     [
+      "G",
+      "65"
+     ],
+     [
+      "F",
+      "13"
+     ],
+     [
+      "UTIL",
+      "57"
+     ]
+    ]
+   ],
+   "label": "simulated against a modelled field, not real results",
+   "missing_sim_players": 0,
+   "n_sims": 1500,
+   "ownership_calibrated": false,
+   "ownership_version": "own-proxy-1.2-handset/large_gpp",
+   "refills": 1,
+   "split": {
+    "G": 150,
+    "R": 675,
+    "S": 675,
+    "by_source_selected": {
+     "min_locked": 2,
+     "noise": 1,
+     "refill": 1,
+     "scenario": 2
+    }
+   },
+   "tier_ranks": [
+    2,
+    20,
+    400
+   ],
+   "truth": {
+    "beta": "0.18",
+    "mean_shift": "0.05054868757724762",
+    "shifted": 72,
+    "tau": "0.18"
+   },
+   "version": "gpp-portfolio-1.0+split"
+  },
+  "lineups": [
+   {
+    "dupe_band": "Low",
+    "dupes": "0.03778551884425903",
+    "e_payout": "10.454824691358011",
+    "e_payout_single": "10.465686913580246",
+    "marginal": "10.349585185185196",
+    "mean": "291.24805555555554",
+    "p10": "242.85625",
+    "p50": "291.71875",
+    "p90": "336.6625",
+    "p_cash": "0.30518518518518517",
+    "p_cash_single": "0.30814814814814817",
+    "p_top1": "0.037037037037037035",
+    "proj": "345.694",
+    "rank": 1,
+    "salary": 49900,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"10\", \"name\": \"P10\", \"team\": \"T0B\", \"salary\": 5800, \"mean\": 38.979, \"draftable_id\": \"d10PG\"}, {\"slot\": \"SG\", \"player_id\": \"65\", \"name\": \"P65\", \"team\": \"T3B\", \"salary\": 6600, \"mean\": 45.68, \"draftable_id\": \"d65SG\"}, {\"slot\": \"SF\", \"player_id\": \"54\", \"name\": \"P54\", \"team\": \"T2B\", \"salary\": 4000, \"mean\": 26.848, \"draftable_id\": \"d54SF\"}, {\"slot\": \"PF\", \"player_id\": \"34\", \"name\": \"P34\", \"team\": \"T1B\", \"salary\": 4900, \"mean\": 33.852, \"draftable_id\": \"d34PF\"}, {\"slot\": \"C\", \"player_id\": \"32\", \"name\": \"P32\", \"team\": \"T1B\", \"salary\": 4500, \"mean\": 36.951, \"draftable_id\": \"d32C\"}, {\"slot\": \"G\", \"player_id\": \"11\", \"name\": \"P11\", \"team\": \"T0B\", \"salary\": 10400, \"mean\": 71.807, \"draftable_id\": \"d11G\"}, {\"slot\": \"F\", \"player_id\": \"61\", \"name\": \"P61\", \"team\": \"T3A\", \"salary\": 4900, \"mean\": 31.704, \"draftable_id\": \"d61F\"}, {\"slot\": \"UTIL\", \"player_id\": \"41\", \"name\": \"P41\", \"team\": \"T2A\", \"salary\": 8800, \"mean\": 59.873, \"draftable_id\": \"d41UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "0.157594432330814",
+    "e_payout": "5.76217777777776",
+    "e_payout_single": "5.772134814814796",
+    "marginal": "9.566875555555548",
+    "mean": "295.54435185185184",
+    "p10": "245.98125",
+    "p50": "297.125",
+    "p90": "341.80625",
+    "p_cash": "0.34814814814814815",
+    "p_cash_single": "0.3511111111111111",
+    "p_top1": "0.023703703703703703",
+    "proj": "325.744",
+    "rank": 2,
+    "salary": 49600,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"1\", \"name\": \"P1\", \"team\": \"T0A\", \"salary\": 7100, \"mean\": 31.749, \"draftable_id\": \"d1PG\"}, {\"slot\": \"SG\", \"player_id\": \"11\", \"name\": \"P11\", \"team\": \"T0B\", \"salary\": 10400, \"mean\": 67.0, \"draftable_id\": \"d11SG\"}, {\"slot\": \"SF\", \"player_id\": \"54\", \"name\": \"P54\", \"team\": \"T2B\", \"salary\": 4000, \"mean\": 30.224, \"draftable_id\": \"d54SF\"}, {\"slot\": \"PF\", \"player_id\": \"34\", \"name\": \"P34\", \"team\": \"T1B\", \"salary\": 4900, \"mean\": 30.823, \"draftable_id\": \"d34PF\"}, {\"slot\": \"C\", \"player_id\": \"50\", \"name\": \"P50\", \"team\": \"T2B\", \"salary\": 3700, \"mean\": 24.841, \"draftable_id\": \"d50C\"}, {\"slot\": \"G\", \"player_id\": \"65\", \"name\": \"P65\", \"team\": \"T3B\", \"salary\": 6600, \"mean\": 44.982, \"draftable_id\": \"d65G\"}, {\"slot\": \"F\", \"player_id\": \"9\", \"name\": \"P9\", \"team\": \"T0A\", \"salary\": 8400, \"mean\": 56.835, \"draftable_id\": \"d9F\"}, {\"slot\": \"UTIL\", \"player_id\": \"32\", \"name\": \"P32\", \"team\": \"T1B\", \"salary\": 4500, \"mean\": 39.29, \"draftable_id\": \"d32UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "0.04097346225289157",
+    "e_payout": "8.464814814814805",
+    "e_payout_single": "8.464814814814806",
+    "marginal": "8.94787407407406",
+    "mean": "288.10689814814816",
+    "p10": "238.31875",
+    "p50": "289.90625",
+    "p90": "336.125",
+    "p_cash": "0.2637037037037037",
+    "p_cash_single": "0.2637037037037037",
+    "p_top1": "0.025185185185185185",
+    "proj": "326.88",
+    "rank": 3,
+    "salary": 49800,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"10\", \"name\": \"P10\", \"team\": \"T0B\", \"salary\": 5800, \"mean\": 34.301, \"draftable_id\": \"d10PG\"}, {\"slot\": \"SG\", \"player_id\": \"54\", \"name\": \"P54\", \"team\": \"T2B\", \"salary\": 4000, \"mean\": 31.417, \"draftable_id\": \"d54SG\"}, {\"slot\": \"SF\", \"player_id\": \"57\", \"name\": \"P57\", \"team\": \"T3A\", \"salary\": 8500, \"mean\": 53.238, \"draftable_id\": \"d57SF\"}, {\"slot\": \"PF\", \"player_id\": \"8\", \"name\": \"P8\", \"team\": \"T0A\", \"salary\": 10000, \"mean\": 68.08, \"draftable_id\": \"d8PF\"}, {\"slot\": \"C\", \"player_id\": \"32\", \"name\": \"P32\", \"team\": \"T1B\", \"salary\": 4500, \"mean\": 29.219, \"draftable_id\": \"d32C\"}, {\"slot\": \"G\", \"player_id\": \"36\", \"name\": \"P36\", \"team\": \"T1B\", \"salary\": 3900, \"mean\": 25.599, \"draftable_id\": \"d36G\"}, {\"slot\": \"F\", \"player_id\": \"72\", \"name\": \"P72\", \"team\": \"T3B\", \"salary\": 4300, \"mean\": 28.393, \"draftable_id\": \"d72F\"}, {\"slot\": \"UTIL\", \"player_id\": \"41\", \"name\": \"P41\", \"team\": \"T2A\", \"salary\": 8800, \"mean\": 56.633, \"draftable_id\": \"d41UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "0.0018391632364551872",
+    "e_payout": "3.543771851851844",
+    "e_payout_single": "3.545582222222215",
+    "marginal": "5.767633333333324",
+    "mean": "274.58685185185186",
+    "p10": "223.9125",
+    "p50": "274.65625",
+    "p90": "323.875",
+    "p_cash": "0.17185185185185184",
+    "p_cash_single": "0.17185185185185184",
+    "p_top1": "0.022222222222222223",
+    "proj": "320.001",
+    "rank": 4,
+    "salary": 50000,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"1\", \"name\": \"P1\", \"team\": \"T0A\", \"salary\": 7100, \"mean\": 52.51, \"draftable_id\": \"d1PG\"}, {\"slot\": \"SG\", \"player_id\": \"56\", \"name\": \"P56\", \"team\": \"T3A\", \"salary\": 4700, \"mean\": 34.164, \"draftable_id\": \"d56SG\"}, {\"slot\": \"SF\", \"player_id\": \"34\", \"name\": \"P34\", \"team\": \"T1B\", \"salary\": 4900, \"mean\": 32.68, \"draftable_id\": \"d34SF\"}, {\"slot\": \"PF\", \"player_id\": \"43\", \"name\": \"P43\", \"team\": \"T2A\", \"salary\": 9000, \"mean\": 51.324, \"draftable_id\": \"d43PF\"}, {\"slot\": \"C\", \"player_id\": \"50\", \"name\": \"P50\", \"team\": \"T2B\", \"salary\": 3700, \"mean\": 25.774, \"draftable_id\": \"d50C\"}, {\"slot\": \"G\", \"player_id\": \"64\", \"name\": \"P64\", \"team\": \"T3B\", \"salary\": 6300, \"mean\": 35.364, \"draftable_id\": \"d64G\"}, {\"slot\": \"F\", \"player_id\": \"36\", \"name\": \"P36\", \"team\": \"T1B\", \"salary\": 3900, \"mean\": 24.959, \"draftable_id\": \"d36F\"}, {\"slot\": \"UTIL\", \"player_id\": \"11\", \"name\": \"P11\", \"team\": \"T0B\", \"salary\": 10400, \"mean\": 63.226, \"draftable_id\": \"d11UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "0.034337183833657546",
+    "e_payout": "3.96439259259258",
+    "e_payout_single": "3.968918518518506",
+    "marginal": "3.4108740740740573",
+    "mean": "280.18546296296296",
+    "p10": "233.6125",
+    "p50": "279.75",
+    "p90": "329.53125",
+    "p_cash": "0.16592592592592592",
+    "p_cash_single": "0.16592592592592592",
+    "p_top1": "0.013333333333333334",
+    "proj": "323.298",
+    "rank": 5,
+    "salary": 49600,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"10\", \"name\": \"P10\", \"team\": \"T0B\", \"salary\": 5800, \"mean\": 38.225, \"draftable_id\": \"d10PG\"}, {\"slot\": \"SG\", \"player_id\": \"36\", \"name\": \"P36\", \"team\": \"T1B\", \"salary\": 3900, \"mean\": 26.429, \"draftable_id\": \"d36SG\"}, {\"slot\": \"SF\", \"player_id\": \"61\", \"name\": \"P61\", \"team\": \"T3A\", \"salary\": 4900, \"mean\": 31.563, \"draftable_id\": \"d61SF\"}, {\"slot\": \"PF\", \"player_id\": \"16\", \"name\": \"P16\", \"team\": \"T0B\", \"salary\": 10300, \"mean\": 66.507, \"draftable_id\": \"d16PF\"}, {\"slot\": \"C\", \"player_id\": \"5\", \"name\": \"P5\", \"team\": \"T0A\", \"salary\": 3700, \"mean\": 24.122, \"draftable_id\": \"d5C\"}, {\"slot\": \"G\", \"player_id\": \"45\", \"name\": \"P45\", \"team\": \"T2A\", \"salary\": 10300, \"mean\": 75.029, \"draftable_id\": \"d45G\"}, {\"slot\": \"F\", \"player_id\": \"13\", \"name\": \"P13\", \"team\": \"T0B\", \"salary\": 3600, \"mean\": 21.804, \"draftable_id\": \"d13F\"}, {\"slot\": \"UTIL\", \"player_id\": \"1\", \"name\": \"P1\", \"team\": \"T0A\", \"salary\": 7100, \"mean\": 39.619, \"draftable_id\": \"d1UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "0.00019373026440671704",
+    "e_payout": "3.941762962962953",
+    "e_payout_single": "3.941762962962953",
+    "marginal": "4.002681481481472",
+    "mean": "271.7252314814815",
+    "p10": "223.58125",
+    "p50": "271.9375",
+    "p90": "318.99375000000003",
+    "p_cash": "0.16148148148148148",
+    "p_cash_single": "0.16148148148148148",
+    "p_top1": "0.013333333333333334",
+    "proj": "335.08299999999997",
+    "rank": 6,
+    "salary": 50000,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"64\", \"name\": \"P64\", \"team\": \"T3B\", \"salary\": 6300, \"mean\": 48.416, \"draftable_id\": \"d64PG\"}, {\"slot\": \"SG\", \"player_id\": \"27\", \"name\": \"P27\", \"team\": \"T1A\", \"salary\": 6100, \"mean\": 38.057, \"draftable_id\": \"d27SG\"}, {\"slot\": \"SF\", \"player_id\": \"61\", \"name\": \"P61\", \"team\": \"T3A\", \"salary\": 4900, \"mean\": 28.788, \"draftable_id\": \"d61SF\"}, {\"slot\": \"PF\", \"player_id\": \"16\", \"name\": \"P16\", \"team\": \"T0B\", \"salary\": 10300, \"mean\": 66.657, \"draftable_id\": \"d16PF\"}, {\"slot\": \"C\", \"player_id\": \"5\", \"name\": \"P5\", \"team\": \"T0A\", \"salary\": 3700, \"mean\": 25.108, \"draftable_id\": \"d5C\"}, {\"slot\": \"G\", \"player_id\": \"65\", \"name\": \"P65\", \"team\": \"T3B\", \"salary\": 6600, \"mean\": 46.035, \"draftable_id\": \"d65G\"}, {\"slot\": \"F\", \"player_id\": \"13\", \"name\": \"P13\", \"team\": \"T0B\", \"salary\": 3600, \"mean\": 24.937, \"draftable_id\": \"d13F\"}, {\"slot\": \"UTIL\", \"player_id\": \"57\", \"name\": \"P57\", \"team\": \"T3A\", \"salary\": 8500, \"mean\": 57.085, \"draftable_id\": \"d57UTIL\"}]"
+   }
+  ],
+  "summary": {
+   "baseline": {
+    "e_payout": "30.147319937186857",
+    "name": "Top N by projection",
+    "p_any_cash": "0.8074074074074075",
+    "p_any_top1": "0.10074074074074074"
+   },
+   "cost": "18.0",
+   "curve": {
+    "complete": true,
+    "curve_to": 12,
+    "label": "simulated against a modelled field, not real results",
+    "n_build": 6,
+    "nested_prefix": false,
+    "points": [
+     {
+      "build_ranks": [
+       2
+      ],
+      "caps_relaxed": false,
+      "cost": "3.0",
+      "e_payout": "5.76217777777776",
+      "e_payout_per_dollar": "1.92072592592592",
+      "entries": 1,
+      "if_independent": {
+       "p_any_cash": "0.3481481481481481",
+       "p_any_top1": "0.02370370370370367"
+      },
+      "is_prefix": false,
+      "n_sims": 675,
+      "p_any_cash": "0.34814814814814815",
+      "p_any_top01": "0.002962962962962963",
+      "p_any_top1": "0.023703703703703703",
+      "p_first": "0.002962962962962963",
+      "requested": 1,
+      "source": "subset",
+      "top01_rank": 2
+     },
+     {
+      "build_ranks": [
+       1,
+       2,
+       3
+      ],
+      "caps_relaxed": false,
+      "cost": "9.0",
+      "e_payout": "24.681817283950572",
+      "e_payout_per_dollar": "2.7424241426611746",
+      "entries": 3,
+      "if_independent": {
+       "p_any_cash": "0.6665193883046283",
+       "p_any_top1": "0.08354035462073861"
+      },
+      "is_prefix": true,
+      "n_sims": 675,
+      "p_any_cash": "0.5837037037037037",
+      "p_any_top01": "0.01925925925925926",
+      "p_any_top1": "0.08",
+      "p_first": "0.011851851851851851",
+      "requested": 3,
+      "source": "subset",
+      "top01_rank": 2
+     },
+     {
+      "build_ranks": [
+       1,
+       2,
+       3,
+       5,
+       6
+      ],
+      "caps_relaxed": true,
+      "cost": "15.0",
+      "e_payout": "32.58797283950611",
+      "e_payout_per_dollar": "2.1725315226337405",
+      "entries": 5,
+      "if_independent": {
+       "p_any_cash": "0.7688183592546478",
+       "p_any_top1": "0.1078163523383403"
+      },
+      "is_prefix": false,
+      "n_sims": 675,
+      "p_any_cash": "0.7140740740740741",
+      "p_any_top01": "0.025185185185185185",
+      "p_any_top1": "0.10222222222222223",
+      "p_first": "0.016296296296296295",
+      "requested": 5,
+      "source": "subset",
+      "top01_rank": 2
+     },
+     {
+      "build_ranks": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6
+      ],
+      "caps_relaxed": false,
+      "cost": "18.0",
+      "e_payout": "36.13174469135795",
+      "e_payout_per_dollar": "2.007319149519886",
+      "entries": 6,
+      "if_independent": {
+       "p_any_cash": "0.808547352330886",
+       "p_any_top1": "0.12764265561971067"
+      },
+      "is_prefix": true,
+      "n_sims": 675,
+      "p_any_cash": "0.7481481481481481",
+      "p_any_top01": "0.02666666666666667",
+      "p_any_top1": "0.12",
+      "p_first": "0.017777777777777778",
+      "requested": 6,
+      "source": "build",
+      "top01_rank": 2
+     },
+     {
+      "build_lineups": 6,
+      "caps_relaxed": false,
+      "cost": "30.0",
+      "e_payout": "49.92998913580237",
+      "e_payout_per_dollar": "1.6643329711934125",
+      "entries": 10,
+      "if_independent": {
+       "p_any_cash": "0.9138027103349464",
+       "p_any_top1": "0.1833810730270834"
+      },
+      "n_sims": 675,
+      "p_any_cash": "0.8281481481481482",
+      "p_any_top01": "0.034074074074074076",
+      "p_any_top1": "0.1674074074074074",
+      "p_first": "0.025185185185185185",
+      "requested": 10,
+      "source": "extended",
+      "stopped": null,
+      "top01_rank": 2
+     },
+     {
+      "build_lineups": 6,
+      "caps_relaxed": false,
+      "cost": "36.0",
+      "e_payout": "64.43430172839493",
+      "e_payout_per_dollar": "1.7898417146776369",
+      "entries": 12,
+      "if_independent": {
+       "p_any_cash": "0.9567145352529728",
+       "p_any_top1": "0.22283866573448263"
+      },
+      "n_sims": 675,
+      "p_any_cash": "0.8977777777777778",
+      "p_any_top01": "0.045925925925925926",
+      "p_any_top1": "0.21037037037037037",
+      "p_first": "0.035555555555555556",
+      "requested": 12,
+      "source": "extended",
+      "stopped": null,
+      "top01_rank": 2
+     }
+    ],
+    "requested_points": [
+     1,
+     3,
+     5,
+     6,
+     10,
+     12
+    ],
+    "select_sims": 675,
+    "version": "entries-curve-1.0"
+   },
+   "e_cashing": "1.4162962962962964",
+   "e_payout": "36.13174469135795",
+   "e_payout_se": "4.9585413194703",
+   "entries": 6,
+   "n_sims": 675,
+   "p_any_cash": "0.7481481481481481",
+   "p_any_top1": "0.12",
+   "p_profit": "0.2518518518518518",
+   "payout_p50": "6.110000000000127",
+   "payout_p90": "77.77999999999975",
+   "relative": "1.1985060286168019",
+   "relative_se": "0.19965756187915312",
+   "requested": 6,
+   "roi": "1.007319149519886",
+   "roi_se": "0.27547451774835",
+   "stopped": null,
+   "strengths": {
+    "medium": {
+     "e_payout": "36.13174469135795",
+     "roi": "1.007319149519886"
+    },
+    "sharp": {
+     "e_payout": "41.5303666666666",
+     "n_sims": 600,
+     "roi": "1.3072425925925888"
+    },
+    "soft": {
+     "e_payout": "41.5303666666666",
+     "n_sims": 600,
+     "roi": "1.3072425925925888"
+    }
+   }
+  }
+ },
+ "refill": {
+  "exposure": [
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "60.8",
+    "min": 0,
+    "name": "P45",
+    "own_band": "High",
+    "own_proxy": "0.5619296132035554",
+    "player_id": "45",
+    "positions": "SG/SF",
+    "salary": 10300,
+    "share": "0.25",
+    "team": "T2A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "58.2",
+    "min": 0,
+    "name": "P11",
+    "own_band": "Med",
+    "own_proxy": "0.1552805843931314",
+    "player_id": "11",
+    "positions": "SG",
+    "salary": 10400,
+    "share": "0.25",
+    "team": "T0B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "54.5",
+    "min": 0,
+    "name": "P16",
+    "own_band": "Med",
+    "own_proxy": "0.17546180307151488",
+    "player_id": "16",
+    "positions": "SF/PF",
+    "salary": 10300,
+    "share": "0.25",
+    "team": "T0B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "45.2",
+    "min": 0,
+    "name": "P57",
+    "own_band": "Low",
+    "own_proxy": "0.074307735631163",
+    "player_id": "57",
+    "positions": "SF",
+    "salary": 8500,
+    "share": "0.25",
+    "team": "T3A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "44.4",
+    "min": 0,
+    "name": "P43",
+    "own_band": "Low",
+    "own_proxy": "0.07580123735505073",
+    "player_id": "43",
+    "positions": "SF/PF",
+    "salary": 9000,
+    "share": "0.25",
+    "team": "T2A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "43.0",
+    "min": 0,
+    "name": "P47",
+    "own_band": "Low",
+    "own_proxy": "0.09249074868010018",
+    "player_id": "47",
+    "positions": "SG",
+    "salary": 7900,
+    "share": "0.25",
+    "team": "T2B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "40.2",
+    "min": 0,
+    "name": "P1",
+    "own_band": "High",
+    "own_proxy": "0.34946239471645835",
+    "player_id": "1",
+    "positions": "PG",
+    "salary": 7100,
+    "share": "0.25",
+    "team": "T0A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "38.2",
+    "min": 0,
+    "name": "P65",
+    "own_band": "Med",
+    "own_proxy": "0.16456769500942448",
+    "player_id": "65",
+    "positions": "SG",
+    "salary": 6600,
+    "share": "0.25",
+    "team": "T3B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "36.1",
+    "min": 0,
+    "name": "P32",
+    "own_band": "High",
+    "own_proxy": "0.92",
+    "player_id": "32",
+    "positions": "C",
+    "salary": 4500,
+    "share": "0.25",
+    "team": "T1B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "32.9",
+    "min": 0,
+    "name": "P42",
+    "own_band": "Med",
+    "own_proxy": "0.14194247742244837",
+    "player_id": "42",
+    "positions": "PG/SG",
+    "salary": 6400,
+    "share": "0.25",
+    "team": "T2A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "32.6",
+    "min": 0,
+    "name": "P27",
+    "own_band": "Med",
+    "own_proxy": "0.12351171031250138",
+    "player_id": "27",
+    "positions": "SG/SF",
+    "salary": 6100,
+    "share": "0.25",
+    "team": "T1A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "32.1",
+    "min": 0,
+    "name": "P64",
+    "own_band": "Med",
+    "own_proxy": "0.11126088156513594",
+    "player_id": "64",
+    "positions": "PG",
+    "salary": 6300,
+    "share": "0.25",
+    "team": "T3B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "31.3",
+    "min": 0,
+    "name": "P10",
+    "own_band": "Med",
+    "own_proxy": "0.19086944868121655",
+    "player_id": "10",
+    "positions": "PG",
+    "salary": 5800,
+    "share": "0.25",
+    "team": "T0B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "30.9",
+    "min": 0,
+    "name": "P62",
+    "own_band": "Med",
+    "own_proxy": "0.13397932054685974",
+    "player_id": "62",
+    "positions": "PF/C",
+    "salary": 5900,
+    "share": "0.25",
+    "team": "T3A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "28.8",
+    "min": 0,
+    "name": "P51",
+    "own_band": "Med",
+    "own_proxy": "0.11757223092828462",
+    "player_id": "51",
+    "positions": "PG/SG",
+    "salary": 5700,
+    "share": "0.25",
+    "team": "T2B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "28.6",
+    "min": 0,
+    "name": "P34",
+    "own_band": "High",
+    "own_proxy": "0.3452238327773918",
+    "player_id": "34",
+    "positions": "SF/PF",
+    "salary": 4900,
+    "share": "0.25",
+    "team": "T1B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "27.0",
+    "min": 0,
+    "name": "P61",
+    "own_band": "Med",
+    "own_proxy": "0.19426153735097412",
+    "player_id": "61",
+    "positions": "SF/PF",
+    "salary": 4900,
+    "share": "0.25",
+    "team": "T3A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "26.4",
+    "min": 0,
+    "name": "P54",
+    "own_band": "High",
+    "own_proxy": "0.8962076380645652",
+    "player_id": "54",
+    "positions": "SG/SF",
+    "salary": 4000,
+    "share": "0.25",
+    "team": "T2B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "25.5",
+    "min": 0,
+    "name": "P36",
+    "own_band": "High",
+    "own_proxy": "0.7946532446457175",
+    "player_id": "36",
+    "positions": "SG/SF",
+    "salary": 3900,
+    "share": "0.25",
+    "team": "T1B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "25.5",
+    "min": 0,
+    "name": "P56",
+    "own_band": "Low",
+    "own_proxy": "0.0723776180218628",
+    "player_id": "56",
+    "positions": "SG",
+    "salary": 4700,
+    "share": "0.25",
+    "team": "T3A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "24.7",
+    "min": 0,
+    "name": "P72",
+    "own_band": "Med",
+    "own_proxy": "0.22004250145853646",
+    "player_id": "72",
+    "positions": "SG/SF",
+    "salary": 4300,
+    "share": "0.25",
+    "team": "T3B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "21.4",
+    "min": 0,
+    "name": "P5",
+    "own_band": "Low",
+    "own_proxy": "0.09473583100477512",
+    "player_id": "5",
+    "positions": "C",
+    "salary": 3700,
+    "share": "0.25",
+    "team": "T0A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "20.7",
+    "min": 0,
+    "name": "P50",
+    "own_band": "Low",
+    "own_proxy": "0.06938833757004492",
+    "player_id": "50",
+    "positions": "C",
+    "salary": 3700,
+    "share": "0.25",
+    "team": "T2B"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "20.5",
+    "min": 0,
+    "name": "P3",
+    "own_band": "Low",
+    "own_proxy": "0.05208637160426942",
+    "player_id": "3",
+    "positions": "SF",
+    "salary": 3900,
+    "share": "0.25",
+    "team": "T0A"
+   },
+   {
+    "cap": 2,
+    "count": 2,
+    "locked": false,
+    "mean": "19.5",
+    "min": 0,
+    "name": "P13",
+    "own_band": "Med",
+    "own_proxy": "0.12239674453522287",
+    "player_id": "13",
+    "positions": "PF",
+    "salary": 3600,
+    "share": "0.25",
+    "team": "T0B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "51.8",
+    "min": 0,
+    "name": "P8",
+    "own_band": "Med",
+    "own_proxy": "0.143023810991108",
+    "player_id": "8",
+    "positions": "PF/C",
+    "salary": 10000,
+    "share": "0.125",
+    "team": "T0A"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "46.0",
+    "min": 0,
+    "name": "P41",
+    "own_band": "Low",
+    "own_proxy": "0.04803175861894509",
+    "player_id": "41",
+    "positions": "C",
+    "salary": 8800,
+    "share": "0.125",
+    "team": "T2A"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "38.7",
+    "min": 0,
+    "name": "P49",
+    "own_band": "Low",
+    "own_proxy": "0.09398560961628165",
+    "player_id": "49",
+    "positions": "PF",
+    "salary": 7500,
+    "share": "0.125",
+    "team": "T2B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "38.6",
+    "min": 0,
+    "name": "P66",
+    "own_band": "Low",
+    "own_proxy": "0.03831644298299745",
+    "player_id": "66",
+    "positions": "SF",
+    "salary": 7700,
+    "share": "0.125",
+    "team": "T3B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "38.5",
+    "min": 0,
+    "name": "P58",
+    "own_band": "Low",
+    "own_proxy": "0.032684156561805414",
+    "player_id": "58",
+    "positions": "PF",
+    "salary": 8300,
+    "share": "0.125",
+    "team": "T3A"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "34.2",
+    "min": 0,
+    "name": "P39",
+    "own_band": "Low",
+    "own_proxy": "0.01973440820691106",
+    "player_id": "39",
+    "positions": "SF",
+    "salary": 7300,
+    "share": "0.125",
+    "team": "T2A"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "32.6",
+    "min": 0,
+    "name": "P46",
+    "own_band": "Low",
+    "own_proxy": "0.08327696880660101",
+    "player_id": "46",
+    "positions": "PG",
+    "salary": 6600,
+    "share": "0.125",
+    "team": "T2B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "31.2",
+    "min": 0,
+    "name": "P26",
+    "own_band": "Low",
+    "own_proxy": "0.03961272785235068",
+    "player_id": "26",
+    "positions": "PF/C",
+    "salary": 6800,
+    "share": "0.125",
+    "team": "T1A"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "28.1",
+    "min": 0,
+    "name": "P15",
+    "own_band": "Low",
+    "own_proxy": "0.023025649767752735",
+    "player_id": "15",
+    "positions": "PG/SG",
+    "salary": 6700,
+    "share": "0.125",
+    "team": "T0B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "27.9",
+    "min": 0,
+    "name": "P52",
+    "own_band": "Low",
+    "own_proxy": "0.03662514626523098",
+    "player_id": "52",
+    "positions": "SF/PF",
+    "salary": 6100,
+    "share": "0.125",
+    "team": "T2B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "23.3",
+    "min": 0,
+    "name": "P14",
+    "own_band": "Low",
+    "own_proxy": "0.024819207686167688",
+    "player_id": "14",
+    "positions": "C",
+    "salary": 4700,
+    "share": "0.125",
+    "team": "T0B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "23.1",
+    "min": 0,
+    "name": "P28",
+    "own_band": "Low",
+    "own_proxy": "0.00949437858407388",
+    "player_id": "28",
+    "positions": "PG",
+    "salary": 6100,
+    "share": "0.125",
+    "team": "T1B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "18.7",
+    "min": 0,
+    "name": "P18",
+    "own_band": "Low",
+    "own_proxy": "0.02043055859819154",
+    "player_id": "18",
+    "positions": "SG/SF",
+    "salary": 4300,
+    "share": "0.125",
+    "team": "T0B"
+   },
+   {
+    "cap": 2,
+    "count": 1,
+    "locked": false,
+    "mean": "16.4",
+    "min": 0,
+    "name": "P2",
+    "own_band": "Low",
+    "own_proxy": "0.01622318299569252",
+    "player_id": "2",
+    "positions": "SG",
+    "salary": 3600,
+    "share": "0.125",
+    "team": "T0A"
+   }
+  ],
+  "info": {
+   "candidates": {
+    "by_source": {
+     "noise": 2,
+     "scenario": 4,
+     "topmean": 8
+    },
+    "solves": 16,
+    "unique": 14
+   },
+   "candidates_total": 74,
+   "cash_line": {
+    "cash_mean": "309.5925462962963",
+    "cash_p10": "279.975",
+    "cash_p25": "295.125",
+    "cash_p50": "309.34375",
+    "cash_p75": "324.328125",
+    "cash_p90": "340.00625",
+    "top1_p10": "319.825",
+    "top1_p50": "349.84375",
+    "top1_p90": "383.26875"
+   },
+   "eval_mode": "drawn",
+   "field": {
+    "archetype": "large_gpp",
+    "contest": {
+     "contest_id": null,
+     "name": "preset GPP (2000)",
+     "source": "preset"
+    },
+    "field_size": 2000,
+    "label": "proxy",
+    "mix_optimizer_like": "0.2",
+    "mix_realized": "0.2",
+    "n_solves": 30,
+    "opt_unique": 30,
+    "own_target_mae_pp": "0.903932319812597",
+    "salary_use": {
+     "max": 50000,
+     "mean_left": "220.75",
+     "min": 48200,
+     "share_ge_96": "1.0",
+     "share_ge_98": "0.998",
+     "share_ge_99": "0.9825"
+    },
+    "sampled": 2000,
+    "unique": 1490,
+    "version": "field-proxy-1.2"
+   },
+   "field_label": "proxy",
+   "gamma": 3,
+   "label": "simulated against a modelled field, not real results",
+   "missing_sim_players": 0,
+   "n_sims": 1500,
+   "ownership_calibrated": false,
+   "ownership_version": "own-proxy-1.2-handset/large_gpp",
+   "refills": 3,
+   "split": {
+    "G": 150,
+    "R": 675,
+    "S": 675,
+    "by_source_selected": {
+     "noise": 1,
+     "refill": 5,
+     "scenario": 2
+    }
+   },
+   "tier_ranks": [
+    2,
+    20,
+    400
+   ],
+   "truth": {
+    "beta": "0.18",
+    "mean_shift": "0.05054868757724762",
+    "shifted": 72,
+    "tau": "0.18"
+   },
+   "version": "gpp-portfolio-1.0+split"
+  },
+  "lineups": [
+   {
+    "dupe_band": "Low",
+    "dupes": "0.10107121943446487",
+    "e_payout": "5.777837037037019",
+    "e_payout_single": "5.78688888888887",
+    "marginal": "10.08878518518517",
+    "mean": "297.3926388888889",
+    "p10": "253.66875",
+    "p50": "298.53125",
+    "p90": "344.625",
+    "p_cash": "0.3348148148148148",
+    "p_cash_single": "0.3362962962962963",
+    "p_top1": "0.025185185185185185",
+    "proj": "342.599",
+    "rank": 1,
+    "salary": 50000,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"1\", \"name\": \"P1\", \"team\": \"T0A\", \"salary\": 7100, \"mean\": 43.411, \"draftable_id\": \"d1PG\"}, {\"slot\": \"SG\", \"player_id\": \"56\", \"name\": \"P56\", \"team\": \"T3A\", \"salary\": 4700, \"mean\": 27.721, \"draftable_id\": \"d56SG\"}, {\"slot\": \"SF\", \"player_id\": \"54\", \"name\": \"P54\", \"team\": \"T2B\", \"salary\": 4000, \"mean\": 27.682, \"draftable_id\": \"d54SF\"}, {\"slot\": \"PF\", \"player_id\": \"61\", \"name\": \"P61\", \"team\": \"T3A\", \"salary\": 4900, \"mean\": 33.267, \"draftable_id\": \"d61PF\"}, {\"slot\": \"C\", \"player_id\": \"32\", \"name\": \"P32\", \"team\": \"T1B\", \"salary\": 4500, \"mean\": 38.521, \"draftable_id\": \"d32C\"}, {\"slot\": \"G\", \"player_id\": \"65\", \"name\": \"P65\", \"team\": \"T3B\", \"salary\": 6600, \"mean\": 46.194, \"draftable_id\": \"d65G\"}, {\"slot\": \"F\", \"player_id\": \"45\", \"name\": \"P45\", \"team\": \"T2A\", \"salary\": 10300, \"mean\": 72.425, \"draftable_id\": \"d45F\"}, {\"slot\": \"UTIL\", \"player_id\": \"47\", \"name\": \"P47\", \"team\": \"T2B\", \"salary\": 7900, \"mean\": 53.378, \"draftable_id\": \"d47UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "0.0005918554983683972",
+    "e_payout": "3.659437037037027",
+    "e_payout_single": "3.668488888888878",
+    "marginal": "5.845251851851843",
+    "mean": "273.69689814814814",
+    "p10": "227.51875",
+    "p50": "272.96875",
+    "p90": "321.3125",
+    "p_cash": "0.16296296296296298",
+    "p_cash_single": "0.16444444444444445",
+    "p_top1": "0.008888888888888889",
+    "proj": "339.451",
+    "rank": 2,
+    "salary": 49800,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"1\", \"name\": \"P1\", \"team\": \"T0A\", \"salary\": 7100, \"mean\": 48.23, \"draftable_id\": \"d1PG\"}, {\"slot\": \"SG\", \"player_id\": \"42\", \"name\": \"P42\", \"team\": \"T2A\", \"salary\": 6400, \"mean\": 41.548, \"draftable_id\": \"d42SG\"}, {\"slot\": \"SF\", \"player_id\": \"34\", \"name\": \"P34\", \"team\": \"T1B\", \"salary\": 4900, \"mean\": 37.35, \"draftable_id\": \"d34SF\"}, {\"slot\": \"PF\", \"player_id\": \"49\", \"name\": \"P49\", \"team\": \"T2B\", \"salary\": 7500, \"mean\": 49.708, \"draftable_id\": \"d49PF\"}, {\"slot\": \"C\", \"player_id\": \"5\", \"name\": \"P5\", \"team\": \"T0A\", \"salary\": 3700, \"mean\": 26.325, \"draftable_id\": \"d5C\"}, {\"slot\": \"G\", \"player_id\": \"11\", \"name\": \"P11\", \"team\": \"T0B\", \"salary\": 10400, \"mean\": 69.77, \"draftable_id\": \"d11G\"}, {\"slot\": \"F\", \"player_id\": \"27\", \"name\": \"P27\", \"team\": \"T1A\", \"salary\": 6100, \"mean\": 41.31, \"draftable_id\": \"d27F\"}, {\"slot\": \"UTIL\", \"player_id\": \"50\", \"name\": \"P50\", \"team\": \"T2B\", \"salary\": 3700, \"mean\": 25.21, \"draftable_id\": \"d50UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "0.0008074683864094929",
+    "e_payout": "2.836961111111101",
+    "e_payout_single": "2.836961111111101",
+    "marginal": "5.318888888888881",
+    "mean": "273.7278703703704",
+    "p10": "226.4625",
+    "p50": "273.0625",
+    "p90": "321.83125",
+    "p_cash": "0.1674074074074074",
+    "p_cash_single": "0.1674074074074074",
+    "p_top1": "0.011851851851851851",
+    "proj": "345.419",
+    "rank": 3,
+    "salary": 50000,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"64\", \"name\": \"P64\", \"team\": \"T3B\", \"salary\": 6300, \"mean\": 48.56, \"draftable_id\": \"d64PG\"}, {\"slot\": \"SG\", \"player_id\": \"72\", \"name\": \"P72\", \"team\": \"T3B\", \"salary\": 4300, \"mean\": 27.584, \"draftable_id\": \"d72SG\"}, {\"slot\": \"SF\", \"player_id\": \"54\", \"name\": \"P54\", \"team\": \"T2B\", \"salary\": 4000, \"mean\": 31.636, \"draftable_id\": \"d54SF\"}, {\"slot\": \"PF\", \"player_id\": \"43\", \"name\": \"P43\", \"team\": \"T2A\", \"salary\": 9000, \"mean\": 57.046, \"draftable_id\": \"d43PF\"}, {\"slot\": \"C\", \"player_id\": \"41\", \"name\": \"P41\", \"team\": \"T2A\", \"salary\": 8800, \"mean\": 57.803, \"draftable_id\": \"d41C\"}, {\"slot\": \"G\", \"player_id\": \"10\", \"name\": \"P10\", \"team\": \"T0B\", \"salary\": 5800, \"mean\": 41.61, \"draftable_id\": \"d10G\"}, {\"slot\": \"F\", \"player_id\": \"39\", \"name\": \"P39\", \"team\": \"T2A\", \"salary\": 7300, \"mean\": 51.977, \"draftable_id\": \"d39F\"}, {\"slot\": \"UTIL\", \"player_id\": \"32\", \"name\": \"P32\", \"team\": \"T1B\", \"salary\": 4500, \"mean\": 29.203, \"draftable_id\": \"d32UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "0.04571871711375571",
+    "e_payout": "5.451607407407402",
+    "e_payout_single": "5.465185185185179",
+    "marginal": "9.742551851851847",
+    "mean": "287.71842592592594",
+    "p10": "237.05625",
+    "p50": "287.90625",
+    "p90": "334.86875",
+    "p_cash": "0.25037037037037035",
+    "p_cash_single": "0.2518518518518518",
+    "p_top1": "0.028148148148148148",
+    "proj": "325.859",
+    "rank": 4,
+    "salary": 49900,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"10\", \"name\": \"P10\", \"team\": \"T0B\", \"salary\": 5800, \"mean\": 31.057, \"draftable_id\": \"d10PG\"}, {\"slot\": \"SG\", \"player_id\": \"11\", \"name\": \"P11\", \"team\": \"T0B\", \"salary\": 10400, \"mean\": 66.684, \"draftable_id\": \"d11SG\"}, {\"slot\": \"SF\", \"player_id\": \"36\", \"name\": \"P36\", \"team\": \"T1B\", \"salary\": 3900, \"mean\": 25.278, \"draftable_id\": \"d36SF\"}, {\"slot\": \"PF\", \"player_id\": \"34\", \"name\": \"P34\", \"team\": \"T1B\", \"salary\": 4900, \"mean\": 38.907, \"draftable_id\": \"d34PF\"}, {\"slot\": \"C\", \"player_id\": \"5\", \"name\": \"P5\", \"team\": \"T0A\", \"salary\": 3700, \"mean\": 21.356, \"draftable_id\": \"d5C\"}, {\"slot\": \"G\", \"player_id\": \"65\", \"name\": \"P65\", \"team\": \"T3B\", \"salary\": 6600, \"mean\": 45.452, \"draftable_id\": \"d65G\"}, {\"slot\": \"F\", \"player_id\": \"72\", \"name\": \"P72\", \"team\": \"T3B\", \"salary\": 4300, \"mean\": 34.385, \"draftable_id\": \"d72F\"}, {\"slot\": \"UTIL\", \"player_id\": \"45\", \"name\": \"P45\", \"team\": \"T2A\", \"salary\": 10300, \"mean\": 62.74, \"draftable_id\": \"d45UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "1.0865939987110703e-05",
+    "e_payout": "3.3516740740740634",
+    "e_payout_single": "3.3516740740740634",
+    "marginal": "4.3174851851851805",
+    "mean": "263.78208333333333",
+    "p10": "217.05625",
+    "p50": "263.46875",
+    "p90": "310.1125",
+    "p_cash": "0.11259259259259259",
+    "p_cash_single": "0.11259259259259259",
+    "p_top1": "0.008888888888888889",
+    "proj": "297.405",
+    "rank": 5,
+    "salary": 50000,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"51\", \"name\": \"P51\", \"team\": \"T2B\", \"salary\": 5700, \"mean\": 34.689, \"draftable_id\": \"d51PG\"}, {\"slot\": \"SG\", \"player_id\": \"56\", \"name\": \"P56\", \"team\": \"T3A\", \"salary\": 4700, \"mean\": 28.621, \"draftable_id\": \"d56SG\"}, {\"slot\": \"SF\", \"player_id\": \"3\", \"name\": \"P3\", \"team\": \"T0A\", \"salary\": 3900, \"mean\": 25.799, \"draftable_id\": \"d3SF\"}, {\"slot\": \"PF\", \"player_id\": \"58\", \"name\": \"P58\", \"team\": \"T3A\", \"salary\": 8300, \"mean\": 47.872, \"draftable_id\": \"d58PF\"}, {\"slot\": \"C\", \"player_id\": \"14\", \"name\": \"P14\", \"team\": \"T0B\", \"salary\": 4700, \"mean\": 26.154, \"draftable_id\": \"d14C\"}, {\"slot\": \"G\", \"player_id\": \"36\", \"name\": \"P36\", \"team\": \"T1B\", \"salary\": 3900, \"mean\": 26.037, \"draftable_id\": \"d36G\"}, {\"slot\": \"F\", \"player_id\": \"57\", \"name\": \"P57\", \"team\": \"T3A\", \"salary\": 8500, \"mean\": 49.743, \"draftable_id\": \"d57F\"}, {\"slot\": \"UTIL\", \"player_id\": \"16\", \"name\": \"P16\", \"team\": \"T0B\", \"salary\": 10300, \"mean\": 58.49, \"draftable_id\": \"d16UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "1.6019105122361751e-06",
+    "e_payout": "0.5278772486772455",
+    "e_payout_single": "0.5330497354497319",
+    "marginal": "3.073511111111102",
+    "mean": "252.4788888888889",
+    "p10": "211.6875",
+    "p50": "251.65625",
+    "p90": "295.95",
+    "p_cash": "0.056296296296296296",
+    "p_cash_single": "0.056296296296296296",
+    "p_top1": "0.002962962962962963",
+    "proj": "299.818",
+    "rank": 6,
+    "salary": 49800,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"15\", \"name\": \"P15\", \"team\": \"T0B\", \"salary\": 6700, \"mean\": 38.131, \"draftable_id\": \"d15PG\"}, {\"slot\": \"SG\", \"player_id\": \"47\", \"name\": \"P47\", \"team\": \"T2B\", \"salary\": 7900, \"mean\": 42.434, \"draftable_id\": \"d47SG\"}, {\"slot\": \"SF\", \"player_id\": \"57\", \"name\": \"P57\", \"team\": \"T3A\", \"salary\": 8500, \"mean\": 61.1, \"draftable_id\": \"d57SF\"}, {\"slot\": \"PF\", \"player_id\": \"13\", \"name\": \"P13\", \"team\": \"T0B\", \"salary\": 3600, \"mean\": 17.846, \"draftable_id\": \"d13PF\"}, {\"slot\": \"C\", \"player_id\": \"26\", \"name\": \"P26\", \"team\": \"T1A\", \"salary\": 6800, \"mean\": 39.602, \"draftable_id\": \"d26C\"}, {\"slot\": \"G\", \"player_id\": \"64\", \"name\": \"P64\", \"team\": \"T3B\", \"salary\": 6300, \"mean\": 38.674, \"draftable_id\": \"d64G\"}, {\"slot\": \"F\", \"player_id\": \"27\", \"name\": \"P27\", \"team\": \"T1A\", \"salary\": 6100, \"mean\": 42.624, \"draftable_id\": \"d27F\"}, {\"slot\": \"UTIL\", \"player_id\": \"3\", \"name\": \"P3\", \"team\": \"T0A\", \"salary\": 3900, \"mean\": 19.407, \"draftable_id\": \"d3UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "7.843178310301557e-08",
+    "e_payout": "0.18103703703703541",
+    "e_payout_single": "0.18103703703703541",
+    "marginal": "2.6529629629629587",
+    "mean": "244.56861111111112",
+    "p10": "200.7",
+    "p50": "246.21875",
+    "p90": "286.19375",
+    "p_cash": "0.02962962962962963",
+    "p_cash_single": "0.02962962962962963",
+    "p_top1": "0.0",
+    "proj": "289.531",
+    "rank": 7,
+    "salary": 50000,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"28\", \"name\": \"P28\", \"team\": \"T1B\", \"salary\": 6100, \"mean\": 29.966, \"draftable_id\": \"d28PG\"}, {\"slot\": \"SG\", \"player_id\": \"18\", \"name\": \"P18\", \"team\": \"T0B\", \"salary\": 4300, \"mean\": 21.093, \"draftable_id\": \"d18SG\"}, {\"slot\": \"SF\", \"player_id\": \"52\", \"name\": \"P52\", \"team\": \"T2B\", \"salary\": 6100, \"mean\": 39.608, \"draftable_id\": \"d52SF\"}, {\"slot\": \"PF\", \"player_id\": \"16\", \"name\": \"P16\", \"team\": \"T0B\", \"salary\": 10300, \"mean\": 63.898, \"draftable_id\": \"d16PF\"}, {\"slot\": \"C\", \"player_id\": \"50\", \"name\": \"P50\", \"team\": \"T2B\", \"salary\": 3700, \"mean\": 19.603, \"draftable_id\": \"d50C\"}, {\"slot\": \"G\", \"player_id\": \"2\", \"name\": \"P2\", \"team\": \"T0A\", \"salary\": 3600, \"mean\": 22.561, \"draftable_id\": \"d2G\"}, {\"slot\": \"F\", \"player_id\": \"62\", \"name\": \"P62\", \"team\": \"T3A\", \"salary\": 5900, \"mean\": 34.966, \"draftable_id\": \"d62F\"}, {\"slot\": \"UTIL\", \"player_id\": \"8\", \"name\": \"P8\", \"team\": \"T0A\", \"salary\": 10000, \"mean\": 57.836, \"draftable_id\": \"d8UTIL\"}]"
+   },
+   {
+    "dupe_band": "Low",
+    "dupes": "3.7507029394278e-05",
+    "e_payout": "0.5789555555555489",
+    "e_payout_single": "0.5834814814814746",
+    "marginal": "1.8182222222222164",
+    "mean": "253.80546296296296",
+    "p10": "212.81875",
+    "p50": "254.90625",
+    "p90": "292.86875",
+    "p_cash": "0.0637037037037037",
+    "p_cash_single": "0.0637037037037037",
+    "p_top1": "0.002962962962962963",
+    "proj": "297.527",
+    "rank": 8,
+    "salary": 49800,
+    "slots_json": "[{\"slot\": \"PG\", \"player_id\": \"46\", \"name\": \"P46\", \"team\": \"T2B\", \"salary\": 6600, \"mean\": 40.16, \"draftable_id\": \"d46PG\"}, {\"slot\": \"SG\", \"player_id\": \"51\", \"name\": \"P51\", \"team\": \"T2B\", \"salary\": 5700, \"mean\": 31.054, \"draftable_id\": \"d51SG\"}, {\"slot\": \"SF\", \"player_id\": \"61\", \"name\": \"P61\", \"team\": \"T3A\", \"salary\": 4900, \"mean\": 28.788, \"draftable_id\": \"d61SF\"}, {\"slot\": \"PF\", \"player_id\": \"43\", \"name\": \"P43\", \"team\": \"T2A\", \"salary\": 9000, \"mean\": 57.328, \"draftable_id\": \"d43PF\"}, {\"slot\": \"C\", \"player_id\": \"62\", \"name\": \"P62\", \"team\": \"T3A\", \"salary\": 5900, \"mean\": 31.509, \"draftable_id\": \"d62C\"}, {\"slot\": \"G\", \"player_id\": \"42\", \"name\": \"P42\", \"team\": \"T2A\", \"salary\": 6400, \"mean\": 36.682, \"draftable_id\": \"d42G\"}, {\"slot\": \"F\", \"player_id\": \"66\", \"name\": \"P66\", \"team\": \"T3B\", \"salary\": 7700, \"mean\": 47.069, \"draftable_id\": \"d66F\"}, {\"slot\": \"UTIL\", \"player_id\": \"13\", \"name\": \"P13\", \"team\": \"T0B\", \"salary\": 3600, \"mean\": 24.937, \"draftable_id\": \"d13UTIL\"}]"
+   }
+  ],
+  "summary": {
+   "baseline": {
+    "e_payout": "43.39409850088165",
+    "name": "Top N by projection",
+    "p_any_cash": "0.8651851851851852",
+    "p_any_top1": "0.1288888888888889"
+   },
+   "cost": "24.0",
+   "curve": {
+    "complete": true,
+    "curve_to": null,
+    "label": "simulated against a modelled field, not real results",
+    "n_build": 8,
+    "nested_prefix": false,
+    "points": [
+     {
+      "build_ranks": [
+       4
+      ],
+      "caps_relaxed": false,
+      "cost": "3.0",
+      "e_payout": "5.451607407407402",
+      "e_payout_per_dollar": "1.8172024691358006",
+      "entries": 1,
+      "if_independent": {
+       "p_any_cash": "0.25037037037037035",
+       "p_any_top1": "0.028148148148148144"
+      },
+      "is_prefix": false,
+      "n_sims": 675,
+      "p_any_cash": "0.25037037037037035",
+      "p_any_top01": "0.002962962962962963",
+      "p_any_top1": "0.028148148148148148",
+      "p_first": "0.002962962962962963",
+      "requested": 1,
+      "source": "subset",
+      "top01_rank": 2
+     },
+     {
+      "build_ranks": [
+       1,
+       4,
+       6
+      ],
+      "caps_relaxed": false,
+      "cost": "9.0",
+      "e_payout": "11.751502645502619",
+      "e_payout_per_dollar": "1.3057225161669577",
+      "entries": 3,
+      "if_independent": {
+       "p_any_cash": "0.5294292032718589",
+       "p_any_top1": "0.0554314557740182"
+      },
+      "is_prefix": false,
+      "n_sims": 675,
+      "p_any_cash": "0.5318518518518518",
+      "p_any_top01": "0.005925925925925926",
+      "p_any_top1": "0.056296296296296296",
+      "p_first": "0.005925925925925926",
+      "requested": 3,
+      "source": "subset",
+      "top01_rank": 2
+     },
+     {
+      "build_ranks": [
+       1,
+       4,
+       6,
+       7,
+       8
+      ],
+      "caps_relaxed": true,
+      "cost": "15.0",
+      "e_payout": "12.50115026455023",
+      "e_payout_per_dollar": "0.833410017636682",
+      "entries": 5,
+      "if_independent": {
+       "p_any_cash": "0.5724609338522222",
+       "p_any_top1": "0.05823017738653957"
+      },
+      "is_prefix": false,
+      "n_sims": 675,
+      "p_any_cash": "0.5777777777777777",
+      "p_any_top01": "0.005925925925925926",
+      "p_any_top1": "0.05925925925925926",
+      "p_first": "0.005925925925925926",
+      "requested": 5,
+      "source": "subset",
+      "top01_rank": 2
+     },
+     {
+      "build_ranks": [
+       1,
+       2,
+       3,
+       4,
+       5,
+       6,
+       7,
+       8
+      ],
+      "caps_relaxed": false,
+      "cost": "24.0",
+      "e_payout": "22.365386507936442",
+      "e_payout_per_dollar": "0.9318911044973518",
+      "entries": 8,
+      "if_independent": {
+       "p_any_cash": "0.7371673813571715",
+       "p_any_top1": "0.08586250838349474"
+      },
+      "is_prefix": true,
+      "n_sims": 675,
+      "p_any_cash": "0.7481481481481481",
+      "p_any_top01": "0.013333333333333334",
+      "p_any_top1": "0.0874074074074074",
+      "p_first": "0.01037037037037037",
+      "requested": 8,
+      "source": "build",
+      "top01_rank": 2
+     }
+    ],
+    "requested_points": [
+     1,
+     3,
+     5,
+     8
+    ],
+    "select_sims": null,
+    "version": "entries-curve-1.0"
+   },
+   "e_cashing": "1.1777777777777778",
+   "e_payout": "22.365386507936442",
+   "e_payout_se": "3.460463795704681",
+   "entries": 8,
+   "n_sims": 675,
+   "p_any_cash": "0.7481481481481481",
+   "p_any_top1": "0.0874074074074074",
+   "p_profit": "0.09777777777777778",
+   "payout_p50": "6.110000000000127",
+   "payout_p90": "18.330000000000382",
+   "relative": "0.5154015702730186",
+   "relative_se": "0.09720726114794537",
+   "requested": 8,
+   "roi": "-0.0681088955026482",
+   "roi_se": "0.14418599148769504",
+   "stopped": null,
+   "strengths": null
+  }
+ }
+}

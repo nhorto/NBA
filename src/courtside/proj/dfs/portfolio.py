@@ -49,6 +49,10 @@ Pipeline (`build_portfolio`):
    Points are nested sets under their own N's caps (smaller: subsets of the build; larger: the
    build plus more greedy picks). E[payout] per dollar is stored but never headlined.
 
+**Sim split** (`COURTSIDE_PORTFOLIO_SPLIT`, OFF by default; see SPLIT_ENV): steps 1, 3 and 4/5
+run on disjoint rows of the scoring truth (generation G / selection S / report R), so the
+reported chances are not scored on the sims that generated and picked the lineups.
+
 Storage (migration 13): `dfs_portfolios` (one row per build, status building | ok | error,
 settings and summary JSON) and the lineups in `dfs_lineups` with ``run_id`` = the portfolio id
 (``pf-...``), ``mode='gpp'`` and the contest id. They are kept out of `dfs_runs` on purpose: the
@@ -64,6 +68,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import sqlite3
 import time
 import uuid
@@ -108,6 +113,72 @@ TRUTH_TAU = 0.18
 # lower top tail, and scored as the EASIEST field for a fixed set (soft 748 / medium 563 / sharp
 # 658 on the 2026-10-20 $60K Zone); by information it orders 880 / 563 / 416.
 STRENGTH_W = {"soft": -0.25, "medium": 0.0, "sharp": 0.25}
+# Sim split (IMPROVEMENTS.md B1, docs/research/portfolio-split.md). OFF by default (env
+# COURTSIDE_PORTFOLIO_SPLIT=1 / 0 overrides, read at import; `set_split` or
+# `build_portfolio(split=...)` at run time). OFF, one set of sim rows generates the scenario
+# candidates, selects (greedy) and reports, so scenario lineups are scored on "their" own row and
+# the max over ~350 candidates is reported on the sims that picked it (winner's curse). ON, the
+# scoring truth's rows are split at random (seeded by Settings.seed) into three disjoint sets:
+#   G = SPLIT_G of the rows (2,500 of 25,000): scenario / min-locked / refill objectives;
+#   S = half of the rest (11,250): candidate scoring for the greedy and the curve's picks;
+#   R = the other half (11,250): everything reported (E[payout], P(cash), P(top 1 %), dupes,
+#       relative score, entries curve, strengths, baselines).
+# Version `gpp-portfolio-1.0+split` in info.version. OFF: nothing of it runs (bit-identical,
+# tests/test_portfolio_split.py).
+# Mode "gs" (COURTSIDE_PORTFOLIO_SPLIT=gs, version `+split-gs`): a report-only split. G and S are
+# ONE set (the first 1 - SPLIT_R of the same permutation, 13,750 of 25,000), generation draws
+# from it uniformly with replacement as OFF does, the greedy selects on it, and R (the same
+# 11,250 rows as mode "split") reports. Same R share as "split" so the report noise is unchanged.
+SPLIT_DEFAULT = "gs"                   # shipped 2026-10-23 (owner OK); "off" | "split" | "gs" (env overrides)
+SPLIT_ENV = "COURTSIDE_PORTFOLIO_SPLIT"
+SPLIT_TAG = "+split"
+SPLIT_GS_TAG = "+split-gs"
+SPLIT_MODES = ("off", "split", "gs")
+SPLIT_G = 0.10                         # share of the rows for generation (G)
+SPLIT_R = 0.45                         # share of the rows for the report (R); S = the rest
+SPLIT_SEED = 11                        # row permutation: default_rng(Settings.seed + SPLIT_SEED)
+
+
+def split_mode(v: Any, default: str = "off") -> str:
+    """'off' | 'split' | 'gs' from an env string / bool / mode: 1 true yes on split -> 'split',
+    gs -> 'gs', 0 false no off -> 'off', anything else -> `default`."""
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return "split" if v else "off"
+    x = str(v).strip().lower()
+    if x in ("1", "true", "yes", "on", "split"):
+        return "split"
+    if x == "gs":
+        return "gs"
+    if x in ("0", "false", "no", "off", ""):
+        return "off" if x else default
+    return default
+
+
+PORTFOLIO_SPLIT = split_mode(os.environ.get(SPLIT_ENV), SPLIT_DEFAULT)
+
+
+def set_split(on: bool | str) -> None:
+    """Set the sim split mode for later builds (the env is read once at import): True / 'split',
+    'gs', or False / 'off'."""
+    global PORTFOLIO_SPLIT
+    PORTFOLIO_SPLIT = split_mode(on)
+
+
+def split_rows(S: int, seed: int, mode: str = "split") -> dict[str, np.ndarray]:
+    """Disjoint sorted row indices {G, S, R} of an S-row scoring truth (see SPLIT_G): a seeded
+    permutation, G = the first round(SPLIT_G * S) rows, R = the last round(SPLIT_R * S), S the
+    rest in between (each at least 1). mode 'gs': G = S = everything but R (same R rows)."""
+    if S < 3:
+        raise PortfolioError(f"the sim split needs at least 3 sims (have {S})")
+    perm = np.random.default_rng(int(seed) + SPLIT_SEED).permutation(S)
+    g = min(S - 2, max(1, int(round(SPLIT_G * S))))
+    r = min(S - g - 1, max(1, int(round(SPLIT_R * S))))
+    if mode == "gs":
+        gs = np.sort(perm[:S - r])
+        return {"G": gs, "S": gs, "R": np.sort(perm[S - r:])}
+    return {"G": np.sort(perm[:g]), "S": np.sort(perm[g:S - r]), "R": np.sort(perm[S - r:])}
 
 
 # ============================================================================== settings
@@ -244,8 +315,11 @@ def _solver(players: Sequence[PoolPlayer], rules: Rules, *, locks=(), bans=(), n
 def candidates(pool_players: Sequence[PoolPlayer], rules: Rules, mu: Mapping[str, float],
                fp: np.ndarray, fp_col: Mapping[str, int], own: Mapping[str, float],
                s: Settings, *, now: datetime | None = None, bans: Iterable[str] = (),
-               rng: np.random.Generator) -> tuple[list, dict]:
-    """Unique candidate lineups (`optimizer.Lineup`) and per-source counts (§5.5.1)."""
+               rng: np.random.Generator, tags: list | None = None,
+               draw: Callable[[], int] | None = None) -> tuple[list, dict]:
+    """Unique candidate lineups (`optimizer.Lineup`) and per-source counts (§5.5.1). `tags`
+    (a list) receives each returned lineup's source, in order; `draw()` gives the sim row of
+    each scenario objective (default: uniform over `fp`'s rows from `rng`)."""
     from . import topn as T
     t0 = time.perf_counter()
     bans = set(bans)
@@ -259,8 +333,9 @@ def candidates(pool_players: Sequence[PoolPlayer], rules: Rules, mu: Mapping[str
     c = s.counts()
     jobs: list[tuple[str, dict, tuple]] = []
     S = fp.shape[0]
+    draw = draw or (lambda: int(rng.integers(0, S)))
     for _ in range(c["scenario"]):
-        r = int(rng.integers(0, S))
+        r = draw()
         x = np.where(cols >= 0, fp[r, np.maximum(cols, 0)].astype(float), base)
         jobs.append(("scenario", dict(zip(ids, s.scen_w * base + (1 - s.scen_w) * x)), ()))
     for _ in range(c["ownpen"]):
@@ -272,7 +347,7 @@ def candidates(pool_players: Sequence[PoolPlayer], rules: Rules, mu: Mapping[str
     for p, f in s.min_exp.items():
         if f > 0 and p in mu and p not in s.locks:
             for _ in range(s.n_min_locked):
-                r = int(rng.integers(0, S))
+                r = draw()
                 x = np.where(cols >= 0, fp[r, np.maximum(cols, 0)].astype(float), base)
                 jobs.append(("min_locked", dict(zip(ids, s.scen_w * base + (1 - s.scen_w) * x)),
                              (p,)))
@@ -304,6 +379,8 @@ def candidates(pool_players: Sequence[PoolPlayer], rules: Rules, mu: Mapping[str
         seen.add(k)
         out.append(lu)
         src[tag] = src.get(tag, 0) + 1
+        if tags is not None:
+            tags.append(tag)
 
     with ThreadPoolExecutor(max(1, s.threads)) as ex:
         tf = ex.submit(top_job)
@@ -380,9 +457,15 @@ def _incidence(lineups: Sequence, pidx: Mapping[str, int]) -> np.ndarray:
 @dataclass
 class CandSet:
     """Candidates as the greedy sees them: per-sim inputs `P` and the (C x players) incidence
-    `inc`. `on_empty` callbacks may replace both (refills)."""
+    `inc`. `on_empty` callbacks may replace both (refills). `R`: the same candidates scored on
+    the report rows (sim split ON, see SPLIT_ENV); None = report on `P`."""
     P: _Pool
     inc: np.ndarray
+    R: _Pool | None = None
+
+    @property
+    def report(self) -> _Pool:
+        return self.P if self.R is None else self.R
 
 
 def greedy(lad: Ladder, cs: CandSet, n: int, *, gamma: int,
@@ -571,6 +654,7 @@ class Portfolio:
     field: Any = None                    # the medium field proxy (not stored)
     fp: Any = None                       # scoring truth (S x field.pids), not stored
     fp_raw: Any = None                   # our sims before the truth model, not stored
+    sources: Any = None                  # candidate source per lineup (pick order), not stored
 
     def slots(self) -> list[list[dict]]:
         return [json.loads(x["slots_json"]) for x in self.lineups]
@@ -605,12 +689,17 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
                     mu: Mapping[str, float] | None = None, rules: Rules | None = None,
                     now: datetime | None = None, slate_id: str | None = None,
                     run_id: str | None = None, baselines: bool = False,
-                    progress: Callable[[str], None] | None = None) -> Portfolio:
+                    progress: Callable[[str], None] | None = None,
+                    split: bool | str | None = None) -> Portfolio:
     """The portfolio for one contest. `inputs` is the field.py ownership input table (live:
     `field.slate_inputs`; history: `field.hist_inputs`), `sims` a stored-sims dict (``fp`` S x n,
     ``dk_id``), `mu` our mean projections by DK id (default: ``inputs.proj``). `baselines=True`
-    adds the "top N by individual E[payout]" picks (with and without the caps) to `info`."""
+    adds the "top N by individual E[payout]" picks (with and without the caps) to `info`.
+    `split` (None: PORTFOLIO_SPLIT; True / 'split' / 'gs' / False / 'off') = generate / select /
+    report on disjoint sims (SPLIT_ENV)."""
     t0 = time.perf_counter()
+    mode = PORTFOLIO_SPLIT if split is None else split_mode(split)
+    split = mode != "off"
     say = progress or (lambda m: None)
     rules = rules or (pool.rules if isinstance(pool, SlatePool) else None)
     if rules is None:
@@ -655,6 +744,14 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     fp, tinfo = truth_sims(fp_raw, fld.pids, inputs, s.beta, s.tau,
                            np.random.default_rng(s.seed + 7))
     timing["field"] = time.perf_counter() - t
+    rows = split_rows(fp.shape[0], s.seed, mode) if split else None
+    fp_gen, fp_sel, fp_rep = ((fp[rows["G"]], fp[rows["S"]], fp[rows["R"]]) if split
+                              else (fp, fp, fp))
+    # scenario rows: OFF uniform with replacement (as before); ON without replacement through
+    # G (reshuffled when used up), so the small G set does not repeat objectives
+    # ('gs': uniform with replacement through G + S, as OFF through all rows)
+    draw = (_cycler(len(rows["G"]), s.seed + SPLIT_SEED + 1) if mode == "split"
+            else (lambda: int(rng.integers(0, fp_gen.shape[0]))))
     fcol = {p: j for j, p in enumerate(fld.pids)}
     missing = set(ainfo["missing"])
     if any(p in missing for p in mu):
@@ -664,8 +761,9 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     # ---- candidates
     say("candidates")
     t = time.perf_counter()
-    cands, cinfo = candidates(players, rules, mu, fp, fcol, op.as_dict(), s, now=now, bans=bans,
-                              rng=rng)
+    sources: list[str] = []
+    cands, cinfo = candidates(players, rules, mu, fp_gen, fcol, op.as_dict(), s, now=now,
+                              bans=bans, rng=rng, tags=sources, draw=draw)
     timing["candidates"] = time.perf_counter() - t
     if not cands:
         raise PortfolioError("no legal lineup under the locks and excludes")
@@ -676,7 +774,7 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     lad = Ladder(contest)
     m_o = max(1, contest.field_size - n)
 
-    def score(lineups: list) -> tuple[_Pool, list[dict], F.FieldEval]:
+    def score(lineups: list, fp=fp) -> tuple[_Pool, list[dict], F.FieldEval]:
         ev = F.evaluate(fld, fp, contest, [lu.slot_pairs() for lu in lineups], seed=s.seed,
                         tiers=True, own_entries=n, per_sim=True)
         ps = ev.per_sim
@@ -697,7 +795,12 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
             tied += rng.poisson(extra[None, :], size=tied.shape).astype(np.int32)
         return _Pool(ps["score"], np.rint(ps["above"]).astype(np.int32), tied), ev.lineups, ev
 
-    P, single, ev0 = score(cands)
+    if split:                     # select on S, report on R (`single` / ev0: R); see SPLIT_ENV
+        P, single_sel, _ = score(cands, fp_sel)
+        R0, single, ev0 = score(cands, fp_rep)
+    else:
+        P, single, ev0 = score(cands)
+        R0 = single_sel = None
     timing["scoring"] = time.perf_counter() - t
 
     # ---- greedy
@@ -709,8 +812,9 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     cap = np.array([cap_d.get(p, n) for p in pids])
     low = np.array([low_d.get(p, 0) for p in pids])
     gamma = max(int(s.gamma), len(s.locks))
-    cset = CandSet(P, inc)
-    state = {"cands": cands, "single": single, "refills": 0, "curve_refills": 0}
+    cset = CandSet(P, inc, R0)
+    state = {"cands": cands, "single": single, "single_sel": single_sel, "refills": 0,
+             "curve_refills": 0}
 
     def refiller(n_to: int, cap: np.ndarray, low: np.ndarray, key: str, budget: int):
         """`greedy`'s on_empty for a set of `n_to` entries under (cap, low); `key` counts the
@@ -737,8 +841,8 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         cols = np.array([fcol.get(p, -1) for p in ids])
         jobs = []
         for _ in range(max(20, 2 * (n - len(chosen)))):
-            r = int(rng.integers(0, fp.shape[0]))
-            x = np.where(cols >= 0, fp[r, np.maximum(cols, 0)].astype(float), base)
+            r = draw()
+            x = np.where(cols >= 0, fp_gen[r, np.maximum(cols, 0)].astype(float), base)
             jobs.append(dict(zip(ids, s.scen_w * base + (1 - s.scen_w) * x)))
         with ThreadPoolExecutor(max(1, s.threads)) as ex:
             new = [lu for lu in ex.map(solve, jobs) if lu is not None]
@@ -751,27 +855,34 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
                 fresh.append(lu)
         if not fresh:
             return False
-        P2, single2, _ = score(fresh)
+        if split:
+            P2, sel2, _ = score(fresh, fp_sel)
+            R2, single2, _ = score(fresh, fp_rep)
+            state["single_sel"] = state["single_sel"] + sel2
+            cset.R = _cat(cset.R, R2)
+        else:
+            P2, single2, _ = score(fresh)
         state["cands"] = cur + fresh
         state["single"] = state["single"] + single2
+        sources.extend([key[:-1]] * len(fresh))            # "refill" / "curve_refill"
         cset.inc = np.concatenate([cset.inc, _incidence(fresh, pidx)])
-        cset.P = _Pool(np.concatenate([cset.P.score, P2.score], 1),
-                       np.concatenate([cset.P.above, P2.above], 1),
-                       np.concatenate([cset.P.tied, P2.tied], 1))
+        cset.P = _cat(cset.P, P2)
         return True
 
     chosen, ginfo = greedy(lad, cset, n, gamma=gamma, cap=cap, low=low,
                            on_empty=refiller(n, cap, low, "refills", s.refills))
     timing["selection"] = time.perf_counter() - t
     cands, single, inc, P = state["cands"], state["single"], cset.inc, cset.P
+    Rp = cset.report                     # = P with the split OFF
 
-    # ---- output
-    sc, ab, td = P.score[:, chosen], P.above[:, chosen], P.tied[:, chosen]
-    pay, rank = joint_payouts(lad, sc, ab, td) if chosen else (np.zeros((fp.shape[0], 0)),) * 2
+    # ---- output (on the report rows)
+    sc, ab, td = Rp.score[:, chosen], Rp.above[:, chosen], Rp.tied[:, chosen]
+    pay, rank = (joint_payouts(lad, sc, ab, td) if chosen
+                 else (np.zeros((fp_rep.shape[0], 0)),) * 2)
     summ = _summary(lad, pay, rank, contest)
     summ["stopped"] = ginfo["stopped"]
     summ["requested"] = n
-    summ.update(_relative(lad, P, pay, cinfo["by_source"].get("topmean", 0), n, contest))
+    summ.update(_relative(lad, Rp, pay, cinfo["by_source"].get("topmean", 0), n, contest))
     denom = F.UNIT * F.WUNIT
     lineups = []
     for k, j in enumerate(chosen):
@@ -794,8 +905,8 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     if s.strengths and chosen:
         say("strengths")
         t = time.perf_counter()
-        ranges = strength_range(players, inputs, sims, contest, rules,
-                                [cands[j].slot_pairs() for j in chosen], s)
+        ranges = strength_range(players, inputs, _report_sims(sims, s, rows) if split else sims,
+                                contest, rules, [cands[j].slot_pairs() for j in chosen], s)
         ranges["medium"] = {"e_payout": summ["e_payout"], "roi": summ["roi"]}
         timing["strengths"] = time.perf_counter() - t
     summ["strengths"] = ranges
@@ -808,7 +919,9 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
                                       refill=lambda k, c, lo: refiller(k, c, lo, "curve_refills",
                                                                        s.curve_refills))
         timing["curve"] = time.perf_counter() - t
-    info = {"version": VERSION, "label": LABEL, "candidates": cinfo, "refills": state["refills"],
+    info = {"version": VERSION + {"off": "", "split": SPLIT_TAG, "gs": SPLIT_GS_TAG}[mode],
+            "label": LABEL,
+            "candidates": cinfo, "refills": state["refills"],
             "candidates_total": len(cands), "gamma": gamma,
             "field": fld.summary(), "field_label": F.LABEL, "ownership_version": op.version,
             "ownership_calibrated": F.calibrated(),
@@ -817,11 +930,58 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
             "missing_sim_players": len(missing), "truth": tinfo,
             "timing": {k: round(v, 2) for k, v in timing.items()},
             "seconds": round(time.perf_counter() - t0, 2)}
+    if split:
+        info["split"] = {k: int(len(v)) for k, v in rows.items()}
+        if mode == "gs":
+            info["split"]["mode"] = "gs"
+        info["split"]["by_source_selected"] = _count([sources[j] for j in chosen])
     if baselines:
-        info["baselines"] = _baselines(lad, P, inc, n, single, gamma, cap, low, contest, cands)
+        info["baselines"] = _baselines(lad, P, inc, n, state["single_sel"] if split else single,
+                                       gamma, cap, low, contest, cands, report=cset.R)
         info["greedy_pairs"] = [cands[j].slot_pairs() for j in chosen]
     return Portfolio(slate_id, contest, s, lineups, summ, exposure, info, run_id, field=fld,
-                     fp=fp, fp_raw=fp_raw)
+                     fp=fp, fp_raw=fp_raw, sources=[sources[j] for j in chosen])
+
+
+def _cycler(n: int, seed: int) -> Callable[[], int]:
+    """draw() -> row index in 0..n-1 without replacement, reshuffled after every n draws."""
+    rng = np.random.default_rng(seed)
+    st = {"perm": rng.permutation(n), "i": 0}
+
+    def draw() -> int:
+        if st["i"] >= n:
+            st["perm"], st["i"] = rng.permutation(n), 0
+        st["i"] += 1
+        return int(st["perm"][st["i"] - 1])
+    return draw
+
+
+def _cat(a: _Pool, b: _Pool) -> _Pool:
+    """Candidates `b` appended to `a` (same sim rows)."""
+    return _Pool(np.concatenate([a.score, b.score], 1), np.concatenate([a.above, b.above], 1),
+                 np.concatenate([a.tied, b.tied], 1))
+
+
+def _count(xs: Iterable[str]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for x in xs:
+        out[x] = out.get(x, 0) + 1
+    return out
+
+
+def _aligned_rows(S: int, n_sims: int | None, seed: int) -> np.ndarray:
+    """The stored-sims rows behind `field.align_sims(sims, pids, n_sims, seed)` (same rule)."""
+    if n_sims and n_sims < S:
+        return np.sort(np.random.default_rng(seed).choice(S, n_sims, replace=False))
+    return np.arange(S)
+
+
+def _report_sims(sims: Mapping[str, np.ndarray], s: Settings,
+                 rows: Mapping[str, np.ndarray]) -> dict:
+    """The stored sims restricted to the build's report rows R (split ON): the soft / sharp
+    strengths are then scored on nights the greedy never saw."""
+    stored = _aligned_rows(sims["fp"].shape[0], s.n_sims, s.seed)[rows["R"]]
+    return {**sims, "fp": sims["fp"][stored]}
 
 
 # ============================================================================== entries curve
@@ -1006,7 +1166,7 @@ def entries_curve(lad: Ladder, cs: CandSet, chosen: Sequence[int], s: Settings,
     points = []
     for k in sorted(sets):
         idx = sets[k]
-        row = {"requested": k, **curve_stats(lad, cs.P, idx, contest, m_o=m_o), **meta[k]}
+        row = {"requested": k, **curve_stats(lad, cs.report, idx, contest, m_o=m_o), **meta[k]}
         if meta[k]["source"] != "extended":
             row["build_ranks"] = [pos[j] for j in idx]
             row["is_prefix"] = row["build_ranks"] == list(range(1, len(idx) + 1))
@@ -1054,9 +1214,9 @@ def sim_payout(field: F.Field, contest: F.Contest, fp: np.ndarray, lineup_pairs:
     return float(pay.sum(1).mean())
 
 
-def _baselines(lad, P, inc, n, single, gamma, cap, low, contest, cands) -> dict:
+def _baselines(lad, P, inc, n, single, gamma, cap, low, contest, cands, report=None) -> dict:
     """'top N by individual E[payout]' (no caps) and the same with the portfolio's caps, scored
-    jointly on the sims (for the T2.12 comparison)."""
+    jointly on the sims (for the T2.12 comparison). `report`: score the picks there (split ON)."""
     ind = np.array([x["e_payout"] for x in single])
     out = {}
     top = list(np.argsort(-ind, kind="stable")[:n])
@@ -1068,7 +1228,8 @@ def _baselines(lad, P, inc, n, single, gamma, cap, low, contest, cands) -> dict:
                       low=np.zeros(inc.shape[1], int))
     for name, ch in (("top_individual", top), ("top_individual_capped", capped),
                      ("greedy_uncapped", open_), ("top_mean", topmean)):
-        pay, rank = joint_payouts(lad, P.score[:, ch], P.above[:, ch], P.tied[:, ch])
+        Q = P if report is None else report
+        pay, rank = joint_payouts(lad, Q.score[:, ch], Q.above[:, ch], Q.tied[:, ch])
         sm = _summary(lad, pay, rank, contest)
         out[name] = {"pairs": [cands[int(c)].slot_pairs() for c in ch], "e_payout": sm["e_payout"],
                      "e_payout_se": sm["e_payout_se"], "roi": sm["roi"],

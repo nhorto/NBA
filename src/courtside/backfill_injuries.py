@@ -242,7 +242,8 @@ def official_rows(parsed: list[dict], report_dt: datetime, path: Path | str) -> 
     captured = report_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return [{"captured_at": captured, "source": SOURCE, "team": r["team"],
              "player_name": r.get("player_name_norm") or r["player_name"], "player_id": None,
-             "status": r.get("status"), "reason": r.get("reason"), "raw_path": str(path)}
+             "status": r.get("status"), "reason": r.get("reason"), "raw_path": str(path),
+             "game_date": r.get("game_date")}
             for r in parsed if r.get("player_name_norm") or r.get("player_name")]
 
 
@@ -390,6 +391,114 @@ def run(*, start: date | None = None, end: date | None = None, extras: bool = Tr
     out["earliest"] = (earliest or start).isoformat() if (earliest or start) else None
     out["failures"] = stats.failures
     return out
+
+
+# ------------------------------------------------------------------ game_date backfill (B8)
+#
+# Official rows written before schema 16 have no `game_date`. The archived PDF has it, and the
+# rows of one report were inserted in parse order, so re-parsing the PDF and lining the two up
+# recovers it without touching anything else. Idempotent: only NULL game_date rows are read or
+# written, one commit per report, no network.
+
+def _sig(team: str | None, name: str | None, status: str | None, reason: str | None) -> tuple:
+    return (team or "", name or "", status or "", reason or "")
+
+
+def locate_pdf(raw_path: str) -> Path | None:
+    """The archived PDF behind a snapshot row: `raw_path` itself, else the same day/key under
+    this machine's data dir (rows copied from another machine keep the other's path)."""
+    p = Path(raw_path)
+    if p.exists():
+        return p
+    alt = config.data_dir() / "raw" / SOURCE / KIND / p.parent.name / p.name
+    return alt if alt.exists() else None
+
+
+def match_game_dates(rows: list[tuple], parsed: list[dict]) -> tuple[list[tuple[str, int]], int, str]:
+    """(updates [(game_date, id)], n_unmatched, how) for one report.
+
+    `rows`: (id, team, player_name, status, reason) in id order; `parsed`: the PDF's named rows
+    in order. When the two sequences agree row for row ('order') the i-th row gets the i-th
+    game date; otherwise each row takes the first unused parsed row with the same (team, name,
+    status, reason) ('key'). A row with no parsed game date, or none left, stays NULL."""
+    psig = [_sig(r["team"], r.get("player_name_norm") or r.get("player_name"), r.get("status"),
+                 r.get("reason")) for r in parsed]
+    rsig = [_sig(t, n, s, r) for _, t, n, s, r in rows]
+    updates: list[tuple[str, int]] = []
+    unmatched = 0
+    if psig == rsig:
+        for (rid, *_), pr in zip(rows, parsed):
+            if pr.get("game_date"):
+                updates.append((pr["game_date"], rid))
+            else:
+                unmatched += 1
+        return updates, unmatched, "order"
+    pool: dict[tuple, list] = {}
+    for s, pr in zip(psig, parsed):
+        pool.setdefault(s, []).append(pr.get("game_date"))
+    for (rid, *_), s in zip(rows, rsig):
+        q = pool.get(s)
+        gd = q.pop(0) if q else None
+        if gd:
+            updates.append((gd, rid))
+        else:
+            unmatched += 1
+    return updates, unmatched, "key"
+
+
+def backfill_game_dates(conn: sqlite3.Connection, *, limit: int | None = None,
+                        dry_run: bool = False, parse: Callable[[bytes], list[dict]] | None = None,
+                        log_every: int = 100) -> dict:
+    """Fill `injury_snapshots.game_date` for official rows that lack it, from the archived PDFs.
+
+    Returns counts: reports (with NULL rows), reports_done, pdf_missing, parse_failures,
+    rows_matched, rows_unmatched (left NULL: PDF missing / unparsable / no line-up),
+    rows_no_path, by_order / by_key (reports matched each way), failures (messages)."""
+    parse = parse or ir.parse_report
+    paths = [r[0] for r in conn.execute(
+        "SELECT raw_path FROM injury_snapshots WHERE source=? AND game_date IS NULL AND "
+        "raw_path IS NOT NULL GROUP BY raw_path ORDER BY MIN(captured_at), raw_path", (SOURCE,))]
+    no_path = conn.execute("SELECT COUNT(*) FROM injury_snapshots WHERE source=? AND "
+                           "game_date IS NULL AND raw_path IS NULL", (SOURCE,)).fetchone()[0]
+    st: dict = {"reports": len(paths), "reports_done": 0, "pdf_missing": 0, "parse_failures": 0,
+                "rows_matched": 0, "rows_unmatched": 0, "rows_no_path": int(no_path),
+                "by_order": 0, "by_key": 0, "dry_run": bool(dry_run), "failures": []}
+    for i, raw in enumerate(paths if limit is None else paths[:limit], start=1):
+        rows = conn.execute(
+            "SELECT id, team, player_name, status, reason FROM injury_snapshots WHERE source=? "
+            "AND raw_path=? AND game_date IS NULL ORDER BY id", (SOURCE, raw)).fetchall()
+        rows = [tuple(r) for r in rows]
+        pdf = locate_pdf(raw)
+        if pdf is None:
+            st["pdf_missing"] += 1
+            st["rows_unmatched"] += len(rows)
+            st["failures"].append(f"{Path(raw).name}: PDF not archived")
+            continue
+        try:
+            parsed = parse(pdf.read_bytes())
+        except ir.ParserUnavailable:
+            raise
+        except Exception as e:
+            st["parse_failures"] += 1
+            st["rows_unmatched"] += len(rows)
+            st["failures"].append(f"{pdf.name}: {type(e).__name__}: {e}")
+            continue
+        named = [r for r in parsed if r.get("player_name_norm") or r.get("player_name")]
+        updates, unmatched, how = match_game_dates(rows, named)
+        st[f"by_{how}"] += 1
+        st["rows_matched"] += len(updates)
+        st["rows_unmatched"] += unmatched
+        if unmatched:
+            st["failures"].append(f"{pdf.name}: {unmatched} row(s) without a game date ({how})")
+        if updates and not dry_run:
+            conn.executemany("UPDATE injury_snapshots SET game_date=? WHERE id=? AND game_date IS NULL",
+                             updates)
+            conn.commit()
+        st["reports_done"] += 1
+        if log_every and i % log_every == 0:
+            log.info("game_date backfill: %d/%d reports, %d rows matched, %d unmatched", i,
+                     len(paths), st["rows_matched"], st["rows_unmatched"])
+    return st
 
 
 def setup_logging() -> Path:

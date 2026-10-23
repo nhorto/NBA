@@ -9,6 +9,11 @@ os.environ.setdefault("COURTSIDE_PPLAY", "v1")
 # The minutes fix (`+mf`, MINFIX_DEFAULT) shipped 2026-10-23; the suite runs with it off for the
 # same reason; tests/test_proj_minutes_fix.py turns it on explicitly (`set_minfix`).
 os.environ.setdefault("COURTSIDE_MINFIX", "0")
+# Shipped 2026-10-23 too, pinned off for the same reason: the reserve extras (`+rx`,
+# minutes.RESERVE_EXTRAS_DEFAULT; tests/test_reserve_extras.py) and the contest builder's sim
+# split (`gs`, dfs.portfolio.SPLIT_DEFAULT; tests/test_portfolio_split.py).
+os.environ.setdefault("COURTSIDE_RESERVE_EXTRAS", "0")
+os.environ.setdefault("COURTSIDE_PORTFOLIO_SPLIT", "off")
 
 
 @pytest.fixture(autouse=True)

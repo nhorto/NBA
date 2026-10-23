@@ -81,6 +81,16 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
 * **Lock-10 Questionable refit** (pq, `availability.PPLAYQ`, default OFF; env
   ``COURTSIDE_PPLAYQ=1``; `set_pplayq`): logit offsets on listed non-starters once a lineup is
   out. Version `<model version>+pq` (`pathA-v0.3+p2+pq`); same bundle and seeds.
+* **Reconciliation reserve** (rr, `reconcile.RECON_RESERVE`, default OFF; env
+  ``COURTSIDE_RECON_RESERVE=1``; `set_recon_reserve`): the reconcile target is the implied total
+  minus E[reserve minutes] x the league bench points per minute (fit on seasons < S). Version
+  `<model version>+rr` (after `+pq`); same bundle and seeds.
+* **Reserve extras** (rx, `minutes.RESERVE_EXTRAS`, default OFF; env
+  ``COURTSIDE_RESERVE_EXTRAS=1``; `set_reserve_extras`): the minutes reserve matches the run-time
+  candidates. With the DK pool in them (`candidate_panel` marks `forced`), only career debutants
+  are left out: the reserve is their minutes by team games into the season (seasons < S,
+  `minutes.pool_reserve`); else the forced extras' planned minutes come off the fitted reserve.
+  Version `<model version>+rx` (before `+rr`); same bundle and seeds.
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -234,6 +244,17 @@ def _pplay_flag(name: str, default: str = "v1") -> str:
     return default
 
 
+# Line freshness (lf, default OFF; env COURTSIDE_LINE_FRESH=1; `set_line_fresh`): `environment()`
+# drops a book's line older than LINE_FRESH_MAX_H at `at`, or more than LINE_FRESH_REL_H older
+# than the newest book's line (always keeps the newest book). Model version only (`+lf`).
+LINE_FRESH_DEFAULT = False
+LINE_FRESH_ENV = "COURTSIDE_LINE_FRESH"
+LINE_FRESH_TAG = "+lf"
+LINE_FRESH_MAX_H = 3.0
+LINE_FRESH_REL_H = 1.0
+LINE_FRESH = _env_flag(LINE_FRESH_ENV, LINE_FRESH_DEFAULT)
+
+
 def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1",
               mr: bool = False, pre: bool = False, mf: bool = False, bo: bool = False
               ) -> tuple[str, str]:
@@ -246,7 +267,17 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
     mv = mv + PPLAY_V2_TAG if pplay == "v2" else mv
     # the lock-10 Questionable refit (availability.PPLAYQ, `+pq`): model version only, same
     # bundle and seeds; its offsets live in availability's own params file
-    return vs, (mv + AV.PPLAYQ_TAG if AV.PPLAYQ else mv)
+    mv = mv + AV.PPLAYQ_TAG if AV.PPLAYQ else mv
+    # official injury rows keyed by game date (availability.INJ_GAMEDAY, `+gd`): model version
+    # only, same bundle and seeds; its refit cells live in availability's own params file
+    mv = mv + AV.INJ_GAMEDAY_TAG if AV.INJ_GAMEDAY else mv
+    # reserve extras (minutes.RESERVE_EXTRAS, `+rx`): model version only, same bundle and seeds
+    mv = mv + M.RESERVE_EXTRAS_TAG if M.RESERVE_EXTRAS else mv
+    # the reconciliation reserve (reconcile.RECON_RESERVE, `+rr`): model version only, same
+    # bundle and seeds; its bench rates live in reconcile's own params file
+    mv = mv + RC.RECON_RESERVE_TAG if RC.RECON_RESERVE else mv
+    # line freshness (LINE_FRESH, `+lf`): model version only, same bundle and seeds
+    return vs, (mv + LINE_FRESH_TAG if LINE_FRESH else mv)
 
 
 def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool = False,
@@ -366,6 +397,38 @@ def set_pplayq(on: bool) -> None:
     """Flip the lock-10 Questionable refit (availability.PPLAYQ) and MODEL_VERSION together."""
     global _VS, MODEL_VERSION
     AV.set_pplayq(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_inj_gameday(on: bool) -> None:
+    """Flip game-day keying of injury rows (availability.INJ_GAMEDAY) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    AV.set_inj_gameday(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_line_fresh(on: bool) -> None:
+    """Flip the line-freshness bound (LINE_FRESH) and MODEL_VERSION together."""
+    global LINE_FRESH, _VS, MODEL_VERSION
+    LINE_FRESH = bool(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_recon_reserve(on: bool) -> None:
+    """Flip the reconciliation reserve (reconcile.RECON_RESERVE) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    RC.set_recon_reserve(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_reserve_extras(on: bool) -> None:
+    """Flip the reserve extras (minutes.RESERVE_EXTRAS) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    M.set_reserve_extras(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
                                    MINFIX, BLOWOUT)
 
@@ -854,6 +917,13 @@ def _load_bundle_mr(conn: sqlite3.Connection, season: str, ctx: Context | None, 
 
 # ============================================================================== environment
 
+def _age_min(captured_at: str, at: datetime) -> float:
+    """Minutes from a line snapshot's `captured_at` to `at` (naive timestamps are UTC)."""
+    t = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+    t = t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    return (at.astimezone(timezone.utc) - t).total_seconds() / 60.0
+
+
 def environment(conn: sqlite3.Connection, game_id: str, at: datetime | None = None, *,
                 mode: str = "live") -> dict:
     """Expected home margin / total and implied team points for a game.
@@ -871,6 +941,13 @@ def environment(conn: sqlite3.Connection, game_id: str, at: datetime | None = No
             for r in rows:
                 latest[r[0]] = r
             v = list(latest.values())
+            ages = {r[0]: _age_min(r[5], at) for r in v}      # minutes before `at`, per book
+            if LINE_FRESH and len(v) > 1:
+                newest = min(ages.values())
+                keep = [r for r in v if ages[r[0]] <= LINE_FRESH_MAX_H * 60
+                        and ages[r[0]] - newest <= LINE_FRESH_REL_H * 60]
+                v = keep or [r for r in v if ages[r[0]] == newest]   # newest always stays
+            used = {r[0] for r in v}
 
             def med(i):
                 x = [r[i] for r in v if r[i] is not None]
@@ -880,7 +957,9 @@ def environment(conn: sqlite3.Connection, game_id: str, at: datetime | None = No
                 h, a = RC.implied_points(-hs, tot, htt, att)
                 return {"mu_margin": -hs, "mu_total": tot, "home_pts": h, "away_pts": a,
                         "source": f"books:{len(v)}",
-                        "captured_at": max(r[5] for r in v)}
+                        "captured_at": max(r[5] for r in v),
+                        "line_ages_min": ages,
+                        "line_age_max_min": max(ages[b] for b in used)}
         r = conn.execute(
             "SELECT home_margin, total, created_at FROM predictions WHERE game_id=? AND "
             "model='gbm_market' AND created_at<=? AND (role IS NULL OR role='champion') "
@@ -1232,6 +1311,10 @@ def candidate_panel(ctx: Context, day: date, games: pd.DataFrame,
         fteam = dict(zip(exdf["player_id"], exdf["key"].str.split("|").str[1]))
         keep = [fteam.get(int(p), t) == t for p, t in zip(panel["player_id"], panel["team"])]
         panel = panel[np.asarray(keep, bool)]
+    if M.RESERVE_EXTRAS:        # reserve extras (+rx): which candidates were forced in
+        fk = set(zip(exdf["key"], exdf["player_id"].astype(int)))
+        panel = panel.assign(forced=[(k, int(p)) in fk
+                                     for k, p in zip(panel["key"], panel["player_id"])])
     panel = panel.merge(tg[["key", "game_id"]], on="key", how="left")
     return panel.reset_index(drop=True)
 

@@ -108,13 +108,56 @@ def default_created_at(day: date) -> str:
     return f"{day.isoformat()}T12:00:00Z"
 
 
-def injury_cutoff(day: date, created_at: str) -> str:
-    """Latest injury snapshot time usable for `day`: now for live days, else the end of the
-    NBA day (05:00 UTC next day) for past days."""
+def injury_cutoff(day: date, created_at: str, tip: str | None = None) -> str:
+    """Latest injury snapshot time usable for `day`.
+
+    Live days (today/future): `created_at`, i.e. now. Past days (replays, backfills): what a
+    live pre-tip run could have seen (IMPROVEMENTS B3), the game's tip-off `tip` (ISO UTC) when
+    given, else `created_at` (the 12:00Z virtual time of `default_created_at`), and never later
+    than the end of the NBA day (05:00 UTC next day). Before B3 every past day used the end of
+    the day, so replays could price news published after the tip. Slate-level callers without
+    a tip and with a wall-clock `created_at` (the Brief rebuilding a past day) still get the
+    end of the day."""
     if day >= config.today_nba_day():
         return created_at
-    return (datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
-            + timedelta(days=1, hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    eod = (datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+           + timedelta(days=1, hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    t = _iso_utc(tip) if tip else created_at
+    return min(t, eod)
+
+
+def _iso_utc(ts: str) -> str:
+    """Any ISO timestamp ('...Z', '+00:00', no seconds) -> 'YYYY-MM-DDTHH:MM:SSZ' (UTC)."""
+    dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _past_tips(conn: sqlite3.Connection, day: date, tips: dict) -> dict[str, str]:
+    """game_id -> tip-off (ISO UTC) for a past day: the `games` table, else
+    `proj.availability.day_games` (history seasons have no `games` rows: the archived ESPN
+    scoreboard, else its 19:30 ET default, the same tips the DFS availability model uses)."""
+    out = {g: t for g, (t, _) in tips.items() if t}
+    from .proj import availability as pav          # past days only: live runs never import it
+    for r in pav.day_games(conn, day).itertuples():
+        if r.game_id not in out:
+            out[r.game_id] = injuries.iso(r.tip)
+    return out
+
+
+def _injury_groups(conn: sqlite3.Connection, day: date, created_at: str, test: pd.DataFrame,
+                   tips: dict) -> list[tuple[str, list[int] | None]]:
+    """[(injury cutoff, row positions of `test`)]. Live days: one cutoff for the whole slate,
+    [(created_at, None)], exactly as before B3. Past days: one group per distinct per-game
+    cutoff (`injury_cutoff` with the game's tip)."""
+    if day >= config.today_nba_day():
+        return [(injury_cutoff(day, created_at), None)]
+    pt = _past_tips(conn, day, tips)
+    groups: dict[str, list[int]] = {}
+    for i, gid in enumerate(test["game_id"]):
+        groups.setdefault(injury_cutoff(day, created_at, pt.get(gid)), []).append(i)
+    return sorted(groups.items())
 
 
 def _py(v):
@@ -290,12 +333,19 @@ def _predict_one_day(conn: sqlite3.Connection, full: pd.DataFrame, day: date, mo
 
     tips = {r["game_id"]: (r["tipoff_utc"], r["status"]) for r in conn.execute(
         "SELECT game_id, tipoff_utc, status FROM games WHERE nba_day=?", (day.isoformat(),))}
-    inj_at = injury_cutoff(day, created_at)
-    inj = injuries.current(conn, inj_at, set(test["home"]) | set(test["away"])) \
-        if with_injuries else {"by_team": {}, "batches": {}}
+    inj_of: dict[int, dict] = {}
+    inj_none = {"by_team": {}, "batches": {}}
+    if with_injuries:
+        for inj_at, idx in _injury_groups(conn, day, created_at, test, tips):
+            sub = test if idx is None else test.iloc[idx]
+            g_inj = injuries.current(conn, inj_at, set(sub["home"]) | set(sub["away"]),
+                                     game_day=day)
+            for k in (range(len(test)) if idx is None else idx):
+                inj_of[k] = g_inj
 
     out = []
     for i, (_, r) in enumerate(test.iterrows()):
+        inj = inj_of.get(i, inj_none)
         gid = r["game_id"]
         tip, status = tips.get(gid, (None, None))
         mk = market_line(conn, gid, tip) if with_market else None
@@ -581,10 +631,19 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
     lines = [market_line(conn, g, tips.get(g, (None, None))[0]) for g in test["game_id"]]
     mm, mt = _line_arrays(lines)
 
-    # injuries -> expected lineups (only when a usable report exists)
-    at = injury_cutoff(day, created_at)
-    raw_teams = set(test["home_raw"]) | set(test["away_raw"])
-    cover = injuries.availability(conn, at, day, raw_teams)
+    # injuries -> expected lineups (only when a usable report exists). Live days: one cutoff
+    # (now) for the slate; past days: each game's own pre-tip cutoff (B3, `_injury_groups`).
+    cover: dict[str, dict] = {}
+    inj_of: dict[int, dict] = {}
+    groups = _injury_groups(conn, day, created_at, test, tips)
+    for at, idx in groups:
+        sub = test if idx is None else test.iloc[idx]
+        cover.update(injuries.availability(conn, at, day,
+                                           set(sub["home_raw"]) | set(sub["away_raw"])))
+        g_inj = injuries.current(conn, at, set(sub["home"]) | set(sub["away"]), game_day=day)
+        for k in (range(len(test)) if idx is None else idx):
+            inj_of[k] = {**g_inj, "at": at}
+    past = groups[0][1] is not None
     lh = la = None
     state = None
     if cover:
@@ -598,7 +657,6 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
         sc.set_features(G, post)
     effects = (production.injury_effects(scorers[PRODUCTION_OPINION], G, state, test, cover)
                if cover else [])
-    inj = injuries.current(conn, at, set(test["home"]) | set(test["away"]))
     played = _played_keys(conn, day) if day < config.today_nba_day() else set()
     contrib = {n: sc.contributions(test) for n, sc in scorers.items()}
     pred = {n: (sc.predict_proba(test), sc.predict_margin(test), sc.predict_total(test))
@@ -613,6 +671,7 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
         gid = r["game_id"]
         tip, status = tips.get(gid, (None, None))
         mk = lines[i]
+        inj = inj_of[i]
         team_inj = {"home": inj["by_team"].get(r["home"], []),
                     "away": inj["by_team"].get(r["away"], [])}
         avail, absentees = {}, {}
@@ -651,6 +710,10 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
             "availability": avail, "fit": fit_info,
             "model_effects": [e for e in effects if e["game_id"] == gid],
         }
+        if past:                                   # B3: the pre-tip cutoff this game used
+            base_inputs["injuries_at"] = inj["at"]
+        if injuries.INJ_GAMEDAY_GAME:              # lineage of the opt-in game-day rows
+            base_inputs["injuries_gameday"] = True
         rows = {}
         for name, sc in scorers.items():
             expl = gbm.reasons_from_contrib(contrib[name].iloc[i], r["home"], r["away"], top=12)

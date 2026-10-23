@@ -23,7 +23,9 @@ Per sim s of a game (home H, away A):
    sim's scenario) + E[DD/TD bonus | minutes] (independent-NB approximation, `state_eval`).
    The team environment scales points by g_s = H_s / E[H] and the other DK stats by g_s^alpha
    (alpha = elasticity of non-points DK to team points, fit on seasons < S); `reconcile` then
-   scales each team so that sum_i E[pts_i] equals the implied team total exactly.
+   scales each team so that sum_i E[pts_i] equals the implied team total exactly (reserve
+   switch `reconcile.RECON_RESERVE`: the implied total minus E[reserve minutes] x the league
+   bench points per minute, the share of the players outside the candidate set).
    Marginal: normal when the player's projected DK (played) >= 25, gamma below (Wilson-Hilferty
    cube transform of the copula normal, renormalised to the exact mean), sd = CV(mu) x mu with
    the CV-by-level table fit on seasons < S on residuals *given actual minutes and the actual
@@ -591,23 +593,31 @@ def _seed_seq(seed) -> np.random.SeedSequence:
 
 def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
                   n_ot: np.ndarray, rng_s: np.random.Generator, rng_m: np.random.Generator,
-                  plan_out: dict | None = None, bo_out: dict | None = None
+                  plan_out: dict | None = None, bo_out: dict | None = None,
+                  res_out: dict | None = None
                   ) -> tuple[np.ndarray, np.ndarray, dict]:
     """(minutes (S, n), absent (S, n), scenario info) for one team. `plan_out` (minutes-ratio
     arm) receives 'plan' (per kept scenario: E[min | plays] before the margin, the engine's
     `mean`) and 'assign' (S,) (each sim's kept scenario); it changes no draw. `bo_out` (blowout
-    arm) receives 'k' (S, n): `minutes.bo_minutes_factor` of each sim's scenario and margin."""
+    arm) receives 'k' (S, n): `minutes.bo_minutes_factor` of each sim's scenario and margin.
+    `res_out` (reconciliation-reserve switch, `reconcile.RECON_RESERVE`) receives 'mean': the
+    sims' mean team minutes reserved for players outside the candidate set; it changes no draw."""
     S = len(margin_team)
     pl = ts.players
     sc = draw_scenarios(pl["p_avail"].to_numpy(float), S, rng_s)
     x = np.zeros((S, len(pl)))
     if bo_out is not None:
         bo_out["k"] = np.ones((S, len(pl)))
+    res = np.zeros(S) if res_out is not None else None
     for b, kept in enumerate(sc["kept"]):
         idx = np.flatnonzero(sc["assign"] == b)
         if not len(idx):
             continue
         proj = ts.minutes.project(kept)
+        if res is not None:
+            res[idx] = M._reserve_of(proj)
+            if mp.blowout:
+                res[idx] += M.bo_reserve(mp.blowout, margin_team[idx])
         if plan_out is not None:
             plan_out.setdefault("plan", {})[b] = proj["mean"].to_numpy(float)
         if bo_out is not None:
@@ -626,6 +636,8 @@ def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
     x = np.where(sc["absent"], 0.0, x)
     if plan_out is not None:
         plan_out["assign"] = sc["assign"]
+    if res is not None:
+        res_out["mean"] = float(res.mean()) if S else 0.0
     info = {"n_distinct": sc["n_distinct"], "n_projected": len(sc["kept"]),
             "kept_mass": sc["kept_mass"], "collapsed_sims": sc["collapsed"]}
     return x, sc["absent"], info
@@ -645,6 +657,19 @@ def _bo_look(look, k: np.ndarray, played: np.ndarray):
                       1.0)
         return look(key, rl, xx * kk) / kk
     return look_bo
+
+
+def _reconcile(ts: TeamSpec, ro: dict | None, raw_pts: np.ndarray, raw_oth: np.ndarray,
+               g: np.ndarray, cp: CopulaParams) -> dict:
+    """`reconcile.reconcile_team` to the implied total, or (reserve switch: `ro` from
+    `_team_minutes`) to implied - E[reserve minutes] x the bench rate of season S."""
+    if ro is None:
+        return RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
+    tgt = RC.reserve_target(ts.implied, ro["mean"], cp.season)
+    rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, tgt, cp.env_weight)
+    rec.update(implied=float(ts.implied), reserve_min=ro["mean"],
+               reserve_pts=float(ts.implied) - tgt)
+    return rec
 
 
 def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dict,
@@ -668,8 +693,9 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
         pl = ts.players.reset_index(drop=True)
         po = {} if ST.has_mr(sp) else None
         bo = {} if (mp.blowout and BO_PM_NEUTRAL) else None
+        ro = {} if RC.RECON_RESERVE else None
         x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po,
-                                         bo_out=bo)
+                                         bo_out=bo, res_out=ro)
         played = x > 0
         star = pl["star"].to_numpy(bool)
         rot = pl["rotation"].to_numpy(bool) & ~star
@@ -689,7 +715,7 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
         raw_pts = look("pts", role, x) * played
         raw_oth = look("oth", role, x) * played
         g = team_pts[side] / max(mean_pts[side], 1.0)
-        rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
+        rec = _reconcile(ts, ro, raw_pts, raw_oth, g, cp)
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
         mu = pts + oth + bonus
         stats = {"pts": pts}
@@ -1148,8 +1174,9 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
         pl = ts.players.reset_index(drop=True)
         po = {} if ST.has_mr(sp) else None
         bo = {} if (mp.blowout and BO_PM_NEUTRAL) else None
+        ro = {} if RC.RECON_RESERVE else None
         x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po,
-                                         bo_out=bo)
+                                         bo_out=bo, res_out=ro)
         played = x > 0
         star = pl["star"].to_numpy(bool)
         rot = pl["rotation"].to_numpy(bool) & ~star
@@ -1175,7 +1202,7 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
         raw_pts = look("pts", role, x) * played
         raw_oth = look("oth", role, x) * played
         g = team_pts[side] / max(mean_pts[side], 1.0)
-        rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
+        rec = _reconcile(ts, ro, raw_pts, raw_oth, g, cp)
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
         means = {"pts": pts}
         for s in OTHER_STATS:

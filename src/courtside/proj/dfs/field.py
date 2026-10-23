@@ -83,9 +83,9 @@ from .rules import PoolPlayer, Rules, SlatePool
 log = logging.getLogger(__name__)
 
 LABEL = "proxy"
-MODEL = "own-proxy-1.1"              # 1.1: per-archetype concentration + spend from real standings
+MODEL = "own-proxy-1.2"              # 1.2: cash row cap 0.97; 1.1: per-archetype conc + spend
 HANDSET_VERSION = f"{MODEL}-handset"
-FIELD_VERSION = "field-proxy-1.1"    # 1.1: cash optimizer noise, salary use (2026-10-20 standings)
+FIELD_VERSION = "field-proxy-1.2"    # 1.2: cash row cap 0.97; 1.1: cash noise, salary use
 MIN_FIT_SLATES = 10                 # §9: show bands until >= 10 calibrated slates
 PARAMS_FILE = "dfs_ownership_params.json"
 
@@ -103,7 +103,10 @@ DEFAULT_PARAMS: dict[str, float] = {
     "b_bench": -0.60,       # confirmed non-starter when DK starters are out
     "w_ours": 0.50,         # public projection = w*ours + (1-w)*DK FPPG
 }
-ROW_CAP = 0.92              # no player above 92 % (one slot per lineup)
+ROW_CAP_GPP = 0.92          # no player above 92 % in a GPP (one slot per lineup)
+ROW_CAP_CASH = 0.97         # cash / double-up: real ownership reached 93 % (2026-10-20), so 0.92
+                            # saturated; 0.97 leaves headroom without letting the proxy hit 100 %
+ROW_CAP = ROW_CAP_GPP       # the GPP cap (kept for callers / tests that import the old name)
 SPEND = 0.997               # field's expected spend / cap: real fields average $49,820-49,920
                             # of $50,000 (4 contests, 31k lineups, 2026-10-20); 1.0 used 0.99
 HARD_FLOOR = 0.90           # sampled lineups below 90 % of the cap are rejected
@@ -356,6 +359,11 @@ class OwnershipProxy:
     lam: float = 0.0
     spend: float = 0.0
     label: str = LABEL
+    row_cap: float | None = None        # the cap the allocation used (None: the archetype's)
+
+    @property
+    def cap(self) -> float:
+        return row_cap_for(self.archetype) if self.row_cap is None else self.row_cap
 
     @property
     def bands(self) -> list[str]:
@@ -399,6 +407,11 @@ def classify_contest(contest: Mapping[str, Any]) -> str:
             len({t["payout"] for t in tiers}) == 1 and m and paid / m >= 0.30):
         return "cash"
     return "small_gpp" if m <= SMALL_GPP_MAX else "large_gpp"
+
+
+def row_cap_for(archetype: str) -> float:
+    """The most ownership one player can have: 0.97 for cash (double-up / 50-50), 0.92 for GPPs."""
+    return ROW_CAP_CASH if archetype == "cash" else ROW_CAP_GPP
 
 
 def _z(x: np.ndarray, ref: np.ndarray) -> np.ndarray:
@@ -485,10 +498,12 @@ def sinkhorn(weights: np.ndarray, counts: np.ndarray, row_cap: float = ROW_CAP,
 def ownership_proxy(inputs: pd.DataFrame, pool: SlatePool | Sequence[PoolPlayer],
                     rules: Rules | None = None, *, archetype: str = "large_gpp",
                     params: Mapping[str, float] | None = None, version: str | None = None,
-                    spend: float | None = None, row_cap: float = ROW_CAP) -> OwnershipProxy:
+                    spend: float | None = None, row_cap: float | None = None) -> OwnershipProxy:
     """The ownership proxy (Σ own = number of slots). See the module docstring. `spend`
-    (fraction of the cap the field spends on average) defaults to SPEND."""
+    (fraction of the cap the field spends on average) defaults to SPEND; `row_cap` (most
+    ownership any one player gets) to the archetype's (`row_cap_for`)."""
     spend = SPEND if spend is None else float(spend)
+    row_cap = row_cap_for(archetype) if row_cap is None else float(row_cap)
     rules = rules or (pool.rules if isinstance(pool, SlatePool) else None)
     if rules is None:
         raise ValueError("no rules")
@@ -540,7 +555,7 @@ def ownership_proxy(inputs: pd.DataFrame, pool: SlatePool | Sequence[PoolPlayer]
     return OwnershipProxy(pids=list(inputs["pid"]), names=list(inputs["name"]), own=X.sum(1),
                           by_slot=X, slot_names=names, slot_counts=counts, archetype=archetype,
                           version=f"{version}/{archetype}", params=P, inputs=inputs, lam=lam,
-                          spend=spent(X))
+                          spend=spent(X), row_cap=row_cap)
 
 
 # ============================================================================== params (fit)
@@ -1200,7 +1215,7 @@ def build_field(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
         np.add.at(opt_own, opt_sample.ravel(), 1.0)
         opt_own /= n_opt
     frac = n_opt / n if n else 0.0
-    tgt = np.clip((op.own - frac * opt_own) / max(1e-9, 1 - frac), 0.0, ROW_CAP)
+    tgt = np.clip((op.own - frac * opt_own) / max(1e-9, 1 - frac), 0.0, op.cap)
     tgt = np.where(active, np.maximum(tgt, 1e-4), 0.0)
     pilot = max(4000, min(20000, n_own))
     for _ in range(ipf_iters if n_own else 0):

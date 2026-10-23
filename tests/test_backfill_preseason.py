@@ -90,8 +90,9 @@ def test_migration_idempotent(tmp_path):
     tcols = [r[1] for r in conn.execute("PRAGMA table_info(preseason_team_games)")]
     assert tcols == [r[1] for r in conn.execute("PRAGMA table_info(team_games)")] + [
         "scrimmage", "vs_non_nba"]
-    # the migration SQL itself is re-runnable (IF NOT EXISTS)
-    conn.executescript(db.MIGRATIONS[-1])
+    # the migration SQL itself is re-runnable (IF NOT EXISTS); 15 = this one (16 adds a column
+    # and cannot be re-run)
+    conn.executescript(db.MIGRATIONS[14])
 
 
 def test_backfill_skips_archived_and_never_touches_player_games(fake_fetch):

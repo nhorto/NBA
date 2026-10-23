@@ -49,6 +49,7 @@ import sqlite3
 import zlib
 from collections import deque
 from dataclasses import asdict, dataclass, field
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -630,22 +631,34 @@ def _norm_name(s: str) -> str:
 
 
 def availability_from_injuries(conn: sqlite3.Connection, state: PlayerState, team: str,
-                               as_of: str, sources=("nba_official", "espn")) -> dict:
+                               as_of: str, sources=("nba_official", "espn"),
+                               game_day: date | None = None) -> dict:
     """{player_id: P(plays)} for `team` from the latest injury snapshot at or before `as_of`
     (ISO UTC). Names are matched to the rated players; the first listed source that has a
     snapshot wins. Unmatched names are ignored (reported in the attrs of nothing: callers can
-    diff against the snapshot)."""
+    diff against the snapshot).
+
+    With `injuries.INJ_GAMEDAY_GAME` on, only rows for the game date `game_day` (default: the
+    NBA day of `as_of`) or without a game date are read, so on a back-to-back the other
+    night's row cannot overwrite this game's. Off: unchanged (a later row overwrites)."""
+    from .. import injuries
     by_name = {_norm_name(n): int(p) for p, n in zip(state.player_ids, state.names)
                if isinstance(n, str)}
+    gd_sql, gd_args = "", ()
+    if injuries.INJ_GAMEDAY_GAME:
+        gd = game_day or (injuries.nba_day_of(as_of) if "T" in as_of
+                          else date.fromisoformat(as_of[:10]))
+        gd_sql, gd_args = " AND (game_date IS NULL OR game_date=?)", (gd.isoformat(),)
     for src in sources:
         row = conn.execute("SELECT MAX(captured_at) FROM injury_snapshots WHERE source=? AND "
-                           "team=? AND captured_at<=?", (src, team, as_of)).fetchone()
+                           "team=? AND captured_at<=?" + gd_sql,
+                           (src, team, as_of) + gd_args).fetchone()
         if not row or not row[0]:
             continue
         av = {}
         for name, status in conn.execute(
                 "SELECT player_name, status FROM injury_snapshots WHERE source=? AND team=? "
-                "AND captured_at=?", (src, team, row[0])):
+                "AND captured_at=?" + gd_sql, (src, team, row[0]) + gd_args):
             pid = by_name.get(_norm_name(name))
             if pid is not None:
                 av[pid] = STATUS_P_PLAY.get((status or "").strip().lower(), 0.5)

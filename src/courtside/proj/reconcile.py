@@ -14,22 +14,78 @@
   (sum of rate x minutes points before any scaling vs the target) > 6 raises a data check
   (stale report, mis-matched name, missing player); c is capped to [0.75, 1.33] (the remainder
   is reported and fails acceptance).
+* **Reserve** (rr, `RECON_RESERVE`, default OFF; env ``COURTSIDE_RECON_RESERVE=1``,
+  `set_recon_reserve`; model version `<arm>+rr`, same bundle and seeds; IMPROVEMENTS.md B2,
+  docs/research/recon-reserve.md). The minutes engine keeps E[reserve] team minutes for players
+  outside the candidate set, so the candidates should not score the whole implied total: the
+  target becomes implied - E[reserve minutes] x the league reserve points per minute (box rows
+  outside a team's last-10-game players, pooled over the 3 seasons < S:
+  `recon_reserve_params.json`, `research/recon_reserve.py fit`). OFF: target = implied.
 
 Public API
   implied_points(mu_margin, mu_total, home_tt=None, away_tt=None) -> (home, away)
   reconcile_team(raw_pts, raw_oth, g, alpha, target) -> dict(pts, oth, scale, baseline, ...)
   acceptance(team_infos) -> dict;  check_rows(team_infos, run_label) -> data_checks rows
+  reserve_target(target, reserve_min, season) -> float;  bench_ppm(season) -> float
 """
 
 from __future__ import annotations
 
 import json
+import os
+from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 
 TOL = 0.5
 GAP_CHECK = 6.0
 SCALE_BOUNDS = (0.75, 1.33)
+
+RECON_RESERVE_DEFAULT = False          # shipping = True here (env still overrides)
+RECON_RESERVE_ENV = "COURTSIDE_RECON_RESERVE"
+RECON_RESERVE_TAG = "+rr"
+RR_PATH = Path(__file__).with_name("recon_reserve_params.json")
+RR_FALLBACK_PPM = 0.42                 # no table / no season <= S in it
+
+
+def _flag(name: str, default: bool) -> bool:
+    v = os.environ.get(name, "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+RECON_RESERVE = _flag(RECON_RESERVE_ENV, RECON_RESERVE_DEFAULT)
+
+
+def set_recon_reserve(on: bool) -> None:
+    """Flip the reconciliation-reserve switch at run time (evaluation scripts, tests)."""
+    global RECON_RESERVE
+    RECON_RESERVE = bool(on)
+
+
+@lru_cache(maxsize=None)
+def bench_ppm(season: str) -> float:
+    """League reserve points per minute for season S (fit on seasons < S); a season missing
+    from the table uses the latest earlier one (still walk-forward)."""
+    try:
+        rates = json.loads(RR_PATH.read_text())["rates"]
+    except (OSError, ValueError, KeyError):
+        return RR_FALLBACK_PPM
+    if season in rates:
+        return float(rates[season]["ppm"])
+    prev = [s for s in rates if s < season]
+    return float(rates[max(prev)]["ppm"]) if prev else RR_FALLBACK_PPM
+
+
+def reserve_target(target: float, reserve_min: float, season: str) -> float:
+    """The candidates' share of the implied total: implied - E[reserve minutes] x bench rate."""
+    if not np.isfinite(target):
+        return target
+    return float(target) - max(float(reserve_min), 0.0) * bench_ppm(season)
 
 
 def implied_points(mu_margin: float, mu_total: float, home_tt: float | None = None,

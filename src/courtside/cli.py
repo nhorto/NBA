@@ -74,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
     ij.add_argument("--max-pdfs", type=int, default=3000, help="cap for the hourly extras")
     ij.add_argument("--find-earliest", action="store_true",
                     help="only binary-search and print the earliest available date")
+    ij.add_argument("--game-date", action="store_true",
+                    help="no fetching: fill injury_snapshots.game_date for official rows that "
+                         "lack it, from the archived PDFs (schema 16; idempotent)")
+    ij.add_argument("--dry-run", action="store_true", help="--game-date: count, write nothing")
+    ij.add_argument("--limit", type=int, default=None, help="--game-date: at most N reports")
 
     ps = bf.add_parser("preseason",
                        help="preseason team/player game logs from stats.nba.com (own tables)")
@@ -390,6 +395,17 @@ def _backfill_injuries_cmd(args) -> int:
     if args.find_earliest:
         print(bi.find_earliest_date())
         return 0
+    if args.game_date:
+        from . import db
+        res = bi.backfill_game_dates(db.connect(), limit=args.limit, dry_run=args.dry_run)
+        for k, v in res.items():
+            if k != "failures":
+                print(f"{k}: {v}")
+        for f in res["failures"][:30]:
+            print(f"  {f}", file=sys.stderr)
+        if len(res["failures"]) > 30:
+            print(f"  ... {len(res['failures']) - 30} more", file=sys.stderr)
+        return 1 if (res["pdf_missing"] or res["parse_failures"]) else 0
     try:
         res = bi.run(start=args.start, end=args.end, extras=not args.priority_only,
                      max_pdfs=args.max_pdfs)

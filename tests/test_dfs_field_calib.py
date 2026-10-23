@@ -27,8 +27,8 @@ FNAME = f"contest-standings-{CONTEST}.csv"
 # --------------------------------------------------------------------------- versions / params
 
 def test_versions_bumped_and_archetypes_ordered():
-    assert F.MODEL == "own-proxy-1.1" and F.FIELD_VERSION == "field-proxy-1.1"
-    assert F.HANDSET_VERSION == "own-proxy-1.1-handset"
+    assert F.MODEL == "own-proxy-1.2" and F.FIELD_VERSION == "field-proxy-1.2"
+    assert F.HANDSET_VERSION == "own-proxy-1.2-handset"
     a = F.ARCHETYPES
     # double-ups: more concentrated and duplicated than GPPs; the cash / GPP ratio ~ 1.8
     assert a["cash"]["conc"] / a["large_gpp"]["conc"] == pytest.approx(1.78, abs=0.05)

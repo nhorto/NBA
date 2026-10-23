@@ -282,8 +282,9 @@ _PARAMS_CACHE: dict[str, AvailabilityParams] = {}
 
 
 def load_params(path: Path | str | None = None) -> AvailabilityParams:
-    """The fitted params shipped in the package (cached).  Missing file -> pure prior."""
-    path = Path(path) if path else PARAMS_PATH
+    """The fitted params shipped in the package (cached).  Missing file -> pure prior.
+    With the game-day switch on (INJ_GAMEDAY) the default is its own refit, GD_PARAMS_PATH."""
+    path = Path(path) if path else (GD_PARAMS_PATH if INJ_GAMEDAY else PARAMS_PATH)
     key = str(path)
     if key not in _PARAMS_CACHE:
         if path.exists():
@@ -461,15 +462,37 @@ def load_reports(conn: sqlite3.Connection, lo_utc: datetime, hi_utc: datetime
     A team's batch only exists when the report lists >= 1 row for it (a team that has not
     submitted is absent from that report).  Rows are cumulative within a day."""
     cur = conn.execute(
-        "SELECT captured_at, team, player_name, status, reason FROM injury_snapshots "
+        "SELECT captured_at, team, player_name, status, reason, NULL FROM injury_snapshots "
         "WHERE source=? AND captured_at>=? AND captured_at<=? ORDER BY captured_at, id",
         (injuries.OFFICIAL, injuries.iso(lo_utc), injuries.iso(hi_utc)))
+    return _group_batches(cur)
+
+
+def load_reports_gd(conn: sqlite3.Connection, lo: date, hi: date, at: datetime
+                    ) -> dict[tuple[date, str], list[Batch]]:
+    """INJ_GAMEDAY: official batches captured at or before `at`, grouped (GAME day, team) by the
+    report's own game date (schema 16), for game days in [lo, hi].  A day-before 5 PM / 10 PM
+    ET row is then a batch of the next day's game, and a back-to-back player has one row per
+    game date.  Rows without a game date (written before the backfill) keep the capture-day key,
+    so an unfilled table behaves like `load_reports`."""
+    cur = conn.execute(
+        "SELECT captured_at, team, player_name, status, reason, game_date FROM injury_snapshots "
+        "WHERE source=? AND captured_at<=? AND ((game_date>=? AND game_date<=?) OR "
+        "(game_date IS NULL AND captured_at>=?)) ORDER BY captured_at, id",
+        (injuries.OFFICIAL, injuries.iso(at), lo.isoformat(), hi.isoformat(),
+         injuries.iso(_day_start_utc(lo))))
+    return _group_batches(cur)
+
+
+def _group_batches(cur) -> dict[tuple[date, str], list[Batch]]:
+    """(captured_at, team, name, status, reason, game_date|None) rows -> {(day, team): batches}.
+    Rows are cumulative within a day."""
     out: dict[tuple[date, str], dict[str, Batch]] = {}
-    for ts, team, name, status, reason in cur:
+    for ts, team, name, status, reason, gd in cur:
         if not name:
             continue
         t = _parse(ts)
-        day = config.nba_day(t)
+        day = date.fromisoformat(gd[:10]) if gd else config.nba_day(t)
         b = out.setdefault((day, team), {}).setdefault(ts, Batch(t, ts, {}))
         k = injuries.norm_name(name)
         prev = b.rows.get(k)
@@ -562,16 +585,23 @@ def _pools(conn, days):
 
 def build_samples(conn: sqlite3.Connection, lo: date, hi: date, *,
                   mode: str = "bucket", offsets_min: tuple[int, ...] = (10, 45, 300),
-                  hist: History | None = None) -> pd.DataFrame:
+                  hist: History | None = None,
+                  clock_et: tuple[tuple[int, int], ...] = ((10, 0), (13, 30))) -> pd.DataFrame:
     """Candidate-player rows for every game with an NBA day in [lo, hi].
 
     mode='bucket'   training rows: per team-game and hours bucket, the LATEST report of that
                     bucket (plus a no-report row set when the team has no report before tip).
     mode='scenario' evaluation rows: for each offset (minutes before the game's own tip) the
                     latest report published at or before tip - offset.  Column `scenario`.
+    mode='clock'    evaluation rows at fixed ET clock times of the game day (`clock_et`, the
+                    pregame runs), games that have not tipped yet.  Scenario 'ET10:00' etc.
+    Batches are keyed by capture day, or by the report's game date when INJ_GAMEDAY is on.
     """
     hist = hist or load_history(conn, lo)
-    reports = load_reports(conn, _day_start_utc(lo), _day_start_utc(hi + timedelta(days=1)))
+    if INJ_GAMEDAY:
+        reports = load_reports_gd(conn, lo, hi, _day_start_utc(hi + timedelta(days=1)))
+    else:
+        reports = load_reports(conn, _day_start_utc(lo), _day_start_utc(hi + timedelta(days=1)))
     days = sorted({d for d, _ in reports} | set())
     cur = conn.execute("SELECT DISTINCT game_date FROM team_games WHERE game_date>=? AND game_date<=? "
                        "ORDER BY game_date", (lo.isoformat(), hi.isoformat()))
@@ -604,6 +634,11 @@ def build_samples(conn: sqlite3.Connection, lo: date, hi: date, *,
                     ats = [(bk, b.t) for bk, b in chosen.items()]
                     if not batches:
                         ats = [(NOBUCKET, g.tip - timedelta(minutes=1))]
+                elif mode == "clock":
+                    ats = [(f"ET{h:02d}:{m:02d}", t) for h, m in clock_et
+                           if (t := datetime(day.year, day.month, day.day, h, m,
+                                             tzinfo=config.NBA_TZ).astimezone(timezone.utc))
+                           < g.tip]
                 else:
                     ats = [(f"T-{o}m", g.tip - timedelta(minutes=o)) for o in offsets_min]
                 for tag, at in ats:
@@ -656,7 +691,8 @@ def fit(conn: sqlite3.Connection, lo: date | None = None, hi: date | None = None
     df = df[(df["day"] >= lo) & (df["day"] <= hi) & (df["season_type"] == "Regular Season")]
     meta = {"fit_lo": lo.isoformat(), "fit_hi": hi.isoformat(), "rows": int(len(df)),
             "games": int(df["game_id"].nunique()) if len(df) else 0,
-            "sources": "nba_official injury reports vs player_games.min>0", "note": seed_note}
+            "sources": "nba_official injury reports vs player_games.min>0", "note": seed_note,
+            "keying": "game_date" if INJ_GAMEDAY else "capture_day"}
     return fit_from_samples(df, m1=m1, m=DEFAULT_M if m is None else m, meta=meta)
 
 
@@ -694,7 +730,10 @@ def _slate(conn: sqlite3.Connection, day: date, at: datetime, params: Availabili
     if games.empty:
         return pd.DataFrame(columns=cols)
     hist = hist or load_history(conn, day)
-    reports = load_reports(conn, _day_start_utc(day), at)
+    if INJ_GAMEDAY:                              # gd (default OFF: this line never runs)
+        reports = load_reports_gd(conn, day, day, at)
+    else:
+        reports = load_reports(conn, _day_start_utc(day), at)
     res = injuries.resolve(conn, injuries.iso(at), espn_max_age_h=injuries.ESPN_MAX_AGE_H)
     act = injuries.active_players(conn, day)
     rosters = injuries.recent_rosters(conn, day, None, act)
@@ -1013,6 +1052,30 @@ def load_q(path: Path | str | None = None) -> QRefitParams:
         _PQ_CACHE[str(path)] = (QRefitParams.from_json(json.loads(path.read_text()))
                                 if path.exists() else QRefitParams())
     return _PQ_CACHE[str(path)]
+
+
+# --- game-day keying (gd; opt-in, COURTSIDE_INJ_GAMEDAY=1, default OFF) ----------------------
+#
+# docs/research/injury-gameday.md, research/injury_gameday.py (IMPROVEMENTS B8).  The official
+# PDF lists today's AND tomorrow's games; keyed by capture day, a 5 PM / 10 PM ET row about
+# tomorrow's game was filed under today, so the next day's official path (and the gt6h /
+# 'removed' training cells) never saw it, and runs before ~1 PM ET fell back to one unordered
+# batch.  ON: `load_reports_gd` keys batches by `injury_snapshots.game_date` (schema 16; the
+# backfill is `courtside backfill injuries --game-date`) in `_slate` and `build_samples`, and
+# `load_params()` serves the matching refit, GD_PARAMS_PATH.  OFF: nothing here runs and the
+# frames are bit-identical to before.
+
+INJ_GAMEDAY_DEFAULT = False            # shipping = True here (env still overrides)
+INJ_GAMEDAY_ENV = "COURTSIDE_INJ_GAMEDAY"
+INJ_GAMEDAY = _flag(INJ_GAMEDAY_ENV, INJ_GAMEDAY_DEFAULT)
+INJ_GAMEDAY_TAG = "+gd"
+GD_PARAMS_PATH = Path(__file__).with_name("availability_params_gd.json")
+
+
+def set_inj_gameday(on: bool) -> None:
+    """Flip the game-day keying switch at run time (evaluation scripts, tests)."""
+    global INJ_GAMEDAY
+    INJ_GAMEDAY = bool(on)
 
 
 def q_group(status: str, role: str, started: bool, lineup_known: bool, missed: int,
@@ -1365,9 +1428,10 @@ def main(argv: list[str] | None = None) -> None:
     conn.row_factory = sqlite3.Row
     if a.cmd == "fit":
         params = fit(conn)
-        print(f"fitted on {params.meta['rows']} rows / {params.meta['games']} team-games")
+        print(f"fitted on {params.meta['rows']} rows / {params.meta['games']} team-games "
+              f"(game-day keying {'ON' if INJ_GAMEDAY else 'OFF'})")
         if not a.no_write:
-            print("wrote", params.save())
+            print("wrote", params.save(GD_PARAMS_PATH if INJ_GAMEDAY else PARAMS_PATH))
             _PARAMS_CACHE.clear()
         print(params.table().round(3).to_string(index=False))
     elif a.cmd == "eval":

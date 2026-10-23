@@ -230,3 +230,49 @@ def percentile_ranks(values: np.ndarray, reference: np.ndarray) -> np.ndarray:
     lo = np.searchsorted(r, v, side="left")
     hi = np.searchsorted(r, v, side="right")
     return (lo + 0.5 * (hi - lo)) / len(r)
+
+
+# ================================================================== two-way clustered statistics
+
+
+def _cluster_var(z: np.ndarray, labels: np.ndarray) -> float:
+    """G/(G-1) * sum_g (sum_{i in g} z_i)^2 (NaN with a single cluster)."""
+    s = pd.Series(z).groupby(labels).sum().to_numpy()
+    g = len(s)
+    return float(g / (g - 1) * (s ** 2).sum()) if g > 1 else float("nan")
+
+
+def paired_cluster2(d: Sequence[float] | np.ndarray, c1: Sequence | np.ndarray,
+                    c2: Sequence | np.ndarray, by: Sequence | np.ndarray | None = None) -> dict:
+    """Mean of `d` with the two-way cluster-robust SE of the mean (Cameron-Gelbach-Miller, e.g.
+    c1 = date, c2 = player): V = V1 + V2 - V12, V12 clustered on the (c1, c2) intersection, the
+    same math as backtest._two_way_var. If V <= 0 it falls back to max(V1, V2). SE is NaN when
+    either dimension has a single cluster. Keys as `paired_cluster` (n_clusters = n_c1) plus
+    se_c1, se_c2 (the one-way SEs), n_c1, n_c2; with `by` (e.g. season labels) also `by_mean`,
+    a {label: mean of d} dict, so callers can report the per-group sign."""
+    d = np.asarray(d, float)
+    n = len(d)
+    nan = float("nan")
+    if n == 0:
+        out = {"mean": nan, "se": nan, "n": 0, "n_clusters": 0, "se_c1": nan, "se_c2": nan,
+               "n_c1": 0, "n_c2": 0}
+        if by is not None:
+            out["by_mean"] = {}
+        return out
+    a1, a2 = np.asarray(c1), np.asarray(c2)
+    mean = float(d.mean())
+    z = (d - mean) / n
+    both = pd.Series(a1).astype(str) + "|" + pd.Series(a2).astype(str)
+    v1, v2 = _cluster_var(z, a1), _cluster_var(z, a2)
+    v12 = _cluster_var(z, both.to_numpy())
+    v = v1 + v2 - v12
+    if np.isfinite(v) and v <= 0:
+        v = max(v1, v2)
+    out = {"mean": mean, "se": float(np.sqrt(v)) if np.isfinite(v) else nan, "n": int(n),
+           "n_clusters": int(pd.Series(a1).nunique()),
+           "se_c1": float(np.sqrt(v1)) if np.isfinite(v1) else nan,
+           "se_c2": float(np.sqrt(v2)) if np.isfinite(v2) else nan,
+           "n_c1": int(pd.Series(a1).nunique()), "n_c2": int(pd.Series(a2).nunique())}
+    if by is not None:
+        out["by_mean"] = {k: float(m) for k, m in pd.Series(d).groupby(np.asarray(by)).mean().items()}
+    return out

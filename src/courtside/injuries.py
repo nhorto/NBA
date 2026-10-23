@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import csv
 import difflib
+import os
 import re
 import sqlite3
 import unicodedata
@@ -45,6 +46,35 @@ BASELINE_TARGET_H = 24
 BASELINE_MIN_GAP_H = 12        # the comparison batch must be at least this much older
 
 _SUFFIX = re.compile(r"\b(jr|sr|ii|iii|iv|v)\b")
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    v = os.environ.get(name, "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+# --- game-day rows for the game model (opt-in, COURTSIDE_INJ_GAMEDAY_GAME=1, default OFF) ------
+#
+# The official PDF lists today's AND tomorrow's games, so on a back-to-back one batch holds two
+# rows per player (one per game date) and the most-severe merge (`_index`, `team_availability`)
+# let tomorrow's status price tonight's game. ON: `resolve(..., game_day=d)` keeps only the
+# rows whose `injury_snapshots.game_date` (schema 16) is `d`, plus rows without a game date
+# (ESPN; official rows not yet backfilled), before choosing a team's batch.  OFF: the filter
+# never runs, bit-identical to before.  The DFS side has its own switch
+# (`proj.availability.INJ_GAMEDAY`, COURTSIDE_INJ_GAMEDAY).
+INJ_GAMEDAY_GAME_DEFAULT = False       # shipping = True here (env still overrides)
+INJ_GAMEDAY_GAME_ENV = "COURTSIDE_INJ_GAMEDAY_GAME"
+INJ_GAMEDAY_GAME = _env_flag(INJ_GAMEDAY_GAME_ENV, INJ_GAMEDAY_GAME_DEFAULT)
+
+
+def set_inj_gameday_game(on: bool) -> None:
+    """Flip the game-model game-day switch at run time (evaluation scripts, tests)."""
+    global INJ_GAMEDAY_GAME
+    INJ_GAMEDAY_GAME = bool(on)
 
 
 def norm_name(name: str | None) -> str:
@@ -83,10 +113,17 @@ def batches(conn: sqlite3.Connection, source: str, at: str | None = None) -> lis
     return [r[0] for r in conn.execute(sql + " ORDER BY captured_at", args)]
 
 
-def _batch_rows(conn: sqlite3.Connection, source: str, captured_at: str) -> list[dict]:
+def _batch_rows(conn: sqlite3.Connection, source: str, captured_at: str,
+                game_day: date | None = None) -> list[dict]:
+    """Rows of one batch; with `game_day`, only rows for that game date or without one."""
+    if game_day is None:
+        return [dict(r) for r in conn.execute(
+            "SELECT team, player_name, player_id, status, reason FROM injury_snapshots "
+            "WHERE source=? AND captured_at=?", (source, captured_at))]
     return [dict(r) for r in conn.execute(
         "SELECT team, player_name, player_id, status, reason FROM injury_snapshots "
-        "WHERE source=? AND captured_at=?", (source, captured_at))]
+        "WHERE source=? AND captured_at=? AND (game_date IS NULL OR game_date=?)",
+        (source, captured_at, game_day.isoformat()))]
 
 
 def _index(rows: list[dict]) -> dict[tuple[str, str], dict]:
@@ -112,7 +149,8 @@ def _entry(r: dict, source: str, captured_at: str) -> dict:
 ESPN_MAX_AGE_H = 36            # pricing only: an older ESPN batch is not "the current state"
 
 
-def resolve(conn: sqlite3.Connection, at: str, *, espn_max_age_h: float | None = None) -> dict:
+def resolve(conn: sqlite3.Connection, at: str, *, espn_max_age_h: float | None = None,
+            game_day: date | None = None) -> dict:
     """Which snapshot speaks for each team at `at` (ISO UTC).
 
     Per team the newest batch that *lists* the team wins and the official report wins ties, so
@@ -122,7 +160,11 @@ def resolve(conn: sqlite3.Connection, at: str, *, espn_max_age_h: float | None =
 
     Returns {"teams": {team: {"source", "captured_at", "rows": [raw snapshot rows]}},
     "batches": {source: captured_at}, "fresh": bool}. `fresh` says at least one usable batch
-    exists: a team missing from `teams` is then healthy as far as the reports go."""
+    exists: a team missing from `teams` is then healthy as far as the reports go.
+
+    `game_day` (the game being priced) only matters with INJ_GAMEDAY_GAME on: rows filed for
+    another game date (the back-to-back's other night) are dropped first."""
+    gd = game_day if INJ_GAMEDAY_GAME else None
     used: dict[str, str] = {}
     rows_by: dict[str, dict[str, list[dict]]] = {}
     for src, max_age in ((ESPN, espn_max_age_h), (OFFICIAL, OFFICIAL_MAX_AGE_H)):
@@ -133,7 +175,7 @@ def resolve(conn: sqlite3.Connection, at: str, *, espn_max_age_h: float | None =
             continue
         used[src] = b[-1]
         by: dict[str, list[dict]] = {}
-        for r in _batch_rows(conn, src, b[-1]):
+        for r in _batch_rows(conn, src, b[-1], gd):
             if r.get("player_name"):
                 by.setdefault(r["team"], []).append(r)
         rows_by[src] = by
@@ -146,13 +188,15 @@ def resolve(conn: sqlite3.Connection, at: str, *, espn_max_age_h: float | None =
     return {"teams": teams, "batches": used, "fresh": bool(used)}
 
 
-def current(conn: sqlite3.Connection, at: str, teams: set[str] | None = None) -> dict:
+def current(conn: sqlite3.Connection, at: str, teams: set[str] | None = None, *,
+            game_day: date | None = None) -> dict:
     """Relevant (Out/Doubtful/Questionable) injuries known at or before `at`.
 
-    Uses `resolve`: per team the newest listing batch, official winning ties.
+    Uses `resolve`: per team the newest listing batch, official winning ties (`game_day`: see
+    `resolve`).
     Returns {"by_team": {team: [entry,...]}, "batches": {source: captured_at},
     "latest_captured_at": str|None}. Entries are ordered most severe first."""
-    res = resolve(conn, at)
+    res = resolve(conn, at, game_day=game_day)
     by_team: dict[str, list[dict]] = {}
     for team, t in res["teams"].items():
         if teams is not None and team not in teams:
@@ -452,7 +496,7 @@ def availability(conn: sqlite3.Connection, at: str, day: date, teams: set[str]) 
             "players": [records of team_availability]}} for every team in `teams` when at least
     one usable snapshot exists (a team the report does not list is healthy: avail {}, source
     None); an empty dict when no snapshot is usable, so the model keeps its own default."""
-    res = resolve(conn, at, espn_max_age_h=ESPN_MAX_AGE_H)
+    res = resolve(conn, at, espn_max_age_h=ESPN_MAX_AGE_H, game_day=day)
     if not res["fresh"]:
         return {}
     act = active_players(conn, day)

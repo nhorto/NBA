@@ -33,7 +33,8 @@ Research only: no product code changed, no switch built.*
   it uses the rotation regulars who actually played. Pricing the archived official injury
   report instead (available from 22 Dec 2025) moved probabilities by 0.7 points on average and
   changed nothing: log-loss −0.0003 (SE 0.0007), slope 1.05 vs 1.05 on the 808 games where both
-  teams had a report.
+  teams had a report. Capping each game's injury news at its own tip-off (IMPROVEMENTS B3; the
+  old replay read reports up to 1 AM ET) also changes nothing: ΔLL +0.00000 (SE 0.00003), §6.1.
 - **No fix clears the ship bar, so no switch was built.** Temperature/Platt layers (global, by
   season phase, early season only) make log-loss worse. The best candidate, pulling the model
   toward the closing line by a weight fit on earlier seasons (w ≈ 0.2–0.3), improves log-loss by
@@ -293,8 +294,11 @@ seasons 2014-15 → 2025-26, 14,439 games. Changes are new minus current (negati
   2022-23 Kaggle coverage is 664 of 1,230 games, so that season's market rows are a subset.
 - **The walk-forward availability is leak-safe but not production-identical:** regulars' absences
   come from who played. The "keep" replay prices the official report as production does, but
-  only from 22 Dec 2025 (the archive start), and with the end-of-day report (`injury_cutoff`
-  for past days is 05:00 UTC the next day), which is at least as informed as an 18:30 ET run.
+  only from 22 Dec 2025 (the archive start). The replays above used the end-of-day report
+  (`injury_cutoff` for past days was 05:00 UTC the next day, after every tip): 679 of the 808
+  report games read a batch published after their tip (median 2.5 h after). Since B3
+  (2026-10-23) each past game is capped at its own tip; re-running the replay that way changed
+  nothing measurable (§6.1).
 - **The replays use closing lines as the market input.** Production prices with the newest
   pre-tip snapshot, so live calibration can differ; the MLOps monitor measures that directly.
 - **Slopes over ~200-game windows are noisy** (SE 0.15–0.20); monthly 2025-26 rows are
@@ -303,6 +307,37 @@ seasons 2014-15 → 2025-26, 14,439 games. Changes are new minus current (negati
   (the December 2025 run of upsets) are shared by all games in a stretch, so even the clustered
   SEs on within-season windows understate the real uncertainty about "how the model will do
   next December".
+
+### 6.1 Re-run with pre-tip injury cutoffs (IMPROVEMENTS B3, 2026-10-23)
+
+`research/game_calibration_replay.py --arms legacy:0,tip:0,tip:1,legacy:1,virtual:0`: the same
+daily fits price every arm, 2025-26 Regular Season (21 Oct → 12 Apr), Mac scratch copy with
+schema 16 + the `game_date` backfill. `legacy` = the old end-of-day cutoff, `tip` = each game's
+own tip-off (the code as shipped; tips from the archived ESPN scoreboard, all 1,230 known),
+`virtual` = 12:00Z for every game (an 8 AM ET morning run, sensitivity only), `:1` = the opt-in
+game-day rows (`COURTSIDE_INJ_GAMEDAY_GAME=1`: on a back-to-back only the row for the game's own
+date). `gbm_market`; differences are arm minus `legacy`, date-clustered SEs
+(`research/b3_injury_cutoff_eval.py`).
+
+| arm | games | LL | Brier | slope (SE) | ΔLL vs legacy (SE) | ΔBrier (SE) | Δslope (SE) | games with p changed |
+|---|---|---|---|---|---|---|---|---|
+| legacy (old cutoff) | 1,230 | 0.5750 | 0.1968 | 0.965 (0.069) | | | | |
+| **tip (new)** | 1,230 | 0.5750 | 0.1968 | 0.965 (0.069) | +0.00000 (0.00003) | +0.00000 (0.00002) | +0.000 (0.000) | 11 (max 1.3 pts) |
+| tip + game-day rows | 1,230 | 0.5750 | 0.1968 | 0.965 (0.069) | +0.00004 (0.00005) | +0.00002 (0.00002) | −0.000 (0.000) | 1 vs tip (2.0 pts) |
+| virtual 12:00Z | 1,230 | 0.5750 | 0.1968 | 0.970 (0.069) | +0.00003 (0.00068) | +0.00002 (0.00028) | +0.005 (0.004) | 766 vs tip (mean 0.5 pts) |
+| legacy, report games | 808 | 0.5560 | 0.1883 | 1.048 (0.088) | | | | |
+| **tip, report games** | 808 | 0.5560 | 0.1883 | 1.048 (0.088) | +0.00000 (0.00005) | +0.00000 (0.00002) | +0.000 (0.000) | |
+| tip + game-day, report games | 808 | 0.5560 | 0.1884 | 1.048 (0.088) | +0.00006 (0.00007) | +0.00003 (0.00004) | −0.000 (0.000) | |
+
+Close on the same games: 0.5713 / slope 1.083 (0.075) on 1,228 with a line; 0.5541 / 1.156
+(0.094) on the 808 report games. So the old replay was not flattered in any measurable way: the
+post-tip batches almost never changed a priced status for a game already under way. The 1.05
+(report games) and 0.97 (full season) above stand. The game-day rows move one game: a single
+official batch lists a player for two dates in only 148 of 171,832 player-batch rows
+(22 Dec → 12 Apr, 24 with different statuses), so the back-to-back merge almost never bites at
+pre-tip cutoffs. The 12:00Z arm shows what the late-afternoon reports are worth to the model
+(0.5 pts of p on average) and that the log-loss is indifferent to them, consistent with §4 (the
+close already carries the news).
 
 ## 7. Recommendations
 
@@ -330,13 +365,20 @@ uv run python research/game_calibration_replay.py --src <prod.db> --db <scratch>
     --injuries drop --start 2025-10-21 --end 2026-04-12 --out replay_drop.csv.gz
 uv run python research/game_calibration_replay.py --src <prod.db> --db <scratch>/replay_keep.db \
     --injuries keep --start 2025-10-21 --end 2026-04-12 --out replay_keep.csv.gz
+# §6.1 (B3): every cutoff arm from the same fits (scratch DB needs schema 16 + game_date backfill)
+uv run python research/game_calibration_replay.py --src <scratch-gd.db> --db <scratch>/b3.db \
+    --arms legacy:0,tip:0,tip:1,legacy:1,virtual:0 --fast --start 2025-10-21 --end 2026-04-12 \
+    --out 'b3_{arm}.csv.gz'
+uv run python research/b3_injury_cutoff_eval.py --db <scratch-gd.db> --arm legacy_off=b3_legacy_off.csv.gz \
+    --arm tip_off=b3_tip_off.csv.gz --arm tip_on=b3_tip_on.csv.gz --out b3_eval.json
 # analysis (light, geekom1)
 uv run python research/game_calibration.py --preds rung3_preds_<ts>.csv.gz --db var/courtside.db \
     --replay orig=replay_orig.csv.gz --replay drop=replay_drop.csv.gz \
     --replay keep=replay_keep.csv.gz --out var/tmp/gcal/gbm_market.json --md var/tmp/gcal/tables.md
 ```
 
-Inputs and outputs from this run are in `var/tmp/gcal/` on geekom1 (`rung3_preds_20261022T030937Z.csv.gz`,
+The §6.1 arms (`all_{arm}.csv.gz`) and `b3_eval.json` are in `var/tmp/b3/` on geekom1 (Mac scratch
+`~/Developer/courtside-compute/b3/`). Inputs and outputs from this run are in `var/tmp/gcal/` on geekom1 (`rung3_preds_20261022T030937Z.csv.gz`,
 `replay_{orig,drop,keep}.csv.gz`, `gbm_market.json`, `gbm_opinion.json`, `tables.md`). The keep
 replay was run in three date chunks (21 Oct–31 Jan, 1 Feb–5 Mar, 6 Mar–12 Apr) for speed; each
 day is an independent refit, so chunking does not change any prediction.

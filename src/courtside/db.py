@@ -991,6 +991,16 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_preseason_player_games_player_date
         ON preseason_player_games(player_id, game_date);
     """,
+    # 16: the game date an official injury-report row is FOR (IMPROVEMENTS B8). The PDF lists
+    # today's and tomorrow's games, so a 5 PM / 10 PM ET row was filed under the capture day
+    # and the next day's game never saw it. Nullable: ESPN rows have no game date; official
+    # rows written before this migration are filled by `courtside backfill injuries
+    # --game-date` from the archived PDFs. Read only behind availability.INJ_GAMEDAY (+gd).
+    """
+    ALTER TABLE injury_snapshots ADD COLUMN game_date TEXT;
+    CREATE INDEX IF NOT EXISTS idx_injury_source_gamedate
+        ON injury_snapshots(source, game_date, captured_at);
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
@@ -998,7 +1008,7 @@ GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",
 ODDS_COLUMNS = ("game_id", "captured_at", "source", "provider", "home_spread",
                 "total", "home_ml", "away_ml", "raw_path")
 INJURY_COLUMNS = ("captured_at", "source", "team", "player_name", "player_id",
-                  "status", "reason", "raw_path")
+                  "status", "reason", "raw_path", "game_date")
 
 
 def _now() -> str:

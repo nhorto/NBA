@@ -2,6 +2,15 @@
 
 *Last updated 2026-10-22 ~09:00 ET (day 2; live model pathA-v0.3+p2).*
 
+**2026-10-23: methodology review done → `docs/IMPROVEMENTS.md`** is the improvement spec and
+work list (bugs B1–B11, owner decisions in its §6, revised order in §7, Fable second review in §9). Read it after this file.
+
+**2026-10-23 ~10:15 ET: `+mf` shipped** (owner OK; 5598456). Live model **`pathA-v0.3+mf+p2`**,
+bundle `bundle_2026-27_v1_cx_mf.json` (pre-fit, copied into prod `var/proj/`). Rollback:
+`COURTSIDE_MINFIX=0` or flip `MINFIX_DEFAULT`. Tests pin it off in `tests/conftest.py`.
+Uncommitted in the tree: B8 (`+gd`, migration 16), B2 (`+rr`, don't ship), B3 (replay cutoff),
+and B1 / B2b in progress. See IMPROVEMENTS status blocks.
+
 ## 0. Where we are, in one paragraph
 
 Courtside, the "NBA Morning Brief", is **built and live** on the Mac mini. It covers:

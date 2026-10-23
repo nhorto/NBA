@@ -353,7 +353,8 @@ def _official_report_step(conn: sqlite3.Connection, day: date) -> dict:
     captured = _iso(report_dt)
     rows = [{"captured_at": captured, "source": OFFICIAL_SOURCE, "team": r["team"],
              "player_name": r.get("player_name_norm") or r["player_name"], "player_id": None,
-             "status": r.get("status"), "reason": r.get("reason"), "raw_path": str(path)}
+             "status": r.get("status"), "reason": r.get("reason"), "raw_path": str(path),
+             "game_date": r.get("game_date")}
             for r in parsed if r.get("player_name_norm") or r.get("player_name")]
     # "NOT YET SUBMITTED" placeholder rows have no player; player_name is NOT NULL in the table
     n = db.insert_injury_snapshots(conn, rows) if rows else 0
