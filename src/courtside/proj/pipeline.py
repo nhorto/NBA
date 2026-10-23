@@ -190,7 +190,7 @@ PRESEASON_TAG = "+pre"
 # `_pre`, before `_mr` / `_c1`) = the arm's bundle with the minutes params refit with
 # `fit_v1(minfix=True)` on seasons < S, version `<arm>+mf`; seeds unchanged (common random
 # numbers with the arm's OFF runs). OFF: nothing of it runs (bit-identical).
-MINFIX_DEFAULT = False                 # shipping = True here (env still overrides)
+MINFIX_DEFAULT = True                  # shipped 2026-10-23 (owner OK; env still overrides)
 MINFIX_ENV = "COURTSIDE_MINFIX"
 MINFIX_SUFFIX = "_mf"
 MINFIX_TAG = "+mf"

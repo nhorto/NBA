@@ -6,6 +6,9 @@ import pytest
 # switches assert their own exact version strings, so the suite runs with v2 off;
 # tests/test_proj_pplay_v2.py turns it on explicitly (`set_pplay`).
 os.environ.setdefault("COURTSIDE_PPLAY", "v1")
+# The minutes fix (`+mf`, MINFIX_DEFAULT) shipped 2026-10-23; the suite runs with it off for the
+# same reason; tests/test_proj_minutes_fix.py turns it on explicitly (`set_minfix`).
+os.environ.setdefault("COURTSIDE_MINFIX", "0")
 
 
 @pytest.fixture(autouse=True)

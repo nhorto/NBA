@@ -42,14 +42,14 @@ def restore_switches():
     P.set_context(state[0], state[1])
 
 
-def test_default_off_and_env_flag(monkeypatch):
-    assert P.MINFIX_DEFAULT is False
+def test_default_on_and_env_flag(monkeypatch):
+    assert P.MINFIX_DEFAULT is True                                   # shipped 2026-10-23
     monkeypatch.setenv(P.MINFIX_ENV, "1")
     assert P._env_flag(P.MINFIX_ENV, P.MINFIX_DEFAULT) is True
     monkeypatch.setenv(P.MINFIX_ENV, "0")
-    assert P._env_flag(P.MINFIX_ENV, True) is False
-    monkeypatch.delenv(P.MINFIX_ENV)
     assert P._env_flag(P.MINFIX_ENV, P.MINFIX_DEFAULT) is False
+    monkeypatch.delenv(P.MINFIX_ENV)
+    assert P._env_flag(P.MINFIX_ENV, P.MINFIX_DEFAULT) is True
 
 
 def test_versions_compose(restore_switches):
