@@ -48,6 +48,10 @@ def test_constants_and_versions():
     assert F.FIELD_VERSION == "field-proxy-1.2" and F.MODEL == "own-proxy-1.2"
 
 
+# The hashes were taken on geekom1 (Linux / OpenBLAS); macOS (Accelerate) rounds the Sinkhorn
+# float64s differently, so the exact goldens only hold on Linux. The platform-free guard is
+# `test_gpp_default_equals_explicit_gpp_cap` below.
+@pytest.mark.skipif(sys.platform != "linux", reason="float64 goldens recorded on Linux")
 @pytest.mark.parametrize("arch", ["large_gpp", "small_gpp"])
 def test_gpp_bit_identical_to_head(arch):
     op, f = _build(F, arch)
@@ -68,6 +72,15 @@ def test_gpp_matches_live_head_copy(arch):
     op1, f1 = _build(F, arch)
     assert np.array_equal(op0.own, op1.own)
     assert np.array_equal(f0.lineups, f1.lineups) and np.array_equal(f0.counts, f1.counts)
+
+
+@pytest.mark.parametrize("arch", ["large_gpp", "small_gpp"])
+def test_gpp_default_equals_explicit_gpp_cap(arch):
+    pool = synth_pool(1)
+    inp = inputs_for(pool)
+    a = F.ownership_proxy(inp, pool, archetype=arch)
+    b = F.ownership_proxy(inp, pool, archetype=arch, row_cap=0.92)
+    assert np.array_equal(a.own, b.own) and a.cap == b.cap == 0.92
 
 
 def test_cash_can_exceed_gpp_cap_but_never_the_cash_cap():
