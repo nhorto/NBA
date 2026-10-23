@@ -98,7 +98,7 @@ def _p_above(pmf: np.ndarray, line: float) -> float:
 
 
 def date_extras(res, day: str, season: str, acts_key: dict, lines: StdLines,
-                rng: np.random.Generator) -> tuple[list, list, list]:
+                rng: np.random.Generator, phi: dict | None = None) -> tuple[list, list, list]:
     """(stat rows, blowout rows, per-game lineup inputs) for one date."""
     st = res.stats
     stat_rows, blow_rows = [], []
@@ -118,7 +118,7 @@ def date_extras(res, day: str, season: str, acts_key: dict, lines: StdLines,
         played_sims = g.minutes[:, j] > 0
         if a is None or not (a["min"] or 0) > 0 or played_sims.sum() < 200:
             continue
-        approx = PR.player_dist(keyed.get(k, {}))
+        approx = PR.player_dist(keyed.get(k, {}), phi=phi)
         sims = (PR.sims_dist({s: g.stats[s][:, j] for s in PSTATS}, g.minutes[:, j])
                 if g.stats is not None else None)
         std = lines.get(pid, day)
@@ -288,6 +288,7 @@ def cmd_run(a) -> int:
     acts["home_margin"] = acts["game_id"].map(hm)
     acts_key = {(r.game_id, int(r.player_id)): r._asdict() for r in acts.itertuples(index=False)}
     lines = StdLines(acts, a.season)
+    phi = PR.phi_for(conn, a.season)          # props dispersion fit on seasons < S only (B7)
     captured = {}
     orig = P.project_historical
 
@@ -308,7 +309,7 @@ def cmd_run(a) -> int:
         players, lineups, meta = sr.run_date(day)
         res = captured.pop("res")
         rng = np.random.default_rng(P.stable_seed(day, "c1-eval-pit"))
-        srows, brows = date_extras(res, day, a.season, acts_key, lines, rng)
+        srows, brows = date_extras(res, day, a.season, acts_key, lines, rng, phi)
         lrows = lineup_rows(res, day, players, lineups, acts_key, rg)
         pd.DataFrame(srows).to_parquet(out / f"{day}.stats.parquet")
         pd.DataFrame(brows).to_parquet(out / f"{day}.blow.parquet")

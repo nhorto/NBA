@@ -9,6 +9,16 @@ per-sim DK FP files, and the `dfs_runs.sim_path` pointer.
   sd/quantiles NULL until v1 draws components), cond in {played, all}.
 * Sims: float16 `npz` at `<data_dir>/sims/<slate>/<run_id>.npz` with `fp` (S, n), `player_id`
   (NBA ids) and optional `dk_id`; nothing is pruned by default (KEEP_DAYS = None).
+* Availability scenarios (P10, optional; runs stored before 2026-10-23 have none): in the same
+  npz, `team` (n,), `min_t` (n, S) uint8 whole minutes, stored player-major (it compresses
+  ~20 % better; rounded, at least 1 when he played, 0 = did not play), `absent_bits` (S, ceil(n/8)) uint8 = `np.packbits` of each sim's drawn
+  availability (True = out), and per team (order `scen_team` (T,)): `scen_idx` (S, T) uint8 =
+  each sim's kept scenario (the absent set the minutes engine projected; a rarer drawn set is
+  collapsed onto a subset, `copula.draw_scenarios`), `scen_off` (T + 1,) row offsets into
+  `scen_kept` (K_total, n) bool = the kept absent masks in slate columns. `scenario_arrays`
+  builds them from GameSims, `read_scenarios` returns them as a `Scenarios` (None for old files).
+  Size on the 11-game 2026-10-21 main slate (25k sims, 398 players): 13.6 MB -> 18.6 MB
+  (+37 %; the minutes are 4.9 MB of it, the scenario arrays 0.17 MB).
 * Per-stat sims (copula v1 runs only, T2.10): `<run_id>.stats.npz` next to it (`stat_sims_path`)
   with uint8 counts per box component (pts, fg3m, reb, ast, stl, blk, tov), `min` (uint8,
   minutes rounded up, so 0 = did not play), `player_id`, optional `dk_id` / `game_id`. Only the
@@ -26,6 +36,7 @@ import json
 import re
 import sqlite3
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -68,8 +79,10 @@ def _num(v):
 # ============================================================================== sims
 
 def save_sims(slate: str, run_id: str, player_id, fp: np.ndarray, *, dk_id=None,
-              game_id=None, keep_days: int = KEEP_DAYS, root: Path | None = None) -> Path:
-    """Per-sim DK FP (S, n) as float16 npz; returns the path. Prunes old files."""
+              game_id=None, keep_days: int = KEEP_DAYS, root: Path | None = None,
+              extra: dict | None = None) -> Path:
+    """Per-sim DK FP (S, n) as float16 npz; returns the path. Prunes old files. `extra`: more
+    arrays for the same npz (`scenario_arrays`)."""
     root = root or sims_dir()
     d = root / _safe(slate)
     d.mkdir(parents=True, exist_ok=True)
@@ -80,9 +93,80 @@ def save_sims(slate: str, run_id: str, player_id, fp: np.ndarray, *, dk_id=None,
         arrs["dk_id"] = np.asarray([str(x) if x is not None else "" for x in dk_id])
     if game_id is not None:
         arrs["game_id"] = np.asarray([str(x) for x in game_id])
+    for k, v in (extra or {}).items():
+        if k not in arrs:
+            arrs[k] = np.asarray(v)
     np.savez_compressed(path, **arrs)
     prune_sims(keep_days, root=root)
     return path
+
+
+# ------------------------------------------------------------------ availability scenarios
+
+SCEN_KEYS = ("team", "min_t", "absent_bits", "scen_team", "scen_idx", "scen_off", "scen_kept")
+
+
+def scenario_arrays(sims: list) -> dict[str, np.ndarray]:
+    """The scenario npz arrays (module doc) of a run's GameSims list, in the column order of
+    their concatenation (`DayResult.fp_matrix`). {} when any game lacks the scenario fields."""
+    if not sims or any(getattr(g, "absent", None) is None or not g.scenario for g in sims):
+        return {}
+    S = sims[0].fp.shape[0]
+    n = sum(len(g.player_id) for g in sims)
+    team = np.concatenate([np.asarray(g.team).astype(str) for g in sims])
+    mins = np.concatenate([g.minutes for g in sims], axis=1)
+    absent = np.concatenate([g.absent for g in sims], axis=1)
+    teams, idx, off, kept = [], [], [0], []
+    col = 0
+    for g in sims:
+        gt = np.asarray(g.team).astype(str)
+        for t in g.scenario:
+            cols = col + np.flatnonzero(gt == t)
+            k = np.zeros((len(g.kept[t]), n), bool)
+            k[:, cols] = g.kept[t]
+            teams.append(t)
+            idx.append(np.asarray(g.scenario[t], np.uint8))
+            kept.append(k)
+            off.append(off[-1] + len(k))
+        col += len(g.player_id)
+    whole = np.where(mins > 0, np.maximum(np.rint(mins), 1.0), 0.0)
+    return {"team": team,
+            "min_t": np.ascontiguousarray(np.clip(whole, 0, 255).astype(np.uint8).T),
+            "absent_bits": np.packbits(absent, axis=1),
+            "scen_team": np.asarray(teams, str),
+            "scen_idx": (np.stack(idx, 1) if idx else np.zeros((S, 0), np.uint8)),
+            "scen_off": np.asarray(off, np.int32),
+            "scen_kept": (np.concatenate(kept, 0) if kept else np.zeros((0, n), bool))}
+
+
+@dataclass
+class Scenarios:
+    """A run's availability scenarios (columns = the npz's player columns)."""
+    team: np.ndarray          # (n,) str
+    minutes: np.ndarray       # (S, n) float32 whole minutes (0 = did not play)
+    absent: np.ndarray        # (S, n) bool, drawn availability (True = out)
+    teams: tuple              # (T,) team codes
+    idx: np.ndarray           # (S, T) kept scenario per sim and team
+    kept: list                # per team: (K_t, n) bool kept absent masks (slate columns)
+
+    def team_kept(self, team: str) -> np.ndarray:
+        return self.kept[self.teams.index(team)]
+
+    def team_idx(self, team: str) -> np.ndarray:
+        return self.idx[:, self.teams.index(team)]
+
+
+def read_scenarios(z: dict) -> Scenarios | None:
+    """`Scenarios` from a loaded sims npz (`load_sims`), None when it has none (older runs)."""
+    if not all(k in z for k in SCEN_KEYS):
+        return None
+    n = len(z["player_id"])
+    off = z["scen_off"].astype(int)
+    return Scenarios(team=z["team"].astype(str),
+                     minutes=z["min_t"].T.astype(np.float32),
+                     absent=np.unpackbits(z["absent_bits"], axis=1, count=n).astype(bool),
+                     teams=tuple(str(t) for t in z["scen_team"]), idx=z["scen_idx"],
+                     kept=[z["scen_kept"][off[i]:off[i + 1]] for i in range(len(off) - 1)])
 
 
 def stat_sims_path(sim_path: str | Path) -> Path:

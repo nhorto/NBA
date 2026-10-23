@@ -81,12 +81,24 @@
           <p class="pl-sub">
             <span class="team-tag">{{ c.team }}</span>{% if c.opp %} <span class="muted">{{ c.opp }}</span>{% endif %}
             {% if c.status %}{{ m.status_pill(c.status) }}{% if c.reason %} <span class="muted pl-reason">{{ c.reason }}</span>{% endif %}{% else %}<span class="muted pl-reason">Not on the injury report</span>{% endif %}
+            {% if c.ln %} <span class="tag tag-hl pl-ln" title="{{ c.ln_label }}">Teammate out<span class="sr">: {{ c.ln_label }}</span></span>{% endif %}
           </p>
           <p class="pl-play"><span class="pl-play-n">{{ c.p_play|pct if c.p_play is not none else DASH }}</span><span class="pl-play-k">chance he plays</span></p>
         </header>
         <dl class="pl-stats" aria-label="Projection if he plays">
           {% for s in c.stats %}{{ stat_cell(s) }}{% endfor %}
         </dl>
+        {% for sp in c.splits %}
+        <table class="pl-split">
+          <caption>With and without {{ sp.teammate }}</caption>
+          <thead><tr><th scope="col"><span class="sr">{{ sp.teammate }}</span></th><th scope="col">Min</th><th scope="col">DK</th>{% if sp.has_big %}<th scope="col">Big night</th>{% endif %}<th scope="col">Sims</th></tr></thead>
+          <tbody>
+          {% for r in sp.rows %}
+          <tr><th scope="row">{{ sp.short }} {{ r.label }}</th><td>{{ r.min|num(0) }}</td><td>{{ r.dk|num(1) }}</td>{% if sp.has_big %}<td>{{ r.big|pct }}</td>{% endif %}<td class="muted">{{ r.share|pct }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% endfor %}
         {% if c.props %}
         <ul class="pl-props" aria-label="Book props: our chance vs the market's">
           {% for p in c.props %}
@@ -110,7 +122,7 @@
   </section>
   {% endfor %}
 
-  <p class="footnote pl-foot">Numbers are our projection if he plays: the mean, then the 10th to 90th percentile range (simulated). DK is DraftKings points. The chance he plays comes from the injury report and our availability model. For each prop line, &ldquo;our model&rdquo; is our chance he finishes above the line and &ldquo;market&rdquo; is the book&rsquo;s chance with its margin removed; the bar fills to ours and the dark tick marks the market&rsquo;s. Props are DraftKings lines via ESPN. {{ v.disclaimer }}</p>
+  <p class="footnote pl-foot">Numbers are our projection if he plays: the mean, then the 10th to 90th percentile range (simulated). DK is DraftKings points. The chance he plays comes from the injury report and our availability model. For each prop line, &ldquo;our model&rdquo; is our chance he finishes above the line and &ldquo;market&rdquo; is the book&rsquo;s chance with its margin removed; the bar fills to ours and the dark tick marks the market&rsquo;s. Props are DraftKings lines via ESPN.{% if v.has_splits %} &ldquo;With and without&rdquo; splits our simulations by whether a teammate who may or may not play is available: minutes and DK points are if he plays; big night is how often he scores at least {{ v.big_k }}&times; his DraftKings salary in thousands in DK points, counting the games he may miss and adjusted for how our upper ranges have run in past seasons; sims is the share of our simulations in each case (shown when each case has at least {{ v.split_min_n }}).{% endif %}{% if v.has_late %} Teammate out marks a teammate of a starter or rotation player listed Doubtful or Out on the injury report in the last {{ v.ln_window }} minutes before the first game of a DFS slate, whose projection rose since the run before that news; hover the tag for the details.{% endif %} {{ v.disclaimer }}</p>
 {% endif %}
 </div>
 {% endblock %}

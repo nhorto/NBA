@@ -5,11 +5,25 @@
 **2026-10-23: methodology review done → `docs/IMPROVEMENTS.md`** is the improvement spec and
 work list (bugs B1–B11, owner decisions in its §6, revised order in §7, Fable second review in §9). Read it after this file.
 
-**2026-10-23 ~10:15 ET: `+mf` shipped** (owner OK; 5598456). Live model **`pathA-v0.3+mf+p2`**,
-bundle `bundle_2026-27_v1_cx_mf.json` (pre-fit, copied into prod `var/proj/`). Rollback:
-`COURTSIDE_MINFIX=0` or flip `MINFIX_DEFAULT`. Tests pin it off in `tests/conftest.py`.
-Uncommitted in the tree: B8 (`+gd`, migration 16), B2 (`+rr`, don't ship), B3 (replay cutoff),
-and B1 / B2b in progress. See IMPROVEMENTS status blocks.
+**2026-10-23: live is `pathA-v0.3+mf+p2+rx+rb`** (owner OK). Commits:
+- **5598456 `+mf`.** Pre-fit `bundle_2026-27_v1_cx_mf.json` in prod `var/proj/`.
+- **7b7b693 `+rx` + contest builder split `gs` + field `own/field-proxy-1.2` (B5).** Built OFF in
+  the same commit: B8 `+gd`, B3 game-side b2b, B2 `+rr` (don't ship), B9 `+lf`.
+
+Prod is on schema 16, with `injury_snapshots.game_date` backfilled (180,514/180,514). Pre-deploy
+DB backup: `~/Developer/backups/courtside-pre-7b7b693.db` on the Mac.
+
+- **Batch 2: `+rb` role blend (P1/D1), plus display-only additions.** The display additions are
+  the P10 "with and without" teammate splits on the Tonight card (sims npz now stores scenarios)
+  and the D4 "Teammate out" tag (`ln-v1`). B7 adds props φ on seasons < S. Built OFF in the same
+  batch: D2 cash by P(cash) (keep OFF), D5 K-field ownership noise `COURTSIDE_FIELD_K` (held OFF
+  until 3+ more uploads), B11 `+tm` (neutral).
+
+Rollbacks: `COURTSIDE_MINFIX=0`, `COURTSIDE_RESERVE_EXTRAS=0`, `COURTSIDE_ROLE_BLEND=0`,
+`COURTSIDE_PORTFOLIO_SPLIT=off` (or flip the `*_DEFAULT` constants). Tests pin them off in
+`tests/conftest.py`. Golden float tests are Linux-only (macOS rounds differently).
+
+Per-item status: the IMPROVEMENTS.md status blocks. Switch decisions: `docs/research/switch-ledger.md`.
 
 ## 0. Where we are, in one paragraph
 

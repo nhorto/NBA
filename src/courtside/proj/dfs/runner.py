@@ -921,6 +921,11 @@ def _execute(conn, slate, tips, kind, now, run_id, detail, n, min_diff, refresh,
         cash, res = _build(O, T, pool, projs, rules, bans, now, n, min_diff, avail)
         if cash is None and not len(res):
             raise RuntimeError("no legal lineup (rules, bans and projections leave none)")
+        from . import cash_pcash as CP   # D2 (COURTSIDE_CASH_PCASH, default OFF): cash by P(cash)
+        if CP.CASH_PCASH:
+            cash, res, detail[CP.DETAIL_KEY] = CP.choose_safe(
+                conn, sid, run_id, O, T, pool, projs, rules, bans, now, cash, res,
+                solve_limit_s=SOLVE_LIMIT_S)
         news = late_news(conn, sid, now, prev, run_id=run_id)
         if cash is not None:
             why = {"q_players": _q_players(cash, avail)} if _q_players(cash, avail) else None
@@ -938,7 +943,11 @@ def _execute(conn, slate, tips, kind, now, run_id, detail, n, min_diff, refresh,
     detail.update(post_lineups(conn, run_id))
     if kind != "swap":
         from . import field as FLD   # proxy ownership + simulated field; never fails the run
-        detail["field"] = FLD.score_run_safe(conn, run_id, slate_id=sid, commit=False)
+        from . import cash_pcash as CP   # D2: score_run reuses the pick's cash field (ON only)
+        with CP.reuse_fields(run_id):
+            detail["field"] = FLD.score_run_safe(conn, run_id, slate_id=sid, commit=False)
+        from . import late_news_tag as LNT   # D4 tag + D5 hook: metadata only, never fails
+        detail[LNT.DETAIL_KEY] = LNT.compute_safe(conn, sid, run_id, now, model_version)
     _save_run(conn, run_id, sid, kind, now, model_version, t0, detail, news)
     return {"status": "ok", "model_version": model_version, "lineups": counts,
             "late_news": len(news), "excluded": len(excluded)}

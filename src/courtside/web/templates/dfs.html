@@ -257,6 +257,7 @@
               <span class="dfs-name">{{ r.name }}</span>{% if r.starter %}<span class="dfs-tick" title="Starter"><span aria-hidden="true">&#10003;</span><span class="sr"> starter</span></span>{% endif %}
               {% if r.status_label %} {{ pill(r.status_label, r.status_class) }}{% endif %}
               {% if r.xf %} <span class="tag tag-hl dfs-xf" title="{{ pl.xf_label }}">X factor<span class="sr">: {{ pl.xf_label }}</span></span>{% endif %}
+              {% if r.ln %} <span class="tag tag-hl dfs-ln" title="{{ r.ln_label }}">Teammate out<span class="sr">: {{ r.ln_label }}</span></span>{% endif %}
               <span class="dfs-psub">{{ r.team }} &middot; {{ r.positions|join("/") }}{% if r.opp %} &middot; {{ r.opp }}{% endif %}</span>
             </th>
             <td class="num">{{ r.salary_text }}</td>
@@ -275,7 +276,7 @@
     {% else %}
     {{ m.empty("No players match", "Clear the filters to see the full pool." if pl.all_total else "The pool for this slate has not been captured yet.") }}
     {% endif %}
-    <p class="footnote">Per $1k is projected points divided by salary in thousands. P(play) is the model&rsquo;s chance he plays. Range is the 10th to 90th percentile if he plays. Q, GTD and Out are DraftKings&rsquo; listed statuses. A tick marks a starter.{% if pl.has_big %} Big-night chance is how often he scores at least {{ pl.big_k }}&times; his salary in thousands in DK points in our simulations (for example {{ pl.big_eg }} at $4,500), counting the games he may miss, adjusted for how our upper ranges have run in past seasons. X factor marks a bench or role player who is likely to play, has at least a {{ pl.xf_min }} big-night chance and a low estimated popularity (a proxy, not real ownership), and is not among the slate&rsquo;s 10 best projections per $1k, which tend to be popular{% if pl.xf_count %}: {{ pl.xf_count }} on this slate{% endif %}. These are estimates, not advice.{% endif %}</p>
+    <p class="footnote">Per $1k is projected points divided by salary in thousands. P(play) is the model&rsquo;s chance he plays. Range is the 10th to 90th percentile if he plays. Q, GTD and Out are DraftKings&rsquo; listed statuses. A tick marks a starter.{% if pl.ln_count %} Teammate out marks a teammate of a starter or rotation player listed Doubtful or Out on the injury report in the last {{ pl.ln_window }} minutes before lock, whose projection rose since the run before that news: {{ pl.ln_count }} on this slate. The estimated popularity is a proxy and may not have caught up with the news.{% endif %}{% if pl.has_big %} Big-night chance is how often he scores at least {{ pl.big_k }}&times; his salary in thousands in DK points in our simulations (for example {{ pl.big_eg }} at $4,500), counting the games he may miss, adjusted for how our upper ranges have run in past seasons. X factor marks a bench or role player who is likely to play, has at least a {{ pl.xf_min }} big-night chance and a low estimated popularity (a proxy, not real ownership), and is not among the slate&rsquo;s 10 best projections per $1k, which tend to be popular{% if pl.xf_count %}: {{ pl.xf_count }} on this slate{% endif %}. These are estimates, not advice.{% endif %}</p>
   </section>
 
   {# ------------------------------------------------------------ contests #}

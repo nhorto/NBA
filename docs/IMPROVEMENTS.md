@@ -42,7 +42,7 @@ projection joins. The upside is in four places:
 ## 1. Bugs (fix first)
 
 ### B1. Contest builder generates, selects and reports on the same sims (H / S)
-- **Status 2026-10-23: built behind `COURTSIDE_PORTFOLIO_SPLIT` (OFF)** (`docs/research/portfolio-split.md`).
+- **Status 2026-10-23: shipped as `gs` (owner OK, 7b7b693)** (`docs/research/portfolio-split.md`).
   - **Design:** G/S/R = 10/45/45 % of the truth rows. Version `gpp-portfolio-1.0+split`.
     OFF is bit-identical to a golden file.
   - **Payout overstatement:** OFF overstates E[payout] by 6–12 % on top-heavy GPPs, and ON
@@ -99,8 +99,7 @@ projection joins. The upside is in four places:
     only 0.27 min per team-game go to unprojected players. The minutes engine still holds back
     2.4 min (10.8 on high-reserve teams), because the reserve was fit on last-10 candidates
     without the run-time extras.
-  - **B2b status 2026-10-23: built behind `COURTSIDE_RESERVE_EXTRAS` (`+rx`, OFF); recommend ship
-    (owner OK needed)** (`docs/research/reserve-extras.md`).
+  - **B2b status 2026-10-23: shipped (`+rx`, owner OK, 7b7b693)** (`docs/research/reserve-extras.md`).
     - **What it does:** when a team's candidates hold the DK pool, the reserve becomes the
       debutants' expected minutes (fit walk-forward). On the live path the held-back minutes go
       2.43 → 0.14 per team-game (actual 0.27).
@@ -189,6 +188,16 @@ projection joins. The upside is in four places:
 - **Priority:** low unless the owner plays Showdown (they mostly play Classic).
 
 ### B7. Minor inconsistencies (L / S)
+- **Status 2026-10-23: props φ and fringe parts done, uncommitted** (`docs/research/b7-oos.md`).
+  The minutes-eval sd part is still open.
+  - **Props φ:** now fit on the 3 seasons < S (`props.phi_for`). Live 2026-27 is unchanged
+    (tested). Only `research/copula_v1_eval.py` scored past seasons.
+  - **Fringe P(play):** refit leave-one-month-out (reports only start 2025-12-22).
+    - Log loss is 0.5279 in-sample vs 0.5452 OOS, still well under the base rate (0.5726).
+    - p2 vs v1 is restated at −6.58 / −7.16 SE (was −6.88 / −7.40); two-way −4.68 / −4.96.
+      p2 stands.
+    - The packaged `fringe_params.json` is unchanged.
+    - Side finding: the stored p2 and v1 frames used different minutes bundles.
 - The minutes eval integrates margins at a hard-coded sd 12.4 (`minutes.py:~136`,
   `minutes_eval.py:~273`). The sims use the per-season fit, 13.5–14 (`copula.py:~142`). Use the
   fitted value.
@@ -284,6 +293,11 @@ projection joins. The upside is in four places:
   blend's CRPS on promoted rows is not worse than OFF.
 
 ### B11. Copula tier assignment differs between fit and use (L / S)
+- **Status 2026-10-23: built behind `COURTSIDE_TIER_MATCH` (`+tm`, OFF); leave off for now**
+  (`docs/research/tier-match.md`). 16–22 % of rows with E[min] ≥ 10 changed tier, mostly
+  role → bench. ON gives 0 mismatches.
+  - DK CRPS is neutral (|z| ≤ 0.65), as expected: ρ doesn't change per-player marginals.
+  - Ship only if a lineup backtest is at least neutral.
 - **Where:** `copula.py:300-303` fits ρ/CV tiers from `r_dk × mpg`, while `:707-708` applies
   them from `mu_played`. A player can sit in a different tier at fit and at draw.
 - **Change:** use identical `role_tiers` inputs.
@@ -294,6 +308,14 @@ projection joins. The upside is in four places:
 ## 2. Projections
 
 ### P1. Learn a blend of our projection with DK FPPG and simple baselines (H / S)
+- **Status 2026-10-23: shipped (`+rb`, owner OK)** (`docs/research/role-blend.md`).
+  - **How:** the pipeline shifts played sims by β(r)·(L10 − μ). Stored projections, the display,
+    cash, Top N and the builder all use μ*, and the `truth_sims` flat shift is skipped (D1).
+  - **CRPS z (two-way):** −3.3 / −2.3 harness, −2.7 / −1.7 live / live10, −3.0 / −4.3 RotoGuru.
+    On the shipped `+rx` arm, live is −3.2.
+  - **Tiers:** none worse > 2 SE. Promoted rows are better.
+  - **Lineup backtest:** neutral.
+  - **Caveat:** the harness cache doesn't key on `role_blend.py` or its params.
 - **Evidence:**
   - `proj/dfs/portfolio.py:92-99`: (actual − ours) regresses on (FPPG − ours) with
     β = 0.16–0.20 at 8–20 SE historically, and 0.45 ± 0.18 on two live nights.
@@ -408,6 +430,15 @@ projection joins. The upside is in four places:
   decay.
 
 ### P10. Keep scenario-conditional outputs instead of throwing them away (H for the owner's goal / S–M)
+- **Status 2026-10-23: built, uncommitted.**
+  - **Sims now store** `absent` / `scenario` / `kept` (fp/minutes bit-identical to HEAD).
+  - **`proj/scenarios.py`** computes the splits; `xfactor.run_table` rows get `splits`.
+  - **Tonight card** shows "With and without Y" (both arms ≥ 200 sims and a shift ≥ 1 DK or
+    1 min).
+  - **Size:** npz 13.6 → 18.6 MB on a main slate. Per-sim minutes are 4.9 MB of that, since
+    v0 runs stored no minutes before; storing 5k minutes sims would cut it to about +12 %.
+  - **Example:** CHI 10-21, Leonard Miller with Okoro sitting: 19.6 min / 20.1 DK / 20 % big
+    night, vs 15.4 / 15.3 / 11 % with Okoro playing.
 - **Where:**
   - `copula.py:592-635`: `_team_minutes` knows each sim's availability scenario
     (`sc["assign"]`, `kept`).
@@ -439,6 +470,14 @@ Accept: RotoGuru lineup backtest (`proj/backtest.py`) at least neutral, plus liv
 OFF.
 
 ### D2. Pick the cash lineup by P(beat the cash line) (M / S)
+- **Status 2026-10-23: built behind `COURTSIDE_CASH_PCASH` (`cash-pcash-1`, OFF); keep OFF**
+  (`docs/research/cash-pcash.md`).
+  - **RotoGuru walk-forward (281 slates):** cash rate −3.1 ± 2.6 pp vs the λ rule
+    (2019-20 +2.7, 2020-21 −9.1).
+  - **Why:** the sims promised +2.5 pp, but within a slate simulated and real cash rates
+    correlate 0.03. So simulated P(cash) can't pick between near-equal lineups.
+  - **Top-N tie-break:** neutral.
+  - **Re-test** after ≥ 10 uploaded DU slates.
 - **Where:** cash = mean − 0.3·downside (`runner.py:624`, `CASH_LAMBDA`). `PLAYERS.md` §5.3
   already specifies P(cash).
 - **Why:** real DUs put 30–35 % of entries on one chalk lineup, so the cash line moves with it.
@@ -477,6 +516,13 @@ OFF.
   - Once standings arrive: realised leverage on real top-1 % lineups.
 
 ### D4. Late-news X-factor flag (M–H / S–M)
+- **Status 2026-10-23: built, uncommitted** (`proj/dfs/late_news_tag.py`, `ln-v1`; UI tag
+  "Teammate out"; `own_uncertainty` = 2.0 hook for D5).
+  - **Trigger:** a starter/rotation player newly Doubtful/Out in the last 60 min before lock.
+  - **Who gets tagged:** teammates up ≥ 3 DK or ≥ 3 min vs the previous run, at most 3 per team.
+  - **Results:** 0 flags on 10-20 to 10-22 (13 late moves, 4 rotation; nearest miss +1.8 DK).
+    The opener's Drummond and Green had no status move, so they need P7-style news, not this
+    tag.
 - **Why:** the opener's real X-factor nights (Drummond 43 DK at 0.3 %, Green 26.5 at 0.4 %)
   were minutes and P(play) misses, not tail misses (`xfactor.md` §0).
 - **Change:**
@@ -499,6 +545,17 @@ OFF.
 - **Accept:** on uploaded slates, the percentile of realised results within simulated
   distributions moves toward uniform. Runtime stays within the §5.8 budgets; N=150 is ~200 s
   today.
+- **Status 2026-10-23: built behind `COURTSIDE_FIELD_K` (`field-proxy-1.2+k`, OFF); OK to turn ON
+  (owner decision)** (`docs/research/field-k.md`, ledger `+k`).
+  - Noise: centred log-odds, sd 0.86 GPP / 2.65 cash, fitted by simulation on the 10-20 MAEs;
+    ×2 for late-news beneficiaries.
+  - Design: K = 4 fields share the optimizer solves, and sim row s is scored against field
+    s mod K.
+  - Runtime on the Mac: N=20 39.8 → 44.7 s; N=150 84.9 → 86.1 s.
+  - 10-20 results: the PIT is unchanged (one night). P(cash) is unchanged. Field concentration
+    and top-1 % lines move toward the real ones. GPP P(top 1 %) / E[payout] rise 7-31 %.
+  - **Orchestrator view:** hold OFF until 3+ more uploaded standings confirm the sd and the GPP
+    P(top 1 %) rise (big-GPP P(top 1 %) is up to +50 %, on a noise fit from a single slate).
 
 ### D6. Fix GPP tail shape before payout scoring (H / M)
 - **Evidence:** `xfactor.md` §2. Upper tails are too wide: bench players at 16–24 minutes

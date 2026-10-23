@@ -169,6 +169,47 @@ def role_tiers(team: np.ndarray, dk: np.ndarray, minutes: np.ndarray) -> np.ndar
     return out
 
 
+# Tier match (IMPROVEMENTS.md B11, `+tm`, default OFF; env COURTSIDE_TIER_MATCH=1,
+# `set_tier_match`; model version only, same bundle and seeds). The fits assign the rho / CV
+# tiers with role_tiers(r_dk x mpg, mpg); the draw assigned them from the projected mean and
+# minutes given played (mu_played, min_played). ON: the draw uses the fit's inputs. Players who
+# play in no sim (certain outs) count as bench, as before (the fit only sees players who
+# played, an absent star holds no star slot); a questionable player keeps his tier given he
+# plays. Docs: docs/research/tier-match.md.
+TIER_MATCH_DEFAULT = False
+TIER_MATCH_ENV = "COURTSIDE_TIER_MATCH"
+TIER_MATCH_TAG = "+tm"
+TM_PRESENT = 0.0               # P(play) must exceed this to take a tier slot
+TIER_MATCH = RC._flag(TIER_MATCH_ENV, TIER_MATCH_DEFAULT)
+
+
+def set_tier_match(on: bool) -> None:
+    """Flip the tier-match switch at run time (evaluation scripts, tests)."""
+    global TIER_MATCH
+    TIER_MATCH = bool(on)
+
+
+def fit_style_tiers(team: np.ndarray, players: pd.DataFrame, p_play: np.ndarray) -> np.ndarray:
+    """The fit's role_tiers inputs for a game's players (`players`: r_dk, mpg, in `team` order):
+    r_dk x mpg and mpg, with players at or below P(play) TM_PRESENT given minutes 0 (bench)."""
+    mpg = players["mpg"].to_numpy(float)
+    r_dk = (players["r_dk"].to_numpy(float) if "r_dk" in players
+            else sum(DK_W[s] * players[f"r_{s}"].to_numpy(float) for s in DK_STATS))
+    mpg = np.where(np.asarray(p_play, float) > TM_PRESENT, mpg, 0.0)
+    return role_tiers(team, r_dk * mpg, mpg)
+
+
+def draw_tiers(team: np.ndarray, mu_played: np.ndarray, min_played: np.ndarray,
+               parts: list, played: np.ndarray) -> np.ndarray:
+    """Tier per player (game column order) for the draw: the projected-mean definition (OFF) or
+    the fit's (ON, `TIER_MATCH`). `parts`: per team (ts, pl, ...), `played`: (S, n) bool."""
+    if not TIER_MATCH:
+        return role_tiers(team, mu_played, min_played)
+    pl = pd.concat([p[1][[c for c in p[1].columns if c in ("r_dk", "mpg") or c.startswith("r_")]]
+                    for p in parts], ignore_index=True)
+    return fit_style_tiers(team, pl, played.mean(0))
+
+
 def conditional_frame(wf: pd.DataFrame, sp: dict, team_pts: pd.DataFrame,
                       alpha: float | None = None) -> tuple[pd.DataFrame, float]:
     """Conditional means given ACTUAL minutes and ACTUAL team points for a walk_forward frame.
@@ -458,6 +499,10 @@ class GameSims:
     margin: np.ndarray          # (S,) home margin draws
     total: np.ndarray           # (S,)
     stats: dict | None = None   # v1 only: COMP_STATS -> (S, n) uint8 counts (0 when not playing)
+    # availability scenarios (P10; extra output of draws already made, no draw changes):
+    absent: np.ndarray | None = None    # (S, n) bool: the sim's drawn availability (True = out)
+    scenario: dict | None = None        # team -> (S,) uint8 index into kept[team]
+    kept: dict | None = None            # team -> (K, n_team) bool: absent mask per scenario
 
 
 # ============================================================================== grids
@@ -594,14 +639,16 @@ def _seed_seq(seed) -> np.random.SeedSequence:
 def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
                   n_ot: np.ndarray, rng_s: np.random.Generator, rng_m: np.random.Generator,
                   plan_out: dict | None = None, bo_out: dict | None = None,
-                  res_out: dict | None = None
+                  res_out: dict | None = None, sc_out: dict | None = None
                   ) -> tuple[np.ndarray, np.ndarray, dict]:
     """(minutes (S, n), absent (S, n), scenario info) for one team. `plan_out` (minutes-ratio
     arm) receives 'plan' (per kept scenario: E[min | plays] before the margin, the engine's
     `mean`) and 'assign' (S,) (each sim's kept scenario); it changes no draw. `bo_out` (blowout
     arm) receives 'k' (S, n): `minutes.bo_minutes_factor` of each sim's scenario and margin.
     `res_out` (reconciliation-reserve switch, `reconcile.RECON_RESERVE`) receives 'mean': the
-    sims' mean team minutes reserved for players outside the candidate set; it changes no draw."""
+    sims' mean team minutes reserved for players outside the candidate set; it changes no draw.
+    `sc_out` receives 'assign' (S,) uint8 (each sim's kept scenario, the minutes engine's
+    absent set) and 'kept' (K, n) bool (the kept absent masks); it changes no draw."""
     S = len(margin_team)
     pl = ts.players
     sc = draw_scenarios(pl["p_avail"].to_numpy(float), S, rng_s)
@@ -638,6 +685,9 @@ def _team_minutes(ts: TeamSpec, mp: M.MinutesParams, margin_team: np.ndarray,
         plan_out["assign"] = sc["assign"]
     if res is not None:
         res_out["mean"] = float(res.mean()) if S else 0.0
+    if sc_out is not None:
+        sc_out["assign"] = np.asarray(sc["assign"]).astype(np.uint8)
+        sc_out["kept"] = np.array(sc["kept"], bool).reshape(len(sc["kept"]), len(pl))
     info = {"n_distinct": sc["n_distinct"], "n_projected": len(sc["kept"]),
             "kept_mass": sc["kept_mass"], "collapsed_sims": sc["collapsed"]}
     return x, sc["absent"], info
@@ -672,6 +722,14 @@ def _reconcile(ts: TeamSpec, ro: dict | None, raw_pts: np.ndarray, raw_oth: np.n
     return rec
 
 
+def _scenario_fields(scen: dict) -> dict:
+    """GameSims availability fields from {team: (absent (S, n_team), assign, kept)} in the
+    game's column order (home, then away)."""
+    return {"absent": np.concatenate([a for a, _, _ in scen.values()], axis=1),
+            "scenario": {t: v[1] for t, v in scen.items()},
+            "kept": {t: v[2] for t, v in scen.items()}}
+
+
 def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dict,
                   n_sims: int, seed) -> GameSims:
     """Joint DK FP sims for one game (module doc, steps 1-5). Deterministic in `seed`."""
@@ -688,14 +746,16 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
     mean_pts = {"home": (game.mu_total + game.mu_margin) / 2.0,
                 "away": (game.mu_total - game.mu_margin) / 2.0}
     sides = (("home", game.home, 1.0), ("away", game.away, -1.0))
-    parts, teams_info = [], {}
+    parts, teams_info, scen = [], {}, {}
     for side, ts, sign in sides:
         pl = ts.players.reset_index(drop=True)
         po = {} if ST.has_mr(sp) else None
         bo = {} if (mp.blowout and BO_PM_NEUTRAL) else None
         ro = {} if RC.RECON_RESERVE else None
+        sco: dict = {}
         x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po,
-                                         bo_out=bo, res_out=ro)
+                                         bo_out=bo, res_out=ro, sc_out=sco)
+        scen[ts.team] = (absent, sco["assign"], sco["kept"])
         played = x > 0
         star = pl["star"].to_numpy(bool)
         rot = pl["rotation"].to_numpy(bool) & ~star
@@ -734,7 +794,7 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
     npl = np.maximum(played.sum(0), 1)
     mu_played = mu.sum(0) / npl
     min_played = x.sum(0) / npl
-    tiers = role_tiers(team, mu_played, min_played)
+    tiers = draw_tiers(team, mu_played, min_played, parts, played)
     normal = mu_played >= cp.normal_min
     R = corr_matrix(team, tiers, cp)
     z = draw_copula(R, S, r_cop)
@@ -751,7 +811,7 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
         info[f"{s}_played"] = v.sum(0) / npl
     return GameSims(game_id=game.game_id, player_id=pid, team=team, fp=fp.astype(np.float32),
                     minutes=x.astype(np.float32), info=info, teams=teams_info, margin=margin,
-                    total=total)
+                    total=total, **_scenario_fields(scen))
 
 
 # ============================================================================== summaries
@@ -1169,14 +1229,16 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
     mean_pts = {"home": (game.mu_total + game.mu_margin) / 2.0,
                 "away": (game.mu_total - game.mu_margin) / 2.0}
     sides = (("home", game.home, 1.0), ("away", game.away, -1.0))
-    parts, teams_info = [], {}
+    parts, teams_info, scen = [], {}, {}
     for side, ts, sign in sides:
         pl = ts.players.reset_index(drop=True)
         po = {} if ST.has_mr(sp) else None
         bo = {} if (mp.blowout and BO_PM_NEUTRAL) else None
         ro = {} if RC.RECON_RESERVE else None
+        sco: dict = {}
         x, absent, sinfo = _team_minutes(ts, mp, sign * margin, n_ot, r_sc, r_min, plan_out=po,
-                                         bo_out=bo, res_out=ro)
+                                         bo_out=bo, res_out=ro, sc_out=sco)
+        scen[ts.team] = (absent, sco["assign"], sco["kept"])
         played = x > 0
         star = pl["star"].to_numpy(bool)
         rot = pl["rotation"].to_numpy(bool) & ~star
@@ -1219,7 +1281,7 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
     npl = np.maximum(played.sum(0), 1)
     mu_played = mu.sum(0) / npl
     min_played = x.sum(0) / npl
-    tiers = role_tiers(team, mu_played, min_played)
+    tiers = draw_tiers(team, mu_played, min_played, parts, played)
     # winner/loser shift per team (points re-normalised per sim: the team's points are kept)
     means = {s: [] for s in COMP_STATS}
     off = 0
@@ -1253,7 +1315,7 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
         info[f"{s}_played"] = v.sum(0) / npl
     return GameSims(game_id=game.game_id, player_id=pid, team=team, fp=fp.astype(np.float32),
                     minutes=x.astype(np.float32), info=info, teams=teams_info, margin=margin,
-                    total=total, stats=cnt)
+                    total=total, stats=cnt, **_scenario_fields(scen))
 
 
 # ------------------------------------------------------------------------------ v1 fitting

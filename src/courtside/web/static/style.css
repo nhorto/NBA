@@ -1385,6 +1385,13 @@ textarea.dfs-input { resize: vertical; min-height: 4.5rem; }
 .pl-meter-f { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: color-mix(in srgb, var(--accent) 70%, var(--surface-3)); }
 .pl-meter-t { position: absolute; top: -3px; width: 2px; height: 11px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
 .pl-noprops { font-size: .82rem; border-top: 1px solid var(--line); padding-top: 8px; }
+.pl-split { width: 100%; border-collapse: collapse; border-top: 1px solid var(--line); font-size: .84rem; font-variant-numeric: tabular-nums; }
+.pl-split caption { caption-side: top; text-align: left; padding-top: 8px; font-size: .78rem; font-weight: 650; color: var(--ink-2); }
+.pl-split th, .pl-split td { padding: 2px 0 2px 8px; text-align: right; font-weight: 400; }
+.pl-split thead th { font-size: .64rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.pl-split th[scope="row"] { padding-left: 0; text-align: left; color: var(--ink-2); }
+.pl-split td { font-weight: 650; color: var(--ink); }
+.pl-split td.muted { font-weight: 400; color: var(--ink-3); }
 .pl-foot { margin-top: 28px; max-width: 90ch; }
 /* the top bar carries Players, DFS, Archive, Health: Archive (also in the footer) drops on phones */
 @media (max-width: 520px) { .top-link-x { display: none; } .top-link { padding-inline: 8px; } }

@@ -3,6 +3,11 @@
 Per game, per player: our projection if he plays (minutes, points, rebounds, assists, 3PM, DK
 points, each with a 10th-90th percentile range), availability (the injury report status and our
 P(play)), and the book's main props shown as "our number vs the market" with both chances.
+When the run's sims carry availability scenarios (`proj/scenarios.py`, P10), a card also shows
+how his numbers move with a teammate who may or may not play (0.05 < P(available) < 0.95, at
+least 200 sims in each arm): minutes and DK points if he plays, and the big-night chance.
+A "Teammate out" tag (`proj/dfs/late_news_tag.py`, D4) marks a teammate of a starter or rotation
+player listed Doubtful or Out shortly before lock whose projection rose since the run before.
 
 Information only (STYLE.md, owner rule): the page never says "over", "edge", "lean", "value",
 "smash" or "lock"; a prop reads "Points 24.5: our model 58% / market 52%". Our chance comes
@@ -28,6 +33,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .. import injuries
 from ..proj import props as P
+from ..proj import scenarios as SCN
+from ..proj.dfs import late_news_tag as LN
+from ..proj.dfs import xfactor as XF
 from . import fmt
 from .teams import identity
 
@@ -92,8 +100,26 @@ def _prop_view(r: dict) -> dict:
             else ours - r["mkt_p_above"]}
 
 
+def _split_view(splits: list[dict], names: Mapping[int, list[str]]) -> list[dict]:
+    """The card's teammate splits (`scenarios.card_splits`): per teammate, the "sits" then
+    the "plays" arm (minutes and DK if he plays, big-night chance, share of sims)."""
+    out = []
+    for s in SCN.card_splits(splits):
+        nm = (names.get(s["teammate"]) or [None])[0]
+        if not nm:
+            continue
+        tot = max(s["plays"]["n"] + s["sits"]["n"], 1)
+        rows = [{"label": lab, "min": a["min_played"], "dk": a["dk_played"], "big": a["big"],
+                 "n": a["n"], "share": a["n"] / tot}
+                for lab, a in (("sits", s["sits"]), ("plays", s["plays"]))]
+        out.append({"teammate": nm, "short": fmt.last_name(nm), "p_avail": s["p_avail"],
+                    "rows": rows,
+                    "has_big": any(r["big"] is not None for r in rows)})
+    return out
+
+
 def _card(pid: int, pr: dict, name: str, team_codes: tuple[str, str], prows: list[dict],
-          status: dict | None) -> dict:
+          status: dict | None, splits: list[dict] | None = None) -> dict:
     st = pr.get("stats") or {}
     dist = P.player_dist(st)
     stats = []
@@ -117,7 +143,7 @@ def _card(pid: int, pr: dict, name: str, team_codes: tuple[str, str], prows: lis
     return {"player_id": pid, "name": name, "team": team, "opp": opp, "p_play": p_play,
             "status": s_label, "status_class": STATUS_CLASS.get(s_label or "", "unknown"),
             "reason": (status or {}).get("reason") or "", "stats": stats, "dk_all": dk_all,
-            "by": {s["key"]: s["mean"] for s in stats}, "props": pv}
+            "by": {s["key"]: s["mean"] for s in stats}, "props": pv, "splits": splits or []}
 
 
 def _sort_cards(cards: list[dict], sort: str) -> list[dict]:
@@ -146,11 +172,22 @@ def _game_view(conn: sqlite3.Connection, res: dict, at: str, cache: dict) -> dic
         except Exception:  # noqa: BLE001 - a broken report table never breaks the page
             cache["injuries"] = {}
     status = _status_map(cache["injuries"], {home, away}, names, team_of)
+    try:
+        splits = SCN.run_splits(conn, run["run_id"]) if run else {}
+    except Exception:  # noqa: BLE001 - a broken sims file never breaks the page
+        splits = {}
+    try:
+        late = LN.flags_by_player(LN.run_flags(conn, run["run_id"])) if run else {}
+    except Exception:  # noqa: BLE001 - an optional tag never breaks the page
+        late = {}
     cards, listed = [], []
     for pid, pr in proj.items():
         prow = by_pid.get(pid, [])
         nm = (prow[0]["player_name"] if prow else None) or (names.get(pid) or [str(pid)])[0]
-        c = _card(pid, pr, nm, (home, away), prow, status.get(pid))
+        c = _card(pid, pr, nm, (home, away), prow, status.get(pid),
+                  _split_view(splits.get(pid) or [], names) if splits else None)
+        f = late.get(pid)
+        c.update(ln=f, ln_label=LN.label(f) if f else "")
         if c["status"] in ("Out", "Doubtful") and not prow:
             listed.append(c)
             continue
@@ -212,7 +249,11 @@ def build_page(conn: sqlite3.Connection | None, day: str, *, now: datetime,
     s = cache.get("summary") or {}
     return {**base, "state": "ok", "games": shown, "filters": filters, "sorts": sorts,
             "n_games": len(games), "n_props": s.get("joined", 0),
-            "n_cards": sum(len(g["cards"]) for g in shown)}
+            "n_cards": sum(len(g["cards"]) for g in shown),
+            "has_splits": any(c["splits"] for g in shown for c in g["cards"]),
+            "has_late": any(c.get("ln") for g in shown for c in g["cards"]),
+            "ln_window": int(LN.LATE_NEWS_WINDOW.total_seconds() // 60),
+            "big_k": f"{XF.BIG_K:g}", "split_min_n": SCN.MIN_N}
 
 
 # ===================================================================== routes

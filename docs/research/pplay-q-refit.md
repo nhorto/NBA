@@ -204,3 +204,15 @@ COURTSIDE_PPLAYQ=1 PQ_LOMO=pq_lomo.json python research/pplay_q_refit.py slice l
 
 Refit the offsets whenever the report cells are refit (weekly refit item in HANDOFF): they are
 offsets *on* the cells. Re-check the Q-bench cell and (B) with 2026-27 report history.
+
+## 8. OOS restatement (B7)
+
+*2026-10-23, `docs/research/b7-oos.md`.* The headline p2-vs-v1 numbers quoted in HANDOFF came from
+a slice scored with a fringe "mid" model fit on the slice's own rows. Refit leave-one-month-out
+(`research/b7_fringe_oos.py`; seasons < S is impossible, official reports start 2025-12-22):
+fringe log loss 0.5279 in sample vs **0.5452 out of sample** (+0.0172, SE 0.0031; n 886). The slice
+with OOS fringe params: DK CRPS p2 vs v1 **-6.88 -> -6.58 SE (lock-45), -7.40 -> -7.16 SE (lock-10)**
+(two-way -4.79 -> -4.68, -5.03 -> -4.96), no tier worse; p2 stands. The packaged `fringe_params.json`
+is unchanged. Side finding: the stored p2 and v1 frames used different minutes bundles; with one
+shared bundle the numbers are -6.70/-7.19 (shipped) and -6.40/-6.95 (OOS).
+

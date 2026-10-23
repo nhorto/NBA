@@ -133,6 +133,37 @@ def top_n(pool: SlatePool | Sequence[PoolPlayer], projections: Projections,
     return TopNResult(tuple(out), n, stopped, time.perf_counter() - t0)
 
 
+NEAR_TIE_DK = 0.5               # rank_by_mean: means this close count as tied (PLAYERS.md §5.4)
+
+
+def rank_by_mean(res: TopNResult, p_cash: Sequence[float | None], *,
+                 tol: float = NEAR_TIE_DK) -> TopNResult:
+    """PLAYERS.md §5.4: the same lineups ranked by mean (`Lineup.projected`), ties and near-ties
+    broken by P(cash) (`p_cash[i]` of `res.lineups[i]`, None = unknown, last). Walking down the
+    mean order, a group is the leader and every next lineup within `tol` DK of the leader; a group
+    is ordered by P(cash) desc, then the old order. Ranks and the diffs vs #1 are recomputed;
+    the set never changes (IMPROVEMENTS.md D2, `cash_pcash`)."""
+    items = list(res.lineups)
+    if len(p_cash) != len(items):
+        raise ValueError(f"{len(p_cash)} P(cash) values for {len(items)} lineups")
+    order = sorted(range(len(items)), key=lambda i: (-items[i].lineup.projected, i))
+    out_idx: list[int] = []
+    k = 0
+    while k < len(order):
+        lead = items[order[k]].lineup.projected
+        j = k
+        while j < len(order) and lead - items[order[j]].lineup.projected <= tol + 1e-9:
+            j += 1
+        grp = order[k:j]
+        grp.sort(key=lambda i: (-(p_cash[i] if p_cash[i] is not None else float("-inf")), i))
+        out_idx.extend(grp)
+        k = j
+    first = items[out_idx[0]].lineup if out_idx else None
+    ranked = tuple(RankedLineup(r + 1, items[i].lineup, diff_vs(first, items[i].lineup))
+                   for r, i in enumerate(out_idx))
+    return TopNResult(ranked, res.requested, res.stopped, res.seconds)
+
+
 def _min_limit(a: float | None, b: float | None) -> float | None:
     vals = [v for v in (a, b) if v is not None]
     return min(vals) if vals else None

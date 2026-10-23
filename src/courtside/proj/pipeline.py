@@ -91,6 +91,16 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   are left out: the reserve is their minutes by team games into the season (seasons < S,
   `minutes.pool_reserve`); else the forced extras' planned minutes come off the fitted reserve.
   Version `<model version>+rx` (before `+rr`); same bundle and seeds.
+* **Role blend** (rb, `role_blend.ROLE_BLEND`, default OFF; env ``COURTSIDE_ROLE_BLEND=1``;
+  `set_role_blend`): `run_games` moves each player's played sims by beta(r) x (last-10 DK -
+  mu_played), r = planned / last-10 minutes (per-bucket beta fit on seasons < S,
+  `role_blend_params.json`), so the stored projections and sims carry the blended mean; the
+  contest builder's flat TRUTH_BETA shift is skipped. Version `<model version>+rb` (after
+  `+rr`); same bundle and seeds.
+* **Tier match** (tm, `copula.TIER_MATCH`, default OFF; env ``COURTSIDE_TIER_MATCH=1``;
+  `set_tier_match`): the draw assigns the rho / CV tiers from the fit's inputs (r_dk x mpg, mpg;
+  players who play in no sim count as bench) instead of mu_played / min_played. Version
+  `<model version>+tm` (after `+rb`); same bundle and seeds. `docs/research/tier-match.md`.
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -129,6 +139,7 @@ from . import context as CX
 from . import copula as C
 from . import minutes as M
 from . import reconcile as RC
+from . import role_blend as RB
 from . import state as ST
 from . import store as SO
 from .dfs.optimizer import Projection
@@ -276,6 +287,11 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
     # the reconciliation reserve (reconcile.RECON_RESERVE, `+rr`): model version only, same
     # bundle and seeds; its bench rates live in reconcile's own params file
     mv = mv + RC.RECON_RESERVE_TAG if RC.RECON_RESERVE else mv
+    # the role-aware blend (role_blend.ROLE_BLEND, `+rb`): model version only, same bundle and
+    # seeds; its betas live in role_blend's own params file
+    mv = mv + RB.ROLE_BLEND_TAG if RB.ROLE_BLEND else mv
+    # the tier match (copula.TIER_MATCH, `+tm`): model version only, same bundle and seeds
+    mv = mv + C.TIER_MATCH_TAG if C.TIER_MATCH else mv
     # line freshness (LINE_FRESH, `+lf`): model version only, same bundle and seeds
     return vs, (mv + LINE_FRESH_TAG if LINE_FRESH else mv)
 
@@ -429,6 +445,22 @@ def set_reserve_extras(on: bool) -> None:
     """Flip the reserve extras (minutes.RESERVE_EXTRAS) and MODEL_VERSION together."""
     global _VS, MODEL_VERSION
     M.set_reserve_extras(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_tier_match(on: bool) -> None:
+    """Flip the draw's fit-matched tiers (copula.TIER_MATCH) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    C.set_tier_match(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_role_blend(on: bool) -> None:
+    """Flip the role-aware blend (role_blend.ROLE_BLEND) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    RB.set_role_blend(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
                                    MINFIX, BLOWOUT)
 
@@ -1008,6 +1040,14 @@ def _stars(panel: pd.DataFrame, rates: pd.DataFrame) -> np.ndarray:
     return out
 
 
+def _rb_history(ctx: Context, conn: sqlite3.Connection) -> RB.RoleHistory:
+    """The role blend's box history, loaded once per Context (ON only)."""
+    h = getattr(ctx, "_rb_hist", None)
+    if h is None:
+        h = ctx._rb_hist = RB.RoleHistory(conn, ctx.season)
+    return h
+
+
 def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
                 games: pd.DataFrame, panel: pd.DataFrame, p_avail: dict, env: dict,
                 starters: set | None = None, pp_fix: dict | None = None) -> list[C.GameSpec]:
@@ -1047,6 +1087,8 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
             pl["tier_state"] = r["tier"].to_numpy(int)
             pl["star"] = p["_star"].to_numpy(bool)
             pl["rotation"] = pl["mpg"].to_numpy() >= 15.0
+            if RB.ROLE_BLEND:                 # role blend (+rb): L10 / last-10 minutes inputs
+                RB.attach(pl, _rb_history(ctx, conn), team, day)
             if COPULA in COPULA_V1_VERSIONS:  # position group for the T2.7 tier x position cells
                 pl["grp"] = r["grp"].to_numpy(int)
             pm = p.drop(columns=["_star"])
@@ -1244,11 +1286,12 @@ def run_games(specs: list, b: Bundle, n_sims: int, seed: int, day: date,
         sims = [C.simulate_game(gs, b.copula, b.minutes, b.state, n_sims,
                                 game_seed(seed, gs.game_id)) for gs in specs]
     t_sim = time.time() - t0
+    rb = RB.apply(sims, specs, day) if RB.ROLE_BLEND else None     # role blend (+rb)
     players, stats = summarize_games(sims)
     teams = [dict(v, game_id=g.game_id) for g in sims for v in g.teams.values()]
     meta = {"seconds_sim": round(t_sim, 2), "seconds_summary": round(time.time() - t0 - t_sim, 2),
             "n_sims": n_sims, "seed": seed, "games": len(specs),
-            "recon": RC.acceptance(teams),
+            "recon": RC.acceptance(teams), **({"role_blend": rb} if rb is not None else {}),
             "env": {g.game_id: {"mu_margin": g.mu_margin, "mu_total": g.mu_total,
                                 "source": g.env_source} for g in specs}}
     return DayResult(day=day, sims=sims, players=players, stats=stats, teams=teams, meta=meta)
@@ -1503,14 +1546,16 @@ def save_run(conn: sqlite3.Connection, res: DayResult, *, run_id: str, slate_id:
                             for r in pl.itertuples(index=False)]
     proj["inputs_json"] = [
         {"p_avail": r.p_avail, "normal": bool(r.normal), "mu_played": r.mu_played,
-         "dk_id": getattr(r, "dk_id", None), "env": res.meta.get("env", {}).get(r.game_id)}
+         "dk_id": getattr(r, "dk_id", None), "env": res.meta.get("env", {}).get(r.game_id),
+         **({"rb_shift": float(getattr(r, "rb_shift", 0.0))} if RB.ROLE_BLEND else {})}
         for r in pl.itertuples(index=False)]
     SO.write_projections(conn, proj, res.stats)
     pid, fp = res.fp_matrix()
     dk = list(pl["dk_id"]) if "dk_id" in pl else None
     gids = np.concatenate([np.full(len(g.player_id), g.game_id, dtype=object) for g in res.sims]) \
         if res.sims else []
-    path = SO.save_sims(slate_id or res.day.isoformat(), run_id, pid, fp, dk_id=dk, game_id=gids)
+    path = SO.save_sims(slate_id or res.day.isoformat(), run_id, pid, fp, dk_id=dk, game_id=gids,
+                        extra=SO.scenario_arrays(res.sims))      # P10 scenarios
     if res.sims and all(g.stats is not None for g in res.sims):     # v1: per-stat sims too
         SO.save_stat_sims(path, pid,
                           {s: np.concatenate([g.stats[s] for g in res.sims], axis=1)

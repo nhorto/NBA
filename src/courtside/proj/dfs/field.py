@@ -66,10 +66,11 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass, field as dc_field, replace as dc_replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -138,6 +139,29 @@ ARCHETYPES: dict[str, dict[str, float]] = {
     "small_gpp": {"conc": 1.00, "noise": 0.15, "full_spend": 0.95, "mix": 0.40},
     "large_gpp": {"conc": 0.90, "noise": 0.18, "full_spend": 0.95, "mix": 0.20},
 }
+
+# Ownership uncertainty (IMPROVEMENTS.md D5, docs/research/field-k.md; switch COURTSIDE_FIELD_K,
+# OFF by default). ON, the field is K fields instead of one: each draws per-player log-odds noise
+# on the proxy ownership, logit(own'_i) = logit(own_i) + c_i + OWN_SD[arch] * u_i * z_i (u_i =
+# late_news_tag's own_uncertainty, 2.0 for late-news beneficiaries, else 1.0), re-balanced to
+# the slot totals and the row cap by `sinkhorn`, and is sampled from it (the optimizer-like
+# solves are shared). Sims are assigned to the fields in turn (row s -> field s mod K), so every
+# chance is an average over the K fields at no extra scoring cost, and the per-field values give
+# the across-field spread (display only). The noise is centred (`mean_shift`): each player's
+# expected ownership stays at the proxy, the field is more uncertain, not weaker. OWN_SD
+# reproduces the proxy's measured errors on the 2026-10-20 uploads by simulation
+# (research/field_k.py fit: 60 draws per sd on a 0.05 grid, proxy vs draw scored exactly like
+# proxy vs real): large GPP 0.86 from the overall MAE vs the real 29.7k GPP (4.57 pp; implies a
+# top-10 MAE of 13.9 vs 12.6 real, rank corr 0.92 vs 0.87); cash 2.65 from the double-ups'
+# top-10 MAE (27.4 pp, mean of three; implies an overall MAE of 10.7 vs 10.0 real, top-10 bias
+# -23 vs -25, rank corr 0.79 vs 0.77). Direct log-odds residual sd: 1.04 GPP, 1.5-2.0
+# double-ups. small_gpp has no data: the large-GPP value. docs/research/field-k.md.
+FIELD_K_ENV = "COURTSIDE_FIELD_K"
+FIELD_K_DEFAULT = 0          # OFF; "1" / "on" = FIELD_K_ON fields, an integer >= 2 = that many
+FIELD_K_ON = 4
+FIELD_K_TAG = "+k"
+OWN_SD: dict[str, float] = {"cash": 2.65, "small_gpp": 0.86, "large_gpp": 0.86}
+OWN_P_CLIP = 1e-4            # log-odds of ownership clipped to [1e-4, 1 - 1e-4]
 FLOOR_FULL, FLOOR_MOST, FLOOR_REST = 0.99, 0.98, 0.96   # per-lineup spend floors (x cap) ...
 FLOOR_SPLIT = 0.8           # ... of the lineups below FLOOR_FULL, this share gets FLOOR_MOST
 STRENGTHS = {"soft": 0.20, "medium": 0.40, "sharp": 0.70}    # optimizer-like share (S12)
@@ -156,6 +180,42 @@ WUNIT = 2                   # slot multiplier x2 (CPT 1.5 -> 3): integer weights
 BIAS = 1 << 16              # keeps (negative) scores positive inside a row (scores > -1024 pts)
 ROW_OFF = 1 << 17           # per-row offset for one flat searchsorted (scores < 1024 pts)
 MAX_ROWS = (1 << 31) // ROW_OFF - 1
+
+
+def field_k_mode(v: Any, default: int = FIELD_K_DEFAULT) -> int:
+    """Number of fields from an env string / bool / int: '' / None -> `default`; 0 off false no
+    -> 0 (one field, the classic path); 1 on true yes -> FIELD_K_ON; an integer >= 2 -> it."""
+    if v is None:
+        return int(default)
+    if isinstance(v, bool):
+        return FIELD_K_ON if v else 0
+    x = str(v).strip().lower()
+    if x == "":
+        return int(default)
+    if x in ("0", "off", "false", "no"):
+        return 0
+    if x in ("1", "on", "true", "yes"):
+        return FIELD_K_ON
+    try:
+        k = int(x.lstrip("k"))
+    except ValueError:
+        log.warning("%s=%r not understood; ownership uncertainty off", FIELD_K_ENV, v)
+        return 0
+    return FIELD_K_ON if k == 1 else max(0, k)
+
+
+FIELD_K = field_k_mode(os.environ.get(FIELD_K_ENV), FIELD_K_DEFAULT)
+
+
+def set_field_k(k: Any) -> None:
+    """Set the number of fields for later builds (the env is read once at import)."""
+    global FIELD_K
+    FIELD_K = field_k_mode(k, 0)
+
+
+def field_k() -> int:
+    """Fields per contest: 0 = OFF (one field, bit-identical to field-proxy-1.2)."""
+    return FIELD_K
 
 
 # ============================================================================== inputs
@@ -967,6 +1027,7 @@ class Field:
     info: dict = dc_field(default_factory=dict)
     label: str = LABEL
     version: str = FIELD_VERSION
+    opt_solves: list = dc_field(default_factory=list, repr=False)   # the optimizer-like solves
 
     @property
     def n(self) -> int:
@@ -1150,9 +1211,11 @@ def build_field(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
                 n: int | None = None, mix: float | str | None = None,
                 archetype: str | None = None, ownership: OwnershipProxy | None = None,
                 n_solves: int = N_SOLVES, seed: int = 0, ipf_iters: int = 3,
-                threads: int = SOLVE_THREADS) -> Field:
+                threads: int = SOLVE_THREADS, opt_pairs: list | None = None) -> Field:
     """Sample a field proxy for `contest` (or a preset 10k GPP). `n` sampled lineups (default:
-    min(field size, 20k), at least 5k so small contests can draw opponents per sim)."""
+    min(field size, 20k), at least 5k so small contests can draw opponents per sim).
+    `opt_pairs`: reuse these optimizer-like solves (another field's `opt_solves`; the K fields of
+    `build_fields` share them) instead of solving."""
     t0 = time.perf_counter()
     rules = rules or (pool.rules if isinstance(pool, SlatePool) else None)
     if rules is None:
@@ -1182,10 +1245,14 @@ def build_field(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
     st = op.inputs["status"].fillna("").astype(str).str.upper().to_numpy()
     pubd = {p: float(pub[i] * (0.6 if st[i] in Q_STATUSES else 1.0))
             for i, p in enumerate(pids) if active[i]}
-    opt_pairs = []
-    if n_opt > 0 and n_solves > 0:
-        opt_players = [by_id[p] for p in pubd]
-        opt_pairs = _opt_lineups(opt_players, rules, pubd, n_solves, A["noise"], rng, threads)
+    if opt_pairs is not None:
+        opt_pairs = list(opt_pairs) if n_opt > 0 else []
+    else:
+        opt_pairs = []
+        if n_opt > 0 and n_solves > 0:
+            opt_players = [by_id[p] for p in pubd]
+            opt_pairs = _opt_lineups(opt_players, rules, pubd, n_solves, A["noise"], rng,
+                                     threads)
     if opt_pairs:
         opt_L = np.zeros((len(opt_pairs), len(rules.slot_names)), np.int64)
         for r, pairs in enumerate(opt_pairs):
@@ -1252,7 +1319,7 @@ def build_field(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
     f = Field(pids=pids, slots=rules.slot_names, lineups=lineups, counts=cnt, opt_counts=opt_cnt,
               salary=sal_u, field_size=contest.field_size, mix=mix, archetype=archetype,
               ownership=op, n_solves=len(opt_pairs), opt_keys=okeys, dupe_c=dupe_c,
-              cap=rules.salary_cap, slot_salary=S)
+              cap=rules.salary_cap, slot_salary=S, opt_solves=opt_pairs)
     f.info["contest"] = {"contest_id": contest.contest_id, "name": contest.name,
                          "source": contest.source}
     f.info["opt_unique"] = len(okeys)
@@ -1292,6 +1359,198 @@ def _dupe_constant(own_sample: np.ndarray, cpt_first: bool, op: OwnershipProxy, 
     m = lg.max()
     mean_g = float(np.exp(lg - m).mean()) * math.exp(m)
     return c2 / mean_g if mean_g > 0 else float("nan")
+
+
+# ============================================================================== K fields (D5)
+
+def own_sd_for(op: OwnershipProxy, own_unc: Mapping[str, float] | None = None,
+               sd: float | None = None) -> np.ndarray:
+    """Per-player log-odds sd of the ownership noise: the archetype's OWN_SD (or `sd`) x the
+    player's `own_unc` multiplier (late_news_tag.own_uncertainty; default 1.0)."""
+    base = OWN_SD.get(op.archetype.split("/")[0], OWN_SD["large_gpp"]) if sd is None else sd
+    u = own_unc or {}
+    return np.array([base * float(u.get(str(p), 1.0)) for p in op.pids], float)
+
+
+def mean_shift(p: np.ndarray, sd: np.ndarray, nodes: int = 40) -> np.ndarray:
+    """c_i with E[sigmoid(logit p_i + c_i + sd_i z)] = p_i, z ~ N(0, 1) (Gauss-Hermite,
+    bisection): the log-odds noise then leaves each player's expected ownership at the proxy
+    (uncentred noise would move ownership from the chalk to the long tail on average, i.e. a
+    weaker field, not just a more uncertain one)."""
+    x, w = np.polynomial.hermite_e.hermegauss(nodes)
+    w = w / w.sum()
+    lp = np.log(p / (1 - p))
+    span = sd * sd + 4.0
+    lo, hi = -span, span
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        m = (w[None, :] / (1.0 + np.exp(-(lp + mid)[:, None] - sd[:, None] * x[None, :]))).sum(1)
+        below = m < p
+        lo, hi = np.where(below, mid, lo), np.where(below, hi, mid)
+    return np.where(sd > 0, (lo + hi) / 2, 0.0)
+
+
+def perturb_ownership(op: OwnershipProxy, sd: np.ndarray, rng: np.random.Generator
+                      ) -> OwnershipProxy:
+    """One ownership draw: logit(own'_i) = logit(own_i) + c_i + sd_i z_i (own clipped to
+    [OWN_P_CLIP, 1 - OWN_P_CLIP]; c_i = `mean_shift`, so E[own'_i] = own_i; players with no
+    ownership stay at 0), each player's per-slot row scaled by own'_i / own_i, then re-balanced
+    by `sinkhorn` to the slot totals and the row cap. Σ own stays the number of slots."""
+    own = op.own
+    act = own > 0
+    p = np.clip(own, OWN_P_CLIP, 1 - OWN_P_CLIP)
+    z = rng.standard_normal(len(own))
+    lo = np.log(p / (1 - p)) + mean_shift(p, sd) + sd * z
+    new = 1.0 / (1.0 + np.exp(-lo))
+    r = np.where(act, new / p, 0.0)
+    X = sinkhorn(op.by_slot * r[:, None], op.slot_counts, op.cap)
+    return dc_replace(op, own=X.sum(1), by_slot=X, version=op.version + FIELD_K_TAG)
+
+
+@dataclass
+class FieldSet:
+    """K field proxies of one contest (ownership uncertainty, D5): field k is scored on the sim
+    rows s with s mod K == k (`evaluate`), so chances average over the fields. `ownership` is
+    the un-perturbed proxy (exposure tables, ownership penalties and display use it)."""
+    fields: list
+    ownership: OwnershipProxy
+    sd: np.ndarray
+    own_unc: dict
+    seconds: float = 0.0
+    label: str = LABEL
+    version: str = FIELD_VERSION + FIELD_K_TAG
+
+    @property
+    def k(self) -> int:
+        return len(self.fields)
+
+    def __getattr__(self, name):        # pids, slots, field_size, archetype, mix, cap, ...
+        if name in ("fields", "__setstate__", "__getstate__"):
+            raise AttributeError(name)
+        return getattr(self.fields[0], name)
+
+    def rows_of(self, S: int, k: int) -> np.ndarray:
+        """The sim rows (of S) scored against field k."""
+        return np.arange(k, S, self.k)
+
+    def summary(self) -> dict:
+        out = self.fields[0].summary()
+        base = self.ownership.own
+        act = base > 0
+        out["version"] = self.version
+        out["field_k"] = {
+            "k": self.k, "sd": float(OWN_SD.get(self.ownership.archetype, np.nan)),
+            "own_unc_players": int(sum(1 for v in self.own_unc.values() if float(v) != 1.0)),
+            "own_draw_mae_pp": [round(float(np.mean(np.abs(f.ownership.own - base)[act]) * 100),
+                                      2) for f in self.fields],
+            "realized_mae_pp": [round(float(np.mean(np.abs(f.realized_ownership() - base)[act])
+                                            * 100), 2) for f in self.fields],
+            "unique": [int(len(f.counts)) for f in self.fields],
+            "seconds": round(self.seconds, 2)}
+        return out
+
+
+def build_fields(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
+                 contest: Contest | None = None, *, k: int | None = None,
+                 own_unc: Mapping[str, float] | None = None, rules: Rules | None = None,
+                 n: int | None = None, mix: float | str | None = None,
+                 archetype: str | None = None, ownership: OwnershipProxy | None = None,
+                 n_solves: int = N_SOLVES, seed: int = 0, ipf_iters: int = 3,
+                 threads: int = SOLVE_THREADS, sd: float | None = None) -> FieldSet:
+    """K (default `field_k()`, at least 2) fields, each sampled from its own ownership draw
+    (`perturb_ownership`), sharing one set of optimizer-like solves (they depend on the public
+    projection, not on ownership). Field j uses seed + j; the ownership draws their own stream."""
+    t0 = time.perf_counter()
+    K = max(2, int(k if k is not None else (field_k() or FIELD_K_ON)))
+    rules = rules or (pool.rules if isinstance(pool, SlatePool) else None)
+    if rules is None:
+        raise ValueError("no rules")
+    players = pool.players if isinstance(pool, SlatePool) else tuple(pool)
+    contest = contest or preset_contest("gpp", 10_000)
+    archetype = archetype or contest.archetype
+    op = ownership or ownership_proxy(inputs, players, rules, archetype=archetype)
+    unc = {str(a): float(b) for a, b in (own_unc or {}).items()}
+    sdv = own_sd_for(op, unc, sd)
+    rng = np.random.default_rng([int(seed), 0xD5])
+    fields: list[Field] = []
+    shared = None
+    for j in range(K):
+        opj = perturb_ownership(op, sdv, rng)
+        f = build_field(players, inputs, contest, rules=rules, n=n, mix=mix,
+                        archetype=archetype, ownership=opj, n_solves=n_solves, seed=seed + j,
+                        ipf_iters=ipf_iters, threads=threads, opt_pairs=shared)
+        f.version = FIELD_VERSION + FIELD_K_TAG
+        shared = f.opt_solves
+        fields.append(f)
+    return FieldSet(fields, op, sdv, unc, seconds=time.perf_counter() - t0)
+
+
+def _evaluate_k(fs: FieldSet, fp: np.ndarray, contest: Contest, lineups: Sequence, *,
+                seed: int, chunk, tiers: bool, own_entries: int, per_sim: bool) -> FieldEval:
+    """`evaluate` against a FieldSet: rows s mod K -> field k, then reassembled in row order;
+    per-lineup chances / payouts are the row-weighted means over the fields (= the mean over
+    all rows), with the per-field values (`*_k`) and their range (`*_lo` / `*_hi`). Fewer rows
+    than fields (e.g. one row of actual points): every field scores every row and per-row
+    outputs are averaged over the fields."""
+    t0 = time.perf_counter()
+    S = fp.shape[0]
+    K = fs.k
+    lus = list(lineups)
+    if S >= K:
+        parts = [(fs.rows_of(S, j), fs.fields[j]) for j in range(K)]
+    else:
+        parts = [(np.arange(S), f) for f in fs.fields]
+    evs = [evaluate(f, fp[r], contest, lus, seed=seed + j, chunk=chunk, tiers=tiers,
+                    own_entries=own_entries, per_sim=per_sim)
+           for j, (r, f) in enumerate(parts)]
+    if S >= K:
+        w = np.array([len(r) for r, _ in parts], float) / S
+        cash = np.empty(S)
+        top1 = np.empty(S)
+        tl = np.empty((evs[0].tier_lines.shape[0], S))
+        for (r, _), ev in zip(parts, evs):
+            cash[r], top1[r], tl[:, r] = ev.cash_line, ev.top1_line, ev.tier_lines
+        keep = None
+        if per_sim and evs[0].per_sim is not None:
+            keep = {key: np.empty((S,) + v.shape[1:], v.dtype)
+                    for key, v in evs[0].per_sim.items()}
+            for (r, _), ev in zip(parts, evs):
+                for key in keep:
+                    keep[key][r] = ev.per_sim[key]
+    else:
+        w = np.full(K, 1.0 / K)
+        cash = np.mean([ev.cash_line for ev in evs], 0)
+        top1 = np.mean([ev.top1_line for ev in evs], 0)
+        tl = np.mean([ev.tier_lines for ev in evs], 0)
+        keep = None
+        if per_sim and evs[0].per_sim is not None:
+            keep = {"score": evs[0].per_sim["score"],
+                    "above": np.mean([ev.per_sim["above"] for ev in evs], 0).astype(np.float32),
+                    "tied": np.mean([ev.per_sim["tied"] for ev in evs], 0).astype(np.float32)}
+    res = []
+    for i in range(len(lus)):
+        per = [ev.lineups[i] for ev in evs]
+        d = {}
+        for key in ("p_cash", "p_top1", "e_payout", "mean"):
+            d[key] = float(sum(wk * x[key] for wk, x in zip(w, per)))
+        d["e_payout_se"] = float(math.sqrt(sum((wk * x["e_payout_se"]) ** 2
+                                               for wk, x in zip(w, per))))
+        d["e_roi"] = (d["e_payout"] / contest.entry_fee - 1) if contest.entry_fee else None
+        d["dupes"] = float(np.mean([x["dupes"] for x in per]))
+        d["dupe_band"] = dupe_band(d["dupes"])
+        d["unknown_players"] = per[0]["unknown_players"]
+        for key in ("p_cash", "p_top1", "e_payout", "dupes"):
+            vals = [float(x[key]) for x in per]
+            d[key + "_k"] = vals
+            if key != "dupes":
+                d[key + "_lo"], d[key + "_hi"] = min(vals), max(vals)
+        res.append({k2: d[k2] for k2 in ("p_cash", "p_top1", "e_payout", "e_payout_se", "e_roi",
+                                          "dupes", "dupe_band", "mean", "unknown_players")}
+                   | {k2: v for k2, v in d.items() if k2.endswith(("_k", "_lo", "_hi"))})
+    info = dict(evs[0].info)
+    info.update({"n_sims": S, "field_k": K, "k_mode": "rows" if S >= K else "all",
+                 "seconds": round(time.perf_counter() - t0, 2)})
+    return FieldEval(cash, top1, tl, res, contest, info, per_sim=keep)
 
 
 # ============================================================================== sims
@@ -1422,7 +1681,11 @@ def evaluate(field: Field, fp: np.ndarray, contest: Contest, lineups: Sequence =
     `own_entries` is how many of the contest's M entries are ours (the other entries are
     M - own_entries; default 1, a single entry). `per_sim=True` also returns, per sim and
     candidate, the score and the number of other entries above / tied with it (the inputs of a
-    joint multi-entry payout, proj/dfs/portfolio.py)."""
+    joint multi-entry payout, proj/dfs/portfolio.py). A `FieldSet` (K fields, D5) is scored
+    row-wise per field and reassembled (`_evaluate_k`)."""
+    if isinstance(field, FieldSet):
+        return _evaluate_k(field, fp, contest, lineups, seed=seed, chunk=chunk, tiers=tiers,
+                           own_entries=own_entries, per_sim=per_sim)
     t0 = time.perf_counter()
     rng = np.random.default_rng(seed)
     S_all, n = fp.shape
@@ -1574,11 +1837,39 @@ def prepare(conn: sqlite3.Connection, slate_id, run_id: str | None = None, *,
 
 
 def field_for(ctx: dict, contest: Contest, *, n: int | None = None, mix=None,
-              n_solves: int = N_SOLVES, seed: int = 0) -> Field:
+              n_solves: int = N_SOLVES, seed: int = 0, k: int | None = None,
+              own_unc: Mapping[str, float] | None = None) -> Field | FieldSet:
+    """The contest's field proxy: one Field, or K fields (`build_fields`) when `k` (default
+    `field_k()`, the COURTSIDE_FIELD_K switch) is on."""
     pool = ctx["pool"]
     op = ownership_proxy(ctx["inputs"], pool, archetype=contest.archetype)
+    K = field_k() if k is None else int(k)
+    if K:
+        return build_fields(pool, ctx["inputs"], contest, k=K, own_unc=own_unc, n=n, mix=mix,
+                            ownership=op, n_solves=n_solves, seed=seed)
     return build_field(pool, ctx["inputs"], contest, n=n, mix=mix, ownership=op,
                        n_solves=n_solves, seed=seed)
+
+
+def run_own_uncertainty(conn: sqlite3.Connection, run_id: str | None, *, slate_id=None,
+                        now: datetime | None = None) -> dict[str, float]:
+    """{DK id: ownership-uncertainty multiplier} of a run (late_news_tag; {} = 1.0 for everybody,
+    also on any problem): the stored run's tag; a run not saved yet (the runner scores the field
+    before it writes the run row) is tagged as of `now` (default: the clock) when `slate_id` is
+    given."""
+    if not run_id:
+        return {}
+    try:
+        from . import late_news_tag as LNT
+        saved = conn.execute("SELECT 1 FROM dfs_runs WHERE run_id=?", (run_id,)).fetchone()
+        if saved is None and slate_id is not None:
+            res = LNT.compute_safe(conn, slate_id, run_id, now or datetime.now(timezone.utc))
+        else:
+            res = LNT.run_flags(conn, run_id)
+        return LNT.own_uncertainty(res)
+    except Exception:  # noqa: BLE001
+        log.exception("own_uncertainty unavailable for run %s", run_id)
+        return {}
 
 
 def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
@@ -1586,7 +1877,8 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
               n_field: int | None = 10_000, n_sims: int | None = None, mix=None,
               n_solves: int = N_SOLVES, seed: int = 0, write: bool = True,
               commit: bool = True, modes: Sequence[str] = ("cash", "topn"),
-              truth: bool = True, as_of: str | None = None) -> dict:
+              truth: bool = True, as_of: str | None = None,
+              own_unc: Mapping[str, float] | None = None) -> dict:
     """Ownership proxy + field proxies + lineup metrics for one projection run (runner hook).
 
     Writes `dfs_ownership_proxy` (large-GPP archetype, the slate-level "popularity (proxy)") and,
@@ -1600,8 +1892,12 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
     `truth=True` scores on the calibrated truth of the contest builder (`portfolio.truth_sims`:
     our sims shifted toward the public number and widened by model error), not on our
     projection as if it were exact (which put good cash lineups at ~80-90 %).
-    A run without stored sims (the FPPG fallback) still gets the ownership proxy."""
+    A run without stored sims (the FPPG fallback) still gets the ownership proxy.
+    COURTSIDE_FIELD_K on (`field_k()`): K fields per contest (D5, `build_fields`) with the
+    late-news `own_unc` multipliers (default: the stored run's tag, `run_own_uncertainty`); the
+    stored numbers are the means over the fields and `per_lineup` adds their range."""
     t0 = time.perf_counter()
+    K = field_k()
     sid = slate_id
     if sid is None:
         r = conn.execute("SELECT slate_id FROM dfs_runs WHERE run_id=?", (run_id,)).fetchone()
@@ -1615,7 +1911,7 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
     if write:
         store_ownership(conn, run_id, own_gpp, commit=commit)
     out = {"status": "ok", "label": LABEL, "run_id": run_id, "version": own_gpp.version,
-           "field_version": FIELD_VERSION}
+           "field_version": FIELD_VERSION + (FIELD_K_TAG if K else "")}
     if ctx["sims"] is None:
         return {**out, "status": "no_sims", "lineups": 0,
                 "seconds": round(time.perf_counter() - t0, 2)}
@@ -1628,8 +1924,11 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
         "ORDER BY mode, rank", (run_id, *modes))]
     out["lineups"] = len(rows)
     evals = {}
+    if K and own_unc is None:
+        own_unc = run_own_uncertainty(conn, run_id, slate_id=sid)
     for tag, contest in (("cash", cc), ("gpp", gc)):
-        f = field_for(ctx, contest, n=n_field, mix=mix, n_solves=n_solves, seed=seed)
+        f = field_for(ctx, contest, n=n_field, mix=mix, n_solves=n_solves, seed=seed,
+                      **({"own_unc": own_unc} if K else {}))
         fp, ainfo = align_sims(ctx["sims"], f.pids, n_sims, seed)
         tinfo = None
         if truth:
@@ -1659,6 +1958,13 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
                           "gpp_e_payout": evals["gpp"].lineups[i]["e_payout"],
                           "dupes": evals["gpp"].lineups[i]["dupes"]}
                          for i, x in enumerate(rows)]
+    if K:                               # across-field spread (display only)
+        for i, d in enumerate(out["per_lineup"]):
+            c, g = evals["cash"].lineups[i], evals["gpp"].lineups[i]
+            d.update({"p_cash_lo": c["p_cash_lo"], "p_cash_hi": c["p_cash_hi"],
+                      "p_top1_lo": g["p_top1_lo"], "p_top1_hi": g["p_top1_hi"]})
+        out["field_k"] = {"k": K, "own_unc": {str(a): float(b) for a, b in
+                                              (own_unc or {}).items() if float(b) != 1.0}}
     out["seconds"] = round(time.perf_counter() - t0, 2)
     return out
 

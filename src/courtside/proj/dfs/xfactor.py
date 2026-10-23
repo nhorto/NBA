@@ -29,7 +29,10 @@ Public API
   chance_text(p) -> "1 in 5" (banded)
   is_xfactor(chance, band, p_play, tier) -> bool
   run_table(conn, run_id) -> {dk id: {"chance", "raw", "text", "band", "own", "tier", "p_play",
-                                     "salary", "x"}}   (empty when the run has no sims)
+                                     "salary", "x"[, "splits"]}}   (empty when the run has no
+                                     sims; "splits" only when the sims carry availability
+                                     scenarios: `proj/scenarios.py` teammate plays/sits arms,
+                                     each with "teammate_dk" / "teammate" ids, P10)
   xfactor_ids(table) -> set[str]
   lineup_count(slots_lists, ids) -> int   (lineups with at least one X factor player)
 """
@@ -235,10 +238,29 @@ def run_table(conn: sqlite3.Connection, run_id: str | None) -> dict[str, dict]:
                       "x": is_xfactor(p1, b, pp, t)
                       and not (vr is not None and vr <= VALUE_TOP_EXCLUDE)}
         apply_cap(out)
+        _attach_splits(out, z, keep, ids, sal, tiers)
     if len(_CACHE) >= _CACHE_MAX:
         _CACHE.pop(next(iter(_CACHE)))
     _CACHE[key] = out
     return out
+
+
+def _attach_splits(out: dict, z: dict, keep: list, ids: list, sal: dict, tiers: list) -> None:
+    """Teammate-availability splits (`proj/scenarios.py`) per row, when the sims carry the
+    scenarios (P10); the same big-night mark and per-tier recalibration as "chance"."""
+    from .. import scenarios as SCN
+    from ..store import read_scenarios
+    sc = read_scenarios(z)
+    if sc is None:
+        return
+    dk_all = [str(x) for x in z["dk_id"]]
+    pid = [int(x) for x in z["player_id"]]
+    for j, d, t in zip(keep, ids, tiers):
+        sp = SCN.player_splits(z["fp"], sc, j, sal[d], t)
+        for s in sp:
+            s["teammate"] = pid[s["col"]]
+            s["teammate_dk"] = dk_all[s["col"]]
+        out[d]["splits"] = sp
 
 
 def value_ranks(ids: Sequence[str], means: Sequence[float], salaries: Sequence[float],

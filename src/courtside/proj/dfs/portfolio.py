@@ -80,6 +80,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from .. import role_blend as RB
 from . import field as F
 from .rules import PoolPlayer, Rules, SlatePool
 
@@ -547,10 +548,18 @@ def greedy(lad: Ladder, cs: CandSet, n: int, *, gamma: int,
 
 
 def truth_sims(fp: np.ndarray, pids: Sequence[str], inputs: pd.DataFrame, beta: float,
-               tau: float, rng: np.random.Generator) -> tuple[np.ndarray, dict]:
+               tau: float, rng: np.random.Generator, *, blended: bool | None = None
+               ) -> tuple[np.ndarray, dict]:
     """Per-sim DK points to score on (see TRUTH_BETA): our sims shifted toward the public
     number by `beta` and widened by a per-sim model error `tau` x the player's sd, only in sims
-    where the player plays. Players without a public number (or out) are left as they are."""
+    where the player plays. Players without a public number (or out) are left as they are.
+    `blended` (None: the process switch `role_blend.ROLE_BLEND`): the sims already carry the
+    role-aware blend (+rb, IMPROVEMENTS.md P1 / D1), so the flat beta shift is skipped (beta = 0;
+    tau is kept)."""
+    if blended is None:
+        blended = RB.ROLE_BLEND
+    if blended:
+        beta = 0.0
     if not beta and not tau:
         return fp, {"beta": 0.0, "tau": 0.0}
     x = fp.astype(np.float32)
@@ -568,16 +577,25 @@ def truth_sims(fp: np.ndarray, pids: Sequence[str], inputs: pd.DataFrame, beta: 
         add += (rng.standard_normal(x.shape, dtype=np.float32) * (tau * sd).astype(np.float32))
     x += np.where(plays, add, 0.0).astype(np.float32)
     return x, {"beta": beta, "tau": tau, "shifted": int(ok.sum()),
-               "mean_shift": float(np.abs(shift[ok]).mean()) if ok.any() else 0.0}
+               "mean_shift": float(np.abs(shift[ok]).mean()) if ok.any() else 0.0,
+               **({"role_blend": True} if blended else {})}
 
 
 def strength_field(players, inputs, contest: F.Contest, rules: Rules, name: str, s: "Settings",
-                   *, seed: int) -> tuple[F.Field, F.OwnershipProxy]:
-    """The field proxy at strength soft | medium | sharp (see STRENGTH_W)."""
+                   *, seed: int, own_unc: Mapping[str, float] | None = None
+                   ) -> tuple[F.Field, F.OwnershipProxy]:
+    """The field proxy at strength soft | medium | sharp (see STRENGTH_W). With
+    COURTSIDE_FIELD_K on (`field.field_k()`), K fields (`field.build_fields`, ownership
+    uncertainty with the late-news `own_unc` multipliers); `op` stays the un-perturbed proxy."""
     params, version = F.load_params()
     w = float(np.clip(params.get("w_ours", 0.5) + STRENGTH_W[name], 0.0, 1.0))
     op = F.ownership_proxy(inputs, players, rules, archetype=contest.archetype,
                            params={**params, "w_ours": w}, version=version)
+    if F.field_k():
+        fld = F.build_fields(players, inputs, contest, k=F.field_k(), own_unc=own_unc,
+                             rules=rules, n=s.n_field, mix=s.mix, ownership=op,
+                             n_solves=s.field_solves, seed=seed, threads=s.threads)
+        return fld, op
     fld = F.build_field(players, inputs, contest, rules=rules, n=s.n_field, mix=s.mix,
                         ownership=op, n_solves=s.field_solves, seed=seed, threads=s.threads)
     return fld, op
@@ -690,13 +708,16 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
                     now: datetime | None = None, slate_id: str | None = None,
                     run_id: str | None = None, baselines: bool = False,
                     progress: Callable[[str], None] | None = None,
-                    split: bool | str | None = None) -> Portfolio:
+                    split: bool | str | None = None, blended: bool | None = None,
+                    own_unc: Mapping[str, float] | None = None) -> Portfolio:
     """The portfolio for one contest. `inputs` is the field.py ownership input table (live:
     `field.slate_inputs`; history: `field.hist_inputs`), `sims` a stored-sims dict (``fp`` S x n,
     ``dk_id``), `mu` our mean projections by DK id (default: ``inputs.proj``). `baselines=True`
     adds the "top N by individual E[payout]" picks (with and without the caps) to `info`.
     `split` (None: PORTFOLIO_SPLIT; True / 'split' / 'gs' / False / 'off') = generate / select /
-    report on disjoint sims (SPLIT_ENV)."""
+    report on disjoint sims (SPLIT_ENV). `blended`: the sims carry the role blend (+rb; None =
+    the process switch), see `truth_sims`. `own_unc`: late-news ownership-uncertainty
+    multipliers {DK id: x} for the K-field mode (COURTSIDE_FIELD_K, `field.build_fields`)."""
     t0 = time.perf_counter()
     mode = PORTFOLIO_SPLIT if split is None else split_mode(split)
     split = mode != "off"
@@ -739,10 +760,11 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     # ---- ownership proxy + field proxy (medium) + sims
     say("field")
     t = time.perf_counter()
-    fld, op = strength_field(players, inputs, contest, rules, "medium", s, seed=s.seed)
+    fld, op = strength_field(players, inputs, contest, rules, "medium", s, seed=s.seed,
+                             **({"own_unc": own_unc} if F.field_k() else {}))
     fp_raw, ainfo = F.align_sims(sims, fld.pids, s.n_sims, s.seed)
     fp, tinfo = truth_sims(fp_raw, fld.pids, inputs, s.beta, s.tau,
-                           np.random.default_rng(s.seed + 7))
+                           np.random.default_rng(s.seed + 7), blended=blended)
     timing["field"] = time.perf_counter() - t
     rows = split_rows(fp.shape[0], s.seed, mode) if split else None
     fp_gen, fp_sel, fp_rep = ((fp[rows["G"]], fp[rows["S"]], fp[rows["R"]]) if split
@@ -778,6 +800,8 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         ev = F.evaluate(fld, fp, contest, [lu.slot_pairs() for lu in lineups], seed=s.seed,
                         tiers=True, own_entries=n, per_sim=True)
         ps = ev.per_sim
+        if isinstance(fld, F.FieldSet):
+            return _score_k(fld, ev, lineups, contest, m_o, rng), ev.lineups, ev
         _, rows, _ = F._cand_matrix(fld, [lu.slot_pairs() for lu in lineups], fld.slots)
         cpt_first = fld.slots[0] == "CPT"
         cnt = {tuple(int(x) for x in r): int(c)
@@ -883,6 +907,9 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     summ["stopped"] = ginfo["stopped"]
     summ["requested"] = n
     summ.update(_relative(lad, Rp, pay, cinfo["by_source"].get("topmean", 0), n, contest))
+    kband = _k_bands(fld, lad, pay, rank, contest) if isinstance(fld, F.FieldSet) else None
+    if kband is not None:
+        summ["field_k"] = kband["portfolio"]
     denom = F.UNIT * F.WUNIT
     lineups = []
     for k, j in enumerate(chosen):
@@ -900,13 +927,17 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
             "e_payout_single": float(sj["e_payout"]), "p_cash_single": float(sj["p_cash"]),
             "dupes": float(sj["dupes"]), "dupe_band": sj["dupe_band"],
             "marginal": ginfo["marginals"][k] if k < len(ginfo["marginals"]) else None})
+        if kband is not None:
+            lineups[-1].update(kband["lineups"][k])
     exposure = exposure_table(lineups, by_id, op, mu, cap_d, low_d, n, s)
     ranges = None
     if s.strengths and chosen:
         say("strengths")
         t = time.perf_counter()
         ranges = strength_range(players, inputs, _report_sims(sims, s, rows) if split else sims,
-                                contest, rules, [cands[j].slot_pairs() for j in chosen], s)
+                                contest, rules, [cands[j].slot_pairs() for j in chosen], s,
+                                blended=blended,
+                                **({"own_unc": own_unc} if F.field_k() else {}))
         ranges["medium"] = {"e_payout": summ["e_payout"], "roi": summ["roi"]}
         timing["strengths"] = time.perf_counter() - t
     summ["strengths"] = ranges
@@ -941,6 +972,62 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         info["greedy_pairs"] = [cands[j].slot_pairs() for j in chosen]
     return Portfolio(slate_id, contest, s, lineups, summ, exposure, info, run_id, field=fld,
                      fp=fp, fp_raw=fp_raw, sources=[sources[j] for j in chosen])
+
+
+def _score_k(fld: "F.FieldSet", ev: F.FieldEval, lineups: list, contest: F.Contest, m_o: int,
+             rng: np.random.Generator) -> _Pool:
+    """`build_portfolio`'s per-sim pool against K fields (D5): as for one field, the expected
+    dupes a field's sample does not contain are added to the ties as a Poisson count, per field
+    on its own sim rows (`FieldSet.rows_of`)."""
+    ps = ev.per_sim
+    S = ps["score"].shape[0]
+    tied = np.rint(ps["tied"]).astype(np.int32)
+    pairs = [lu.slot_pairs() for lu in lineups]
+    for j, f in enumerate(fld.fields):
+        _, rows, _ = F._cand_matrix(f, pairs, f.slots)
+        cpt_first = f.slots[0] == "CPT"
+        cnt = {tuple(int(x) for x in r): int(c)
+               for r, c in zip(F._canon(f.lineups, cpt_first), f.counts)}
+        F_n = max(1, f.n)
+        extra = np.zeros(len(rows))
+        for i, row in enumerate(rows):
+            d = float(ev.lineups[i]["dupes_k"][j]) * m_o / max(1, contest.field_size - 1)
+            in_sample = cnt.get(tuple(int(x) for x in F._key(row, cpt_first)), 0) * m_o / F_n \
+                if (row >= 0).all() else 0.0
+            extra[i] = max(0.0, d - in_sample)
+        r = fld.rows_of(S, j) if S >= fld.k else np.arange(S)
+        if (extra > 1e-4).any() and len(r):
+            tied[r] += rng.poisson(extra[None, :] / (1 if S >= fld.k else fld.k),
+                                   size=(len(r), len(extra))).astype(np.int32)
+    return _Pool(ps["score"], np.rint(ps["above"]).astype(np.int32), tied)
+
+
+def _k_bands(fld: "F.FieldSet", lad: Ladder, pay: np.ndarray, rank: np.ndarray,
+             contest: F.Contest) -> dict:
+    """Across-field spread of the chosen set's chances (display only): per field k, on its own
+    report rows, each lineup's P(cash) / P(top 1 %) and the portfolio's P(any cash) /
+    P(any top 1 %) / E[payout]; lo / hi = min / max over the K fields."""
+    S, n = rank.shape
+    per = []
+    for j in range(fld.k):
+        r = fld.rows_of(S, j) if S >= fld.k else np.arange(S)
+        per.append(_summary(lad, pay[r], rank[r], contest) | {
+            "p_cash": (rank[r] <= lad.paid).mean(0), "p_top1": (rank[r] <= lad.top1).mean(0)})
+    port = {"k": fld.k, "version": fld.version,
+            "sd": float(F.OWN_SD.get(fld.ownership.archetype, np.nan)),
+            "own_unc_players": int(sum(1 for v in fld.own_unc.values() if float(v) != 1.0))}
+    for key in ("p_any_cash", "p_any_top1", "e_payout"):
+        v = [float(x[key]) for x in per]
+        port[key + "_k"] = v
+        port[key + "_lo"], port[key + "_hi"] = min(v), max(v)
+    lus = []
+    for i in range(n):
+        d = {}
+        for key in ("p_cash", "p_top1"):
+            v = [float(x[key][i]) for x in per]
+            d[key + "_lo"], d[key + "_hi"] = min(v), max(v)
+        lus.append(d)
+    return {"portfolio": port, "lineups": lus}
 
 
 def _cycler(n: int, seed: int) -> Callable[[], int]:
@@ -1260,16 +1347,20 @@ def exposure_table(lineups: list[dict], by_id: Mapping[str, PoolPlayer], op: F.O
     return rows
 
 
-def strength_range(players, inputs, sims, contest, rules, chosen_pairs, s: Settings) -> dict:
+def strength_range(players, inputs, sims, contest, rules, chosen_pairs, s: Settings, *,
+                   blended: bool | None = None,
+                   own_unc: Mapping[str, float] | None = None) -> dict:
     """E[payout] / ROI of the chosen portfolio against the soft and sharp field strengths
     (same scoring truth, fewer sims)."""
     out = {}
     lad = Ladder(contest)
     n = len(chosen_pairs)
     for name in ("soft", "sharp"):
-        f, _ = strength_field(players, inputs, contest, rules, name, s, seed=s.seed + 1)
+        f, _ = strength_field(players, inputs, contest, rules, name, s, seed=s.seed + 1,
+                              **({"own_unc": own_unc} if F.field_k() else {}))
         fp, _ = F.align_sims(sims, f.pids, min(s.strength_sims, s.n_sims or 10**9), s.seed + 1)
-        fp, _ = truth_sims(fp, f.pids, inputs, s.beta, s.tau, np.random.default_rng(s.seed + 8))
+        fp, _ = truth_sims(fp, f.pids, inputs, s.beta, s.tau, np.random.default_rng(s.seed + 8),
+                           blended=blended)
         ev = F.evaluate(f, fp, contest, chosen_pairs, seed=s.seed + 1, tiers=False,
                         own_entries=n, per_sim=True)
         ps = ev.per_sim
@@ -1286,7 +1377,17 @@ def realised(field: F.Field, contest: F.Contest, lineup_pairs: Sequence, actual:
              *, seed: int = 0) -> dict:
     """Joint payout of a set of our lineups when the slate's ACTUAL DK points (one row, columns =
     `field.pids`) are scored against the field proxy: what the set would have won against the
-    modelled field."""
+    modelled field. A `field.FieldSet` (K fields): the mean over its fields."""
+    if isinstance(field, F.FieldSet):
+        per = [realised(f, contest, lineup_pairs, actual, seed=seed + j)
+               for j, f in enumerate(field.fields)]
+        out = {key: float(np.mean([r[key] for r in per])) for key in ("payout", "cashed",
+                                                                      "best_rank")}
+        cost = per[0]["cost"]
+        out.update({"cost": cost, "roi": (out["payout"] / cost - 1) if cost else None,
+                    "mode": per[0]["mode"], "field_k": len(per),
+                    "payout_k": [r["payout"] for r in per]})
+        return out
     lad = Ladder(contest)
     n = len(lineup_pairs)
     ev = F.evaluate(field, np.asarray(actual, np.float32).reshape(1, -1), contest,
@@ -1445,7 +1546,10 @@ def build_for_slate(conn: sqlite3.Connection, slate_id, contest_id, s: Settings,
     pool = ctx["pool"]
     pf = build_portfolio(pool, ctx["inputs"], ctx["sims"], contest, s,
                          now=now or datetime.now(timezone.utc), slate_id=str(slate_id),
-                         run_id=ctx["info"]["run_id"], progress=progress)
+                         run_id=ctx["info"]["run_id"], progress=progress,
+                         blended=RB.run_blended(conn, ctx["info"]["run_id"]),
+                         **({"own_unc": F.run_own_uncertainty(conn, ctx["info"]["run_id"])}
+                            if F.field_k() else {}))
     pf.summary["xfactor"] = xfactor_summary(conn, pf)
     return pf
 
@@ -1562,7 +1666,10 @@ def _cmd(args) -> int:
         pf = build_portfolio(ctx["pool"], ctx["inputs"], ctx["sims"], contest, s,
                              now=datetime.now(timezone.utc), slate_id=str(args.slate),
                              run_id=ctx["info"]["run_id"], baselines=args.baselines,
-                             progress=lambda m: print(f"  ... {m} ({time.perf_counter() - t0:.0f}s)"))
+                             progress=lambda m: print(f"  ... {m} ({time.perf_counter() - t0:.0f}s)"),
+                             blended=RB.run_blended(conn, ctx["info"]["run_id"]),
+                             **({"own_unc": F.run_own_uncertainty(conn, ctx["info"]["run_id"])}
+                                if F.field_k() else {}))
     except PortfolioError as e:
         print(f"error: {e}")
         return 1

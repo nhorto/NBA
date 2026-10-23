@@ -26,7 +26,8 @@ Our probability: a per-stat distribution built from the run
 
     mu is the run's played-conditional stat mean (PRA = pts + reb + ast). PHI is the
     var/mean ratio of the stat around a 30-game per-minute rate x actual minutes, measured on
-    2023-24..2025-26 (70k player-games, `fit_phi`): it is flat in the mean (pts 2.2-2.5,
+    2023-24..2025-26 (70k player-games, `fit_phi`; the live value only: an evaluation of season S
+    uses `phi_for(conn, S)`, fit on the 3 seasons before S): it is flat in the mean (pts 2.2-2.5,
     reb 1.09-1.13, ast 1.13-1.21, 3PM 1.03-1.10, PRA 1.85-2.13). It includes a naive rate's
     estimation error, so it is a little wide for our (shrunk) rates: conservative, pulled
     towards 50%. Calibration (§7.5 bar) is measured from the graded rows.
@@ -86,8 +87,12 @@ MARKETS = {
 STATS = ("pts", "reb", "ast", "pra", "fg3m")
 LABEL = {"pts": "Points", "reb": "Rebounds", "ast": "Assists", "pra": "Pts + Reb + Ast",
          "fg3m": "3-pointers"}
-# var / mean of a stat given minutes (module doc; `fit_phi` re-measures it)
+# var / mean of a stat given minutes (module doc; `fit_phi` re-measures it). This is the LIVE
+# value: it serves season LIVE_PHI_SEASON, whose training seasons (the 3 before it, 2023-24 ..
+# 2025-26) are all in the past. Scoring any earlier season must use `phi_for` (seasons < S only).
 PHI = {"pts": 2.40, "reb": 1.11, "ast": 1.16, "fg3m": 1.09, "pra": 2.05}
+LIVE_PHI_SEASON = "2026-27"
+PHI_N_SEASONS = 3                   # trailing seasons before S that the fit uses
 RUN_KINDS = ("lock10", "lock45", "manual")
 PREFERRED_PROVIDER = "100"          # DraftKings via ESPN
 QUANTS = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
@@ -223,13 +228,14 @@ class PlayerDist:
     minutes: np.ndarray
     _pmfs: dict = field(default_factory=dict, repr=False)
     source: str = "approx"
+    phi: dict | None = None             # None = the live PHI; evaluations pass phi_for(S)
 
     def pmf(self, stat: str) -> np.ndarray | None:
         mu = self.means.get(stat)
         if mu is None:
             return None
         if stat not in self._pmfs:
-            self._pmfs[stat] = stat_pmf(mu, self.minutes, PHI[stat])
+            self._pmfs[stat] = stat_pmf(mu, self.minutes, (self.phi or PHI)[stat])
         return self._pmfs[stat]
 
     def range(self, stat: str, lo: float = 0.10, hi: float = 0.90) -> tuple[int, int] | None:
@@ -289,9 +295,10 @@ def run_stat_sims(run: dict | None, game_id: str | None = None,
     return out
 
 
-def player_dist(stats: dict) -> PlayerDist:
+def player_dist(stats: dict, phi: dict | None = None) -> PlayerDist:
     """From {(stat, cond): row} of player_projection_stats: played-conditional means of
-    pts/reb/ast/fg3m (+ PRA) and the played-minutes draws."""
+    pts/reb/ast/fg3m (+ PRA) and the played-minutes draws. `phi` overrides the live PHI (an
+    evaluation of season S passes `phi_for(conn, S)`)."""
     means = {}
     for s in ("pts", "reb", "ast", "fg3m"):
         row = stats.get((s, "played")) or {}
@@ -301,7 +308,7 @@ def player_dist(stats: dict) -> PlayerDist:
     else:
         means["pra"] = None
     mrow = stats.get(("min", "played")) or {}
-    return PlayerDist(means=means, minutes=minutes_draws(mrow, mrow.get("mean")))
+    return PlayerDist(means=means, minutes=minutes_draws(mrow, mrow.get("mean")), phi=phi)
 
 
 # ============================================================================ data access
@@ -685,12 +692,47 @@ def postgame_step(conn: sqlite3.Connection, day: date) -> dict:
 
 # ============================================================================ dispersion fit
 
-def fit_phi(conn: sqlite3.Connection, seasons: tuple[str, ...] = ("2023-24", "2024-25",
-                                                                  "2025-26"),
-            window: int = 30) -> dict[str, float]:
+def phi_seasons(season: str, n: int = PHI_N_SEASONS) -> tuple[str, ...]:
+    """The `n` seasons immediately before `season`, oldest first (S = '2026-27' -> 2023-24,
+    2024-25, 2025-26: the live fit window)."""
+    y = int(season[:4])
+    return tuple(f"{y - k}-{str(y - k + 1)[2:]}" for k in range(n, 0, -1))
+
+
+_PHI_CACHE: dict = {}
+
+
+def phi_for(conn: sqlite3.Connection | None, season: str, window: int = 30) -> dict[str, float]:
+    """PHI for scoring `season`, fit on seasons < `season` only (never the season itself or
+    anything later). The live season returns the packaged PHI unchanged (same training seasons,
+    no DB needed); an earlier season is re-fit on its own trailing window and memoised."""
+    if season >= LIVE_PHI_SEASON:
+        return PHI
+    if conn is None:
+        raise ValueError(f"phi_for({season!r}) needs a connection: only the live season "
+                         f"{LIVE_PHI_SEASON} has a packaged PHI")
+    db_file = next((r[2] for r in conn.execute("PRAGMA database_list") if r[1] == "main"), "")
+    if not db_file:                         # in-memory DB: no stable identity, do not memoise
+        return fit_phi(conn, before=season, window=window)
+    key = (db_file, season, window)
+    if key not in _PHI_CACHE:
+        _PHI_CACHE[key] = fit_phi(conn, before=season, window=window)
+    return _PHI_CACHE[key]
+
+
+def fit_phi(conn: sqlite3.Connection, seasons: tuple[str, ...] | None = None,
+            window: int = 30, *, before: str | None = None) -> dict[str, float]:
     """Re-measure PHI: mean of (y - mu)^2 / mean of mu per stat, mu = the player's previous
-    `window` games' per-minute rate x actual minutes (>= 8 min, >= 200 prior minutes)."""
+    `window` games' per-minute rate x actual minutes (>= 8 min, >= 200 prior minutes).
+
+    Seasons fitted: `seasons` if given, else the PHI_N_SEASONS before `before` (default
+    LIVE_PHI_SEASON = 2023-24..2025-26). To score season S pass before=S so the fit never
+    sees S."""
     import pandas as pd
+    if seasons is None:
+        seasons = phi_seasons(before or LIVE_PHI_SEASON)
+    elif before is not None and any(s >= before for s in seasons):
+        raise ValueError(f"fit_phi: seasons {seasons} are not all < {before}")
     ph = ",".join("?" * (len(seasons) + 1))
     prev = f"{int(seasons[0][:4]) - 1}-{seasons[0][2:4]}"
     df = pd.read_sql_query(
@@ -729,6 +771,10 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--day", default=None)
         p.add_argument("--db", default=None, help="SQLite path (default: the configured DB)")
+        if name == "fit-phi":
+            p.add_argument("--before", default=None,
+                           help="score this season: fit on the 3 seasons before it "
+                                "(default: the live window)")
         if name == "compare":
             p.add_argument("--write", action="store_true", help="store prop_compare rows")
             p.add_argument("--at", default=None, help="ISO UTC cap on runs and props")
@@ -742,7 +788,7 @@ def main(argv: list[str] | None = None) -> int:
         from .. import db
         conn = db.connect(a.db)
     if a.cmd == "fit-phi":
-        print(json.dumps(fit_phi(conn)))
+        print(json.dumps(fit_phi(conn, before=a.before)))
         return 0
     if a.cmd == "grade":
         print(json.dumps(grade_day(conn, day), indent=1))

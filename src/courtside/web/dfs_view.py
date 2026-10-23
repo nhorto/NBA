@@ -26,6 +26,8 @@ Data contract (see docs/PLAYERS.md §6) for what the page reads and tolerates:
                               DK ids through player_ids(source='dk')
   dfs_runs.sim_path (npz)     big-night chance and the X factor tag (`proj/dfs/xfactor.py`, read
   dfs_ownership_proxy         time, cached per run); none when the run has no sims
+  dfs_runs.detail             "late_news_tag": the Late news tag (`proj/dfs/late_news_tag.py`,
+                              computed at read time for runs stored before it)
   dfs_runs.late_news_json     a list (or {"players": [...]}) of {name | player, player_id?, team?,
                               reason | why | change}
 """
@@ -44,6 +46,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse,
 from markupsafe import Markup, escape
 
 from ..proj.dfs import export as dfs_export
+from ..proj.dfs import late_news_tag as dfs_late
 from ..proj.dfs import portfolio as dfs_portfolio
 from ..proj.dfs import why as dfs_why
 from ..proj.dfs import xfactor as dfs_xfactor
@@ -462,6 +465,24 @@ def _attach_xfactor(conn: sqlite3.Connection, rows: list[dict], proj: dict,
     return n
 
 
+def _attach_late_news(conn: sqlite3.Connection, rows: list[dict], proj: dict,
+                      run: dict | None) -> int:
+    """Add ``ln`` (the Late news flag or None) and ``ln_label`` to the pool rows from the
+    projection run's late-news tag (`late_news_tag.run_flags`). Returns the number tagged.
+    Never fails the page."""
+    try:
+        res = dfs_late.run_flags(conn, proj.get("run_id") or (run or {}).get("run_id"))
+    except Exception:  # noqa: BLE001 - an optional tag must not break the page
+        res = {}
+    flags = dfs_late.flags_by_dk(res)
+    n = 0
+    for r in rows:
+        f = flags.get(r["id"]) if r["status"] not in ("OUT", "O") else None
+        r.update(ln=f, ln_label=dfs_late.label(f) if f else "")
+        n += f is not None
+    return n
+
+
 def _sort_pool(rows: list[dict], sort: str, desc: bool) -> list[dict]:
     key = {"proj": lambda r: r["proj"], "value": lambda r: r["value"],
            "salary": lambda r: r["salary"], "pplay": lambda r: r["p_play"],
@@ -572,6 +593,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
     rows = _pool_view(pool, proj, nba_ids)
     by_id = {r["id"]: r for r in rows}
     xf_n = _attach_xfactor(conn, rows, proj, run) if not is_showdown else 0
+    ln_n = _attach_late_news(conn, rows, proj, run)
 
     mv = proj["model_version"] if proj["by_nba_id"] else None
     if mv is None and run and run.get("model_version") and not proj["by_nba_id"]:
@@ -750,6 +772,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
         "heads": heads, "sort": sort, "dir": direction, "pos": pos, "q": q, "hide_out": hide_out,
         "has_range": has_model_range, "has_pplay": has_pplay, "has_starter": has_starter,
         "has_big": has_big, "xf_count": xf_n, "xf_label": dfs_xfactor.LABEL,
+        "ln_count": ln_n, "ln_window": int(dfs_late.LATE_NEWS_WINDOW.total_seconds() // 60),
         "big_k": f"{dfs_xfactor.BIG_K:g}", "big_eg": f"{dfs_xfactor.big_mark(4500):g}", "xf_min": dfs_xfactor.chance_text(dfs_xfactor.P_MIN),
         "source": "model" if proj["by_nba_id"] else "fppg",
         "pos_chips": [{"label": "All", "url": url(pos="", all=""), "active": not pos}] + [

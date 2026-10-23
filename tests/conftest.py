@@ -14,6 +14,8 @@ os.environ.setdefault("COURTSIDE_MINFIX", "0")
 # split (`gs`, dfs.portfolio.SPLIT_DEFAULT; tests/test_portfolio_split.py).
 os.environ.setdefault("COURTSIDE_RESERVE_EXTRAS", "0")
 os.environ.setdefault("COURTSIDE_PORTFOLIO_SPLIT", "off")
+# The role blend (`+rb`, role_blend.ROLE_BLEND_DEFAULT) shipped 2026-10-23 as well.
+os.environ.setdefault("COURTSIDE_ROLE_BLEND", "0")
 
 
 @pytest.fixture(autouse=True)
