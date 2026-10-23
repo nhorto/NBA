@@ -99,6 +99,13 @@ def built_gs(slate):
 
 # ============================================================================== OFF
 
+# The goldens were recorded on geekom1 (Linux / OpenBLAS). On macOS (Accelerate) float64 rounding in
+# the field / Sinkhorn steps changes which lineups the solver finds, so the exact goldens only
+# hold on Linux; the other tests here (disjoint rows, report == re-score on R) are platform-free.
+LINUX_ONLY = pytest.mark.skipif(sys.platform != "linux", reason="goldens recorded on Linux")
+
+
+@LINUX_ONLY
 def test_off_is_bit_identical_to_the_pre_change_builder(built):
     gold = json.loads(GOLDEN.read_text())
     for name, (off, _) in built.items():
@@ -122,6 +129,7 @@ def test_split_mode_parsing_and_switch():
         PF.set_split(old)
 
 
+@LINUX_ONLY
 def test_mode_split_is_unchanged_by_the_gs_mode(built):
     gold = json.loads(GOLDEN_SPLIT.read_text())
     for name, (_, on) in built.items():
