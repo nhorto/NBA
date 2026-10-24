@@ -25,10 +25,15 @@ of the played distribution per model tier x minutes band, fit on seasons < S (wa
   `mu_played` moves by it).
 * Switch `COURTSIDE_TAIL_REMAP` (default OFF; `pipeline.set_tail_remap`): model version
   `<arm>+tr` (after `+tm`), same bundle, same seeds. OFF: nothing of it runs (bit-identical).
-* Params: `tail_remap_params.json`, written by `research/tail_remap_eval.py fit`.
+* Params: `tail_remap_params.json`, written by `research/tail_remap_eval.py fit` (fit on copula
+  v0 sims). With copula v1r (`pipeline.COPULA == "v1r"`, `+c1r`) the remap reads
+  `tail_remap_params_c1r.json` instead (the same fit on c1r sims, `research/c1r_ship_prep.py fit`;
+  docs/research/tail-remap.md addendum 2026-10-24); a missing c1r file falls back to the v0 file.
+  The process switch picks the file (`params_path`), so v0 runs are unchanged.
 
 Public API
-  TAIL_REMAP, set_tail_remap(on), cells(season) -> {cell: q (len(LEVELS))}
+  TAIL_REMAP, set_tail_remap(on), cells(season) -> {cell: q (len(LEVELS))} (active copula's file)
+  params_path(copula=None) -> the params file for a copula version (None = pipeline.COPULA)
   cell_of(tier, min_played) -> "tier|band"; mapping(q) -> (V, T) knots of g
   remap_column(x, V, T) -> remapped played values (same order)
   apply(sims, day) -> {remapped, mean_shift, mean_abs_shift}
@@ -49,7 +54,14 @@ import pandas as pd
 TAIL_REMAP_DEFAULT = True             # shipped 2026-10-24 (owner OK; env still overrides)
 TAIL_REMAP_ENV = "COURTSIDE_TAIL_REMAP"
 TAIL_REMAP_TAG = "+tr"
-TR_PATH = Path(__file__).with_name("tail_remap_params.json")
+TR_PATH = Path(__file__).with_name("tail_remap_params.json")           # copula v0 (and v1)
+# params fit on the sims of another copula version (`params_path`); absent -> TR_PATH
+# The remap refit on c1r sims (2026-10-24, docs/research/tail-remap.md addendum) is kept but NOT
+# selected: with it, +c1r +tr lost to +c1r on the v0 params on the 2025-26 slice (z +2.4 live,
+# +2.8 live10, mostly stars) while both beat the live stack everywhere. Map "v1r" to
+# TR_C1R_CANDIDATE here to use it.
+TR_C1R_CANDIDATE = Path(__file__).with_name("tail_remap_params_c1r.json")
+TR_PATHS_BY_COPULA: dict[str, Path] = {}
 
 LEVELS = (0.75, 0.90, 0.95, 0.98, 0.99)          # knots above the fixed median
 MEDIAN = 0.5
@@ -88,11 +100,29 @@ def _read(path: Path | None = None) -> dict:
         return {}
 
 
+def _active_copula() -> str:
+    from . import pipeline as P              # lazy: pipeline imports this module
+    return str(P.COPULA)
+
+
+def params_path(copula: str | None = None) -> Path:
+    """The params file for copula version `copula` (None = the process's `pipeline.COPULA`):
+    `TR_PATHS_BY_COPULA[copula]` when it exists, else `TR_PATH` (v0 / v1, or no c1r file)."""
+    c = _active_copula() if copula is None else copula
+    p = TR_PATHS_BY_COPULA.get(c)
+    return p if p is not None and p.exists() else TR_PATH
+
+
+def cells(season: str, copula: str | None = None) -> dict:
+    """{cell: h} for season S (fit on seasons < S) from the active copula's params file
+    (`params_path`); a season missing from the file uses the latest earlier one (still
+    walk-forward); none at all -> {} (no remap)."""
+    return _cells(season, str(params_path(copula)))
+
+
 @lru_cache(maxsize=None)
-def cells(season: str) -> dict:
-    """{cell: h} for season S (fit on seasons < S); a season missing from the file uses the latest
-    earlier one (still walk-forward); none at all -> {} (no remap)."""
-    seasons = _read().get("seasons", {})
+def _cells(season: str, path: str) -> dict:
+    seasons = _read(Path(path)).get("seasons", {})
     key = season if season in seasons else max((s for s in seasons if s < season), default=None)
     if key is None:
         return {}
@@ -100,6 +130,9 @@ def cells(season: str) -> dict:
     out = {f"{t}|*": list(map(float, h)) for t, h in e.get("tiers", {}).items()}
     out.update({c: list(map(float, v["q"])) for c, v in e.get("cells", {}).items()})
     return out
+
+
+cells.cache_clear = _cells.cache_clear          # type: ignore[attr-defined]
 
 
 def band_of(min_played: float) -> str | None:

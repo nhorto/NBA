@@ -37,7 +37,12 @@ DB backup: `~/Developer/backups/courtside-pre-7b7b693.db` on the Mac.
   until Showdown standings exist.
 - **G3:** props blend test pre-registered (`docs/research/g3-preregistration.md`, frozen);
   `props-blend-eval --ledger` runs after postgame.
-- **Next:** `+c1r` (owner OK) after the `+tr` / `STRETCH_TR` refit on c1r sims.
+- **Batch 6 (deployed after the last lock of 10-24): `+c1r` ON** (`COPULA_DEFAULT = "v1r"`, owner
+  OK); live `pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr`. Pre-fit `bundle_2026-27_v1_cx_mf_ep_ms_c1r.json`
+  and `corr_2026-27.json` in prod `var/proj/`. The `+tr` remap keeps its v0 params and the X factor
+  keeps `STRETCH_TR` (the refit `tail_remap_params_c1r.json` / `STRETCH_TR_C1R` is kept but
+  unselected: it lost on the 2025-26 slice, z +2.4 / +2.8). G3 amended before any scored slate:
+  scoring starts 2026-10-25. Rollback `COURTSIDE_COPULA=v0`.
 
 **2026-10-24 (later): batch 4 shipped (owner OK).** Live `pathA-v0.3+mf+ep+ms+p2+rx+rb+tr`:
 - **`+ms` per-player minutes spread (P6)** ON; pre-fit `bundle_2026-27_v1_cx_mf_ep_ms.json` and

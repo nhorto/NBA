@@ -207,7 +207,7 @@ CONTEXT_EXT_MODEL_VERSION = "pathA-v0.4"
 # Path A copula v1 (T2.10). "v0" by default (env COURTSIDE_COPULA=v1 / v0 overrides; `set_copula`
 # at run time). v1 = a suffix on whatever context arm is active: bundle `<arm>_c1`, version
 # `<arm version>+c1`; seeds unchanged (common random numbers with the arm's v0 runs).
-COPULA_DEFAULT = "v0"                  # shipping v1 = "v1" here (env still overrides)
+COPULA_DEFAULT = "v1r"                 # +c1r shipped 2026-10-24 (owner OK; env still overrides)
 COPULA_ENV = "COURTSIDE_COPULA"
 COPULA_V1_SUFFIX = "_c1"
 COPULA_V1_TAG = "+c1"

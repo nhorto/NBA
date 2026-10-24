@@ -332,3 +332,173 @@ With STRETCH, role 30–40 % is 33.8 → 36.6 ± .8 and 40 %+ is 47.1 → 49.3 �
     with TR 0/1. `out/` holds the rows plus `stretch.json` / `stretch.txt`.
   - geekom1: `uv run python research/xf_ship_prep.py stretch OUT.json <+rb+tr rows> --off <+rb rows>`
     (rows in `var/tmp/xfprep/rows`).
+
+## Addendum (2026-10-24): the remap and `STRETCH_TR` refit on copula v1r (`+c1r`) sims
+
+`+c1r` (copula v1 retune, `COURTSIDE_COPULA=v1r`) was approved to ship (`p8-e3.md` §4). Its
+per-stat draws change the DK tails, and the remap params and `STRETCH_TR` were fit on copula v0
+sims. This addendum refits both on c1r sims and re-checks the stack. Script
+`research/c1r_ship_prep.py`; Mac scratch `courtside-compute/c1rship/` (rows in `out/`, logs in
+`logs/`, code tree = the working tree at ce02661 + this change).
+
+**Selection (no default flipped).**
+- `tail_remap.params_path()` reads `tail_remap_params_c1r.json` only while
+  `pipeline.COPULA == "v1r"`; copula v0 / v1 read `tail_remap_params.json` as before. A missing
+  c1r file falls back to the v0 file (`cells` is cached per file).
+- `xfactor.stretch_table()`: `STRETCH_TR_C1R` only while the remap is on AND reads its c1r
+  params; otherwise `STRETCH_TR` (remap on) / `STRETCH` (off). The run-table cache key gets
+  `+c1r` in that state only.
+- So deleting `tail_remap_params_c1r.json` restores exactly the state E3 tested `+c1r` in (v0
+  remap params + `STRETCH_TR`), with no code change.
+
+**Copula v0 is bit-identical** (live until the flip):
+- `tests/test_c1r_ship_prep.py::test_v0_on_matches_head_golden`: `run_games` with `+tr` ON and
+  the shipped params equals the digest computed with HEAD ce02661's `tail_remap.py` loaded in
+  place (Linux-only golden). The existing `+tr` OFF golden and the `STRETCH` / `STRETCH_TR`
+  goldens (`test_tail_remap.py`, `test_xf_ship_prep.py`) pass unchanged.
+- Frame level, Mac (`c1rship/p3lane.sh`, `p8e3/id_driver.py`): the live stack (copula v0, `+tr`)
+  with this tree vs `p8e3`'s outputs of the pre-change tree (ce02661-equivalent):
+  `project_historical` 2024-01-10 and 2020-01-15 and `project_slate` 154575 at
+  2026-10-20T22:15Z: players, stats, sims (5.05M fp values) and meta identical (3/3).
+
+### a. The remap refit (`tail_remap_params_c1r.json`)
+
+Same method, population, shrinkage, datasets and walk-forward as `tail_remap_params.json` (§1):
+`c1r_ship_prep.py fit` = `tail_remap_eval.py fit` on harness rows (4,000 sims, `--tails`) of
+the live arm with copula v1r and the remap OFF, `pathA-v0.3+mf+ep+ms+c1r+p2+rx+rb`: avail
+2018-19, 2019-20, 2020-21, 2023-24, 2024-25 and live 2025-26 (real tip times). Season S uses the
+datasets of seasons < S; 2026-27 uses all six.
+- **c1r tails are already a little narrower than v0's**, so the c1r map moves less. 2026-27
+  tier q(0.90 / 0.95 / 0.99), v0 → c1r: bench 0.884 / 0.931 / 0.982 → 0.892 / 0.938 / 0.983,
+  role 0.892 / 0.943 / 0.988 → 0.894 / 0.944 / 0.988, star 0.890 / 0.945 / 0.989 → 0.897 / 0.947
+  / 0.989. (The v0 file was fit on an older arm, `+mf+p2`, with the 19:30-tip live rows.)
+
+**Held-out upper-tail PIT** (P(play) ≥ 0.85, as §3; avail pooled = 2019-20, 2020-21, 2023-24,
+2024-25, each on its walk-forward params; % above the level, ± SE by date):
+
+| set · tier | n | > .90 c1r OFF → ON | > .95 OFF → ON | > .99 OFF → ON |
+|---|---|---|---|---|
+| **avail pooled · all** | 76017 | 9.56 → **9.92** ± .11 | 4.40 → **4.81** ± .08 | 0.78 → **0.93** ± .04 |
+| avail pooled · bench | 15608 | 9.19 → **9.85** ± .23 | 3.67 → **4.54** ± .16 | 0.53 → **0.89** ± .08 |
+| avail pooled · role | 42707 | 9.59 → **9.95** ± .14 | 4.48 → **4.82** ± .10 | 0.84 → **0.91** ± .05 |
+| avail pooled · star | 17702 | 9.80 → **9.91** ± .23 | 4.85 → **5.02** ± .17 | 0.86 → **0.99** ± .07 |
+| live 2025-26 · all | 13462 | 8.58 → 9.03 ± .23 | 3.66 → 4.12 ± .16 | 0.65 → 0.84 ± .09 |
+| live · bench | 2423 | 9.62 → 10.52 ± .63 | 4.09 → 5.20 ± .39 | 0.45 → 1.11 ± .21 |
+| live · role | 8737 | 8.42 → 8.86 ± .26 | 3.64 → 3.99 ± .20 | 0.66 → 0.76 ± .10 |
+| live · star | 2302 | 8.08 → 8.08 ± .62 | 3.30 → 3.43 ± .36 | 0.83 → 0.87 ± .20 |
+
+- Avail pooled is within ±0.2 pt of nominal everywhere except bench q95 (−0.46, 2.8 SE) and q99
+  (−0.11). Single seasons scatter ±0.5 pt as before (all-tier q95: 4.82 / 4.41 / 5.25 / 4.69).
+- Live role / star stay ~1 pt too wide at q95, as with v0 (§3: 4.28 / 3.30): the live path's
+  availability and minutes uncertainty, which an avail fit does not see.
+
+### b. DK CRPS: `+c1r +tr` (c1r params) vs the live stack
+
+`p8_e3_eval.py dk` (the E3 metric: E[min] ≥ 10 in either arm, DNP = 0, two-way date × player
+SEs, 4 E[min] tiers, E4 value metric on the DFS population; FPPG anchor on the harness / live
+sets, the real salary on RotoGuru). OFF = the live stack `pathA-v0.3+mf+ep+ms+p2+rx+rb+tr` rows
+of `p8e3/out` (same tree apart from this change; real tip times). ON = the same arm with
+copula v1r and the c1r remap params, same seeds.
+
+| set | n | CRPS off | diff | SE 1-way | SE 2-way | z | MAE diff (z) | mean diff | worst tier (z) | value diff (z) | E3 `+c1r` (v0 params) z |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2023-24 | 21914 | 5.6060 | -0.0018 | 0.0005 | 0.0005 | -3.28 | +0.0009 (+1.44) | +0.074 | starter +0.64 | +0.0002 (+3.25) | -1.43 |
+| 2024-25 | 22068 | 5.6037 | -0.0019 | 0.0006 | 0.0006 | -3.22 | +0.0009 (+1.24) | +0.074 | starter +0.52 | +0.0002 (+2.29) | -3.30 |
+| 2023-25 pooled | 43982 | 5.6049 | -0.0018 | 0.0004 | 0.0004 | -4.26 | +0.0009 (+1.81) | +0.074 | starter +0.81 | +0.0002 (+3.80) | -3.08 |
+| live | 15061 | 5.6807 | -0.0036 | 0.0006 | 0.0007 | -4.80 | +0.0010 (+1.43) | +0.064 | starter -1.01 | +0.0002 (+3.07) | -5.63 |
+| live10 | 14934 | 5.5705 | -0.0022 | 0.0006 | 0.0007 | -3.12 | +0.0011 (+1.61) | +0.065 | starter -0.50 | +0.0002 (+2.54) | -4.03 |
+| RG 2019-20 | 18841 | 5.5346 | -0.0021 | 0.0006 | 0.0006 | -3.79 | +0.0039 (+4.88) | +0.109 | starter +0.49 | +0.0000 (+1.18) | -3.06 |
+| RG 2020-21 | 19243 | 5.4955 | -0.0013 | 0.0006 | 0.0006 | -2.00 | +0.0038 (+4.18) | +0.098 | starter +1.81 | +0.0001 (+1.82) | -2.96 |
+| RG pooled | 38084 | 5.5149 | -0.0017 | 0.0004 | 0.0004 | -3.90 | +0.0038 (+6.08) | +0.104 | starter +1.54 | +0.0000 (+2.12) | -- |
+| live10 with `+pq` (both arms; offsets leave-one-month-out) | 14912 | 5.5600 | -0.0024 | 0.0006 | 0.0007 | -3.37 | +0.0009 (+1.33) | +0.064 | starter -0.75 | +0.0002 (+3.10) | -- |
+
+- **The combination passes:** negative on all six sets (z −2.0 to −4.8), no tier worse by 2 SE
+  (worst RG 2020-21 starter +1.81), value metric better on every set (z +1.2 to +3.8).
+- **Means move up** (+0.06 to +0.11 DK; the c1r map pulls the upper tail in less than the v0 map
+  did). The live stack runs low (bias −0.23 harness, −0.15 RotoGuru), so the bias shrinks; MAE
+  of the mean gets slightly worse (+0.001 harness / live, +0.004 RotoGuru, z +6.1 pooled), as
+  the mean moves away from the median of a right-skewed outcome. CRPS is the judge, as for `+tr`.
+
+**The refit's own increment** (ON vs E3's `+c1r` rows, i.e. c1r with the v0 remap params; same
+seeds):
+
+| set | diff | z | star | starter | rotation | bench |
+|---|---|---|---|---|---|---|
+| 2023-25 pooled | -0.0004 | -1.54 | -1.39 | -1.36 | -0.06 | +2.59 |
+| RG pooled | +0.0001 | +0.53 | -0.91 | +1.30 | +0.63 | -0.14 |
+| live | +0.0009 | +2.37 | +3.98 | +2.12 | -2.57 | +1.05 |
+| live10 | +0.0010 | +2.82 | +2.67 | +2.33 | -0.78 | +0.45 |
+
+- The refit is better on 2023-24, neutral on 2024-25 and RotoGuru, and **worse on the 2025-26
+  slice** (z +2.4 / +2.8, mostly stars). The v0 params narrow the star / starter tails more than
+  c1r sims need on the avail sets, which happens to offset part of the live path's too-wide tails
+  (table a). Both versions beat the live stack on every set.
+- The refit is the calibrated one (table a) and the one this addendum stages. Deleting
+  `tail_remap_params_c1r.json` gives the E3 configuration instead (better on the slice by
+  0.0008-0.0010 CRPS, z 2.4-2.8; worse on 2023-24 by 0.0009).
+
+### c. X factor: `STRETCH_TR_C1R`
+
+Same method as the `STRETCH_TR` addendum above (`xf_ship_prep.py stretch`, per-tier logit map,
+k = 6, P(play) ≥ 0.85, RotoGuru avail rows with `--tails`), on `+c1r +tr` sims (c1r remap
+params; seasons with no c1r params use 2019-20's, `--tr-key 2019-20`).
+- **Seasons 2016-17 … 2020-21** (n = 98,475). 2015-16 drops out: `+ep` cannot be fit for it (no
+  bio season before it), so the live arm has no bundle there. 2016-17's c1r copula uses v0's tier
+  pairs (no T2.7 extracts before 2016-17). The held-out folds (2019-20, 2020-21) are unaffected.
+- **Fit on all five seasons:** bench (−0.2248, 0.8571), role (−0.2063, 0.8054), star (−0.2678,
+  0.7865) → `xfactor.STRETCH_TR_C1R`.
+
+Held-out 2019-20 + 2020-21 on `+c1r +tr` sims (walk-forward refit; predicted → observed %):
+
+| | all | bench | role | star | tag set (bench/role, ≥ 1 in 3) | Brier |
+|---|---|---|---|---|---|---|
+| observed | 24.24 | 19.25 ± .50 | 25.96 ± .37 | 24.77 ± .53 | | |
+| STRETCH_TR (live map) | 24.20 | 19.22 | 26.25 | 23.90 | 39.6 → 39.9 ± 0.9 (n 4,089) | .17526 |
+| refit (STRETCH_TR_C1R method) | 24.22 | 19.15 | 26.15 | 24.33 | 39.4 → 40.1 ± 0.9 (n 3,942) | .17529 |
+
+- **`STRETCH_TR` is already calibrated on c1r sims** (mean −0.04 pt, tag set within 1 SE):
+  c1r's remapped tails at 6 × salary are close to v0's. The refit is equivalent (Brier +.00003),
+  a little better for stars (−0.4 vs −0.9 pt) and leaves the tag set ~4 % smaller. Shipped as
+  `STRETCH_TR_C1R` per the selection rule; using `STRETCH_TR` instead would be just as good.
+
+### d. Props check (report only)
+
+`c1r_ship_prep.py propsrun` / `props`, on a copy of the 2026-10-24 04:30 prod snapshot: every
+final 2026-27 game (10-20 … 10-23) with props, at the G3 lock-45 state (`props_blend.lock45_run`
+per game). Each of the 21 lock-45 runs was re-projected on its slate at its created_at with the
+current live stack, copula v0 and v1r (25,000 sims, the slate × kind seed, pre-fit 2026-27
+bundles), and the props scored at the same market snapshot (`props.compare_game`) and graded as
+`props_blend.day_rows`. v0 prices props from the NB1 approximation (`dist_source` approx); v1r
+from its per-stat sims (sims), which the remap does not touch (§1), so this check does not depend
+on the remap params.
+
+| | n (graded) | games / players | LL v0 | LL v1r | v1r − v0 (SE 2-way game × player) | z |
+|---|---|---|---|---|---|---|
+| all | 1,671 | 28 / 226 | 0.6950 | 0.6960 | +0.0009 (0.0008) | +1.17 |
+| pts | 395 | | 0.6913 | 0.6910 | −0.0003 (0.0019) | −0.15 |
+| reb | 365 | | 0.7269 | 0.7289 | +0.0020 (0.0009) | +2.22 |
+| ast | 285 | | 0.6934 | 0.6964 | +0.0029 (0.0012) | +2.49 |
+| fg3m | 323 | | 0.6614 | 0.6623 | +0.0010 (0.0008) | +1.23 |
+| pra | 303 | | 0.6989 | 0.6983 | −0.0007 (0.0015) | −0.45 |
+
+- Neutral overall on four nights (z +1.2); rebounds and assists slightly worse with the sims
+  (z +2.2 / +2.5), points / PRA flat. The market's no-vig chance is better than both (LL 0.6882;
+  v0 − market +0.0069, z +1.5).
+- **G3 caveat:** the props blend test (`g3-preregistration.md`) scores slates from 2026-10-24 on;
+  the flip moves our props chance from the approximation to the per-stat sims part-way through
+  it (one or two slates in). Its ledger records `dist_source` per row, so the test can be split
+  or restarted; that is the G3 owner's call.
+
+### e. Ship
+
+- Prod files (staged on the Mac in `courtside-compute/c1rship/prod_stage/`):
+  `bundle_2026-27_v1_cx_mf_ep_ms_c1r.json` (md5 8aa3f4f8…) and `corr_2026-27.json` (512b5eb5…).
+  The bundle's v0 part equals prod's live `bundle_2026-27_v1_cx_mf_ep_ms.json` (a3998048…) key
+  for key, and refitting `copula_v1` from that prod file (`p8_e3_eval.py fitbundle 2026-27`,
+  `c1rship/shipchk`) reproduces the staged file byte for byte.
+- Then `pipeline.COPULA_DEFAULT = "v1r"`; rollback `COURTSIDE_COPULA=v0`. The code reads
+  `tail_remap_params_c1r.json` and `STRETCH_TR_C1R` automatically under v1r.
+- Reproduce: Mac `courtside-compute/c1rship/`: `lane{1,2}.sh` (TR = 0 rows + bundles),
+  `p2lane{1,2}.sh` (fit, TR = 1 rows, props), `p3lane.sh` (v0 identity), `p4lane.sh` (bundle
+  check); geekom1: `var/tmp/c1rship/dk.sh {new|inc|pq} LABEL SET...`,
+  `tail_remap_eval.py pit`, `c1r_ship_prep.py stretch` / `props` on the fetched rows.

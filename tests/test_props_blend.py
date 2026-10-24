@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_prereg_doc_is_pinned_and_constants_fixed():
     assert B.PREREG_DOC.exists()
     assert hashlib.sha256(B.PREREG_DOC.read_bytes()).hexdigest() == B.PREREG_SHA256
-    assert B.PREREG["decision_slates"] == 60 and B.PREREG["first_scored_day"] == "2026-10-24"
+    assert B.PREREG["decision_slates"] == 60 and B.PREREG["first_scored_day"] == "2026-10-25"
     assert B.PREREG["z_pass"] == -2.0 and B.PREREG["z_guard"] == 2.0
     assert B.PREREG["run_kind"] == "lock45" and B.PREREG["train_min_rows"] == 1000
     assert B.PREREG["devig_min_rows"] == 10000 and B.PREREG["clip"] == 0.001
@@ -200,9 +200,9 @@ def _frame_for(n_days, signal: bool, seed=0):
 def test_collecting_before_the_minimum_is_interim():
     rep = B.evaluate(_frame_for(20, signal=True))
     assert rep["status"] == "collecting" and rep["decision"] is None
-    assert rep["slates"]["n_pre_registration"] == 4      # 10-20 .. 10-23: training only
-    assert rep["n_scored_slates"] == 16 and rep["scored_days"][0] == "2026-10-24"
-    assert rep["interim"]["flag"].startswith("INTERIM: 16 of 60")
+    assert rep["slates"]["n_pre_registration"] == 5      # 10-20 .. 10-24: training only
+    assert rep["n_scored_slates"] == 15 and rep["scored_days"][0] == "2026-10-25"
+    assert rep["interim"]["flag"].startswith("INTERIM: 15 of 60")
     assert rep["interim"]["primary"]["mean"] < 0
     assert "dry_run_pre_registration" in rep
     assert rep["devig"]["status"].startswith("waiting: 5000 of 10000")
@@ -211,7 +211,7 @@ def test_collecting_before_the_minimum_is_interim():
 def test_decision_pass_and_fail_on_60_slates():
     rep = B.evaluate(_frame_for(70, signal=True, seed=4))
     assert rep["status"] == "decided" and rep["decision"]["result"] == "PASS"
-    assert rep["decision"]["decision_days"] == ["2026-10-24", "2026-12-22"]
+    assert rep["decision"]["decision_days"] == ["2026-10-25", "2026-12-23"]
     assert rep["decision"]["n"] == 60 * 250 and "follow_up" in rep
     rep = B.evaluate(_frame_for(70, signal=False, seed=5))
     assert rep["decision"]["result"] == "FAIL"

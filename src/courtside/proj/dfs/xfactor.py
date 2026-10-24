@@ -70,6 +70,8 @@ leverage against the modelled GPP field:
 
 **Tail remap** (`tail_remap.TAIL_REMAP`, `+tr`): the big-night chance uses ``STRETCH_TR`` (the
 same map refit on remapped sims) instead of ``STRETCH`` while that switch is on (`stretch_table`).
+With copula v1r (`+c1r`) and the remap on its c1r params it uses ``STRETCH_TR_C1R`` (refit on
+c1r + remapped sims).
 """
 
 from __future__ import annotations
@@ -115,6 +117,18 @@ STRETCH: dict[str, tuple[float, float]] = {"bench": (-0.2902, 0.8275), "role": (
 # Used only while `tail_remap.TAIL_REMAP` is on (`stretch_table`); OFF -> STRETCH.
 STRETCH_TR: dict[str, tuple[float, float]] = {"bench": (-0.2715, 0.8181), "role": (-0.1860, 0.8142),
                                               "star": (-0.2532, 0.8272)}
+# The same map refit on copula v1r (`+c1r`) sims with the tail remap on (its c1r params,
+# `tail_remap_params_c1r.json`): same method and population, arm
+# pathA-v0.3+mf+ep+ms+c1r+p2+rx+rb+tr, RotoGuru 2016-17 .. 2020-21 (2015-16 has no `+ep` fit;
+# 2016-19 use 2019-20's remap params), n = 98k; `research/c1r_ship_prep.py stretch`,
+# docs/research/tail-remap.md (addendum 2026-10-24, c1r). Held-out 2019-21 (walk-forward): mean
+# 24.2 % vs 24.2 % observed, as STRETCH_TR on the same sims (24.2 %); star 24.3 % vs 24.8 %
+# (STRETCH_TR 23.9 %). Used only while the tail remap is on
+# AND reads its c1r params (copula v1r with `tail_remap_params_c1r.json` present; `stretch_table`);
+# copula v0 / v1, or no c1r params file -> STRETCH_TR as before.
+STRETCH_TR_C1R: dict[str, tuple[float, float]] = {"bench": (-0.2248, 0.8571),
+                                                  "role": (-0.2063, 0.8054),
+                                                  "star": (-0.2678, 0.7865)}
 LABEL = ("Chance of a big night from our simulations plus a low estimated popularity "
          "(proxy), leaving out the slate's 10 best projections per $1k (those tend to be popular). "
          "Estimates, not advice.")
@@ -184,10 +198,21 @@ def _tail_remap_on() -> bool:
     return bool(TRM.TAIL_REMAP)
 
 
+def _tr_reads_c1r() -> bool:
+    """True when the tail remap reads its c1r params (copula v1r and the c1r file present,
+    `tail_remap.params_path`): the sims STRETCH_TR_C1R was fit on."""
+    from .. import tail_remap as TRM
+    c1r = TRM.TR_PATHS_BY_COPULA.get("v1r")
+    return c1r is not None and TRM.params_path() == c1r
+
+
 def stretch_table() -> dict[str, tuple[float, float]]:
-    """``STRETCH_TR`` while the tail remap (`tail_remap.TAIL_REMAP`, `+tr`) is on, else
-    ``STRETCH`` (the process switch, as the sims of the runs it produces)."""
-    return STRETCH_TR if _tail_remap_on() else STRETCH
+    """``STRETCH_TR`` while the tail remap (`tail_remap.TAIL_REMAP`, `+tr`) is on
+    (``STRETCH_TR_C1R`` when the remap reads its copula-v1r params, `+c1r`), else ``STRETCH``
+    (the process switches, as the sims of the runs they produce)."""
+    if not _tail_remap_on():
+        return STRETCH
+    return STRETCH_TR_C1R if _tr_reads_c1r() else STRETCH_TR
 
 
 def calibrate(p: Sequence[float], tiers: Sequence[str | None]) -> np.ndarray:
@@ -299,7 +324,7 @@ def run_table(conn: sqlite3.Connection, run_id: str | None) -> dict[str, dict]:
     if xf_v2():
         key = key + (VERSION_V2,)
     if _tail_remap_on():
-        key = key + ("+tr",)
+        key = key + ("+tr",) + (("+c1r",) if _tr_reads_c1r() else ())
     if key in _CACHE:
         return _CACHE[key]
     r = conn.execute("SELECT s.tag FROM dfs_runs r JOIN dfs_slates s USING (slate_id) WHERE "

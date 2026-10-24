@@ -47,7 +47,7 @@ from . import props as P
 
 VERSION = "props-blend-eval-v1"
 PREREG_DOC = Path(__file__).resolve().parents[3] / "docs" / "research" / "g3-preregistration.md"
-PREREG_SHA256 = "fae949201d22fb9c44d4032c806912219d8ce35e684c41146cd71e606458284b"
+PREREG_SHA256 = "4c7f0a431acfc8643908ad47d0b51a1f3cb811c0b917cc965eddd1d0c8ae3ad2"   # amended 2026-10-24 (first scored day 10-25)
 PREREG = {
     "registered": "2026-10-24",
     "stats": ("pts", "reb", "ast", "pra", "fg3m"),
@@ -56,7 +56,7 @@ PREREG = {
     "hold_range": (0.0, 0.25),
     "train_min_rows": 1000,
     "season_start": "2026-10-20",
-    "first_scored_day": "2026-10-24",
+    "first_scored_day": "2026-10-25",
     "decision_slates": 60,
     "z_pass": -2.0,
     "z_guard": 2.0,

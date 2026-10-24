@@ -433,7 +433,24 @@ projection joins. The upside is in four places:
 - **Depends on:** B2 (fix the target first).
 
 ### P5. Ship the switches that clear the bar (M / S; owner decision)
+- **Status 2026-10-24 (night): `+c1r` SHIPPED** (owner OK; `COPULA_DEFAULT = "v1r"`; `+tr` keeps its v0 params and the X factor `STRETCH_TR`; the c1r refit of both is kept unselected because it lost on the 2025-26 slice; rollback `COURTSIDE_COPULA=v0`).
 - **Status 2026-10-24 (evening): `+pq` SHIPPED** (owner OK; rollback `COURTSIDE_PPLAYQ=0`). `+c1r` approved by the owner; ships after the `+tr`/`STRETCH_TR` refit on c1r sims.
+- **`+c1r` ship notes (2026-10-24, ship prep done; flip not made):**
+  - The `+tr` remap and the X factor map are refit on c1r sims and read only under copula v1r:
+    `proj/tail_remap_params_c1r.json` (`tail_remap.params_path`) and `xfactor.STRETCH_TR_C1R`.
+    v0 is bit-identical (Linux golden + 3/3 frames). `tail-remap.md` addendum 2026-10-24 (c1r),
+    ledger "+c1r ship prep".
+  - `+c1r +tr` (c1r params) vs the live stack: DK CRPS z −3.3 / −3.2 (harness), −4.8 / −3.1
+    (live / live10; −3.4 live10 with `+pq`), −3.8 / −2.0 (RotoGuru); no tier worse by 2 SE;
+    value metric better on every set. Against E3's `+c1r` with the v0 remap params the refit is
+    better on 2023-24 and worse on the 2025-26 slice (z +2.4 / +2.8); deleting the c1r params
+    file reverts to that configuration.
+  - Props (report only): log loss +0.0009 (z +1.2) on 1,671 graded 2026-27 props; the flip
+    changes the G3 test's props source (approx → sims) mid-test.
+  - To flip: copy `bundle_2026-27_v1_cx_mf_ep_ms_c1r.json` and `corr_2026-27.json` from Mac
+    `~/Developer/courtside-compute/c1rship/prod_stage/` to prod `var/proj/` (without the corr file
+    a prod fit silently falls back to v0's tier pairs), then `pipeline.COPULA_DEFAULT = "v1r"`;
+    rollback `COURTSIDE_COPULA=v0`.
 - **Status 2026-10-23: `+mf` shipped** (owner OK; commit 5598456; live `pathA-v0.3+mf+p2`; pre-fit
   bundle copied to prod; rollback `COURTSIDE_MINFIX=0`). Next: `+pq`.
 - **`+mf` (MINFIX):**
@@ -833,6 +850,7 @@ NBA stacking or bring-back rules: causal teammate correlation is −0.03, oppone
   season). Revisit only if blowout-minute errors trace to it.
 
 ### G3. Props: pre-register the blend test now (M now, H later / S)
+- **Status 2026-10-24 (night): amended before any scored slate:** first scored day 2026-10-25 (the `+c1r` flip changes props pricing from the 10-25 runs on); 10-24 is training only. Pin updated.
 - **Status 2026-10-24 (evening): deployed** (owner OK); `props-blend-eval --ledger <data>/reports/props_blend/ledger.csv` runs after each postgame job.
 - **Status 2026-10-24: pre-registered; evaluator built, uncommitted; report only.**
   - **Pre-registration:** `docs/research/g3-preregistration.md` (frozen once the 10-24 slate

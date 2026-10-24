@@ -631,7 +631,7 @@ one-way-by-date SEs are too small (IMPROVEMENTS E2).
 - **Decision (ranked):** (1) `+c1r` ship, owner decision (entry below); (2) `+pq` ship, owner
   decision; (3) `+us` live shadow; (4) `+mr`, `+rw`, `+bo`, `+tm`, `+gd` stay OFF; (5) `+rr` retire.
 
-## +c1r on the live stack (E3, 2026-10-24) -- owner OK; ships after the +tr / STRETCH_TR refit on c1r sims
+## +c1r on the live stack (E3, 2026-10-24) -- SHIPPED 2026-10-24 night (owner OK), with the v0 +tr params
 
 - **What:** `COURTSIDE_COPULA=v1r` (`pipeline.COPULA_DEFAULT = "v0"`), first evaluated 2026-10-21
   on `pathA-v0.3(+mf)`. Bundle `<arm>_c1r` = the arm's bundle + `copula.fit_copula_v1r` on seasons
@@ -659,6 +659,48 @@ one-way-by-date SEs are too small (IMPROVEMENTS E2).
   roll back with `COURTSIDE_COPULA=v0`. Then refit `+tr`'s map and `xfactor.STRETCH_TR` on c1r
   sims and re-check props.
 
+## +c1r ship prep: `+tr` params and STRETCH_TR refit on c1r sims (2026-10-24) -- passes; ready to flip (owner OK on +c1r)
+
+- **What:** `tail_remap_params_c1r.json` (the `+tr` remap refit walk-forward on copula v1r sims,
+  remap OFF; same datasets / method) and `xfactor.STRETCH_TR_C1R` (the big-night map refit on
+  `+c1r +tr` sims), each read only while `pipeline.COPULA == "v1r"` (and, for the map, while
+  the c1r params file is in use). Write-up: `tail-remap.md` addendum 2026-10-24 (c1r); script
+  `research/c1r_ship_prep.py`; Mac `courtside-compute/c1rship/`.
+- **Metric / population:** as the `+c1r` entry (E3 `dk`); OFF = the live stack rows of
+  `p8e3/out`, ON = copula v1r + the c1r remap params, same seeds, real tip times.
+
+| set | n | diff | SE 1-way | SE 2-way | z 2-way | MAE diff (z) | worst tier (z) | value diff (z) | vs `+c1r` with v0 params: z |
+|---|---|---|---|---|---|---|---|---|---|
+| 2023-24 | 21914 | -0.0018 | 0.0005 | 0.0005 | -3.28 | +0.0009 (+1.44) | starter +0.64 | +0.0002 (+3.25) | -- |
+| 2024-25 | 22068 | -0.0019 | 0.0006 | 0.0006 | -3.22 | +0.0009 (+1.24) | starter +0.52 | +0.0002 (+2.29) | -- |
+| 2023-25 pooled | 43982 | -0.0018 | 0.0004 | 0.0004 | -4.26 | +0.0009 (+1.81) | starter +0.81 | +0.0002 (+3.80) | -1.54 |
+| live | 15061 | -0.0036 | 0.0006 | 0.0007 | -4.80 | +0.0010 (+1.43) | starter -1.01 | +0.0002 (+3.07) | +2.37 |
+| live10 | 14934 | -0.0022 | 0.0006 | 0.0007 | -3.12 | +0.0011 (+1.61) | starter -0.50 | +0.0002 (+2.54) | +2.82 |
+| live10 + `+pq` (both arms) | 14912 | -0.0024 | 0.0006 | 0.0007 | -3.37 | +0.0009 (+1.33) | starter -0.75 | +0.0002 (+3.10) | -- |
+| RG 2019-20 | 18841 | -0.0021 | 0.0006 | 0.0006 | -3.79 | +0.0039 (+4.88) | starter +0.49 | +0.0000 (+1.18) | -- |
+| RG 2020-21 | 19243 | -0.0013 | 0.0006 | 0.0006 | -2.00 | +0.0038 (+4.18) | starter +1.81 | +0.0001 (+1.82) | -- |
+| RG pooled | 38084 | -0.0017 | 0.0004 | 0.0004 | -3.90 | +0.0038 (+6.08) | starter +1.54 | +0.0000 (+2.12) | +0.53 |
+
+- **Per-set sign:** negative on every set. **Tiers:** none worse by 2 SE (worst RG 2020-21 starter
+  +1.81). Means +0.06 to +0.11 DK (bias −0.23 → −0.16 harness); MAE of the mean slightly worse,
+  as with `+c1r` before.
+- **The refit vs `+c1r` with the v0 remap params** (E3's rows): better on 2023-24, neutral on
+  2024-25 / RotoGuru, worse on the 2025-26 slice (z +2.4 / +2.8, stars). Both beat the live
+  stack everywhere. Deleting `tail_remap_params_c1r.json` reverts to the E3 configuration
+  (v0 params + STRETCH_TR) with no code change.
+- **Tails** (avail pooled held-out, P(play) ≥ 0.85): q90 / q95 / q99 9.92 / 4.81 / 0.93 (c1r
+  without the remap 9.56 / 4.40 / 0.78); bench q95 4.54 (−0.46). Live role / star still ~1 pt
+  wide at q95.
+- **X factor:** STRETCH_TR is already calibrated on c1r sims (held-out 24.20 % vs 24.24 %); the
+  refit (24.22 %, Brier equal, stars closer) ships as STRETCH_TR_C1R.
+- **Props (report only):** v1r − v0 log loss +0.0009 (z +1.2) on 1,671 graded 2026-27 props
+  (reb / ast z +2.2 / +2.5). The flip changes the G3 test's inputs mid-test (`dist_source`).
+- **v0 bit-identical:** Linux golden (`test_c1r_ship_prep.py`, HEAD ce02661's `tail_remap.py`);
+  frame level 3/3 (2 historical days + 1 slate, 5.05M fp values) vs the pre-change tree.
+- **To ship:** copy the staged bundle + `corr_2026-27.json` (Mac `c1rship/prod_stage/`; the bundle
+  re-fits byte-identically from prod's live `_ms` bundle) to prod `var/proj/`, then
+  `COPULA_DEFAULT = "v1r"`; rollback `COURTSIDE_COPULA=v0`.
+
 ## Note: live-slice tip times (2026-10-24)
 
 The live / live10 rows of the `+rx`, `+rb`, `+tr`, `+ep`, `+ms` and `+rw` entries were run in
@@ -667,3 +709,11 @@ slice game ran at the 19:30 ET default tip. Their paired diffs compare like with
 distorted information set (OFF CRPS 5.69 / 5.59 vs 5.64 / 5.53 with real tips; 19 % / 37 % of
 means equal). The `+us`, `+c1r`, `+pq`, `+gd` entries above use the real tips. See
 `docs/research/p8-e3.md` §4b.
+
+## +c1r ship choice (2026-10-24, orchestrator)
+- The agent's refit of the `+tr` remap and `STRETCH_TR` on c1r sims ("+c1r ship prep" above) is
+  calibrated, but vs `+c1r` on the v0 remap params it is better on 2023-24, neutral on 2024-25 and
+  RotoGuru, and worse on the 2025-26 slice (z +2.4 live, +2.8 live10, mostly stars). Both beat the
+  live stack on every set. Shipped the E3-tested configuration (v0 params, `STRETCH_TR`, which the
+  agent found calibrated on c1r sims: 24.20 % vs 24.24 %). The refit stays in the repo unselected
+  (`tail_remap.TR_C1R_CANDIDATE`); judge it later on the live shadow / 2026-27 grades.
