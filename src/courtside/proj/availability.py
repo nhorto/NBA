@@ -1001,7 +1001,7 @@ def _flag(name: str, default: bool) -> bool:
     return default
 
 
-PPLAYQ_DEFAULT = False                 # shipping = True here (env still overrides)
+PPLAYQ_DEFAULT = True                  # shipped 2026-10-24 (owner OK; env still overrides)
 PPLAYQ_ENV = "COURTSIDE_PPLAYQ"
 PPLAYQ = _flag(PPLAYQ_ENV, PPLAYQ_DEFAULT)
 PPLAYQ_TAG = "+pq"

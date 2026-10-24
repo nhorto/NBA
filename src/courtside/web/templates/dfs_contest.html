@@ -119,7 +119,7 @@
   </div>
 
   <h3 class="mini-head dfc-h3">Lineups</h3>
-  <p class="muted dfc-note">Each lineup&rsquo;s chances are simulated with the whole set entered, shown as ranges. Dupe risk is how likely others in the field hold the same eight players (proxy).</p>
+  <p class="muted dfc-note">Each lineup&rsquo;s chances are simulated with the whole set entered, shown as ranges. Dupe risk is how likely others in the field hold the same {{ "lineup, captain included" if s.is_showdown else "eight players" }} (proxy).</p>
   <ol class="dfs-topn">
     {% for lu in pf.lineups %}
     <li>
@@ -137,7 +137,7 @@
         <div class="dfs-card-body">
           <div class="table-scroll dfs-scroll">
           <table class="table dfs-lu">
-            <caption class="sr">Contest lineup {{ lu.rank }}, eight roster slots</caption>
+            <caption class="sr">Contest lineup {{ lu.rank }}, {{ "six" if s.is_showdown else "eight" }} roster slots</caption>
             <thead><tr><th scope="col">Slot</th><th scope="col">Player</th><th scope="col" class="num">Salary</th><th scope="col" class="num">Proj</th></tr></thead>
             <tbody>
             {% for p in lu.slots %}
@@ -189,7 +189,7 @@
         <input class="dfs-input" type="number" name="n" min="1" max="150" step="1" inputmode="numeric" value="{{ v.form.n }}" required></label>
       <label class="rs-field"><span>Max exposure per player <small>(% of lineups; applies from 5 entries)</small></span>
         <input class="dfs-input" type="number" name="max_exp" min="10" max="100" step="5" inputmode="numeric" value="{{ v.form.max_exp }}" required></label>
-      <label class="rs-field"><span>Most players two lineups may share <small>(of 8)</small></span>
+      <label class="rs-field"><span>Most players two lineups may share <small>(of {{ s.n_slots }})</small></span>
         <select class="dfs-input" name="gamma">{% for g in v.gamma_choices %}<option value="{{ g }}"{% if g|string == v.form.gamma %} selected{% endif %}>{{ g }}</option>{% endfor %}</select></label>
     </div>
     {% if v.players %}

@@ -969,6 +969,89 @@ def load_usage(conn: sqlite3.Connection, season: str, sp: dict, *, refit: bool =
     return p, D
 
 
+# ============================================================================== live switch (P8)
+#
+# `+us` (IMPROVEMENTS.md P8, docs/research/p8-e3.md): the sim's per-minute rates use usage v1's
+# per-player with/without factors for every absent regular (>= MIN_ABSENT_MPG) of the team in
+# each sim's availability draw, instead of the tier bump (which only fires when one of the top-2
+# stars is out). OFF by default (env COURTSIDE_USAGE=1; `set_usage`, or pipeline.set_usage to
+# keep MODEL_VERSION in step). Version `<model version>+us`; same bundle and seeds. Params fit on
+# the N_TRAIN_SEASONS seasons < S with the arm's rate state, cached per (S, rate state) at
+# `live_params_path`; the pair evidence (stint + box layers) is strictly before the day.
+# OFF: nothing of it runs (`copula.TeamSpec.usage` stays None).
+
+USAGE_DEFAULT = False
+USAGE_ENV = "COURTSIDE_USAGE"
+USAGE_TAG = "+us"
+
+
+def _env_on(name: str, default: bool) -> bool:
+    import os
+    v = os.environ.get(name, "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+USAGE = _env_on(USAGE_ENV, USAGE_DEFAULT)
+_LIVE: dict = {}
+
+
+def set_usage(on: bool) -> None:
+    global USAGE
+    USAGE = bool(on)
+
+
+def _sp_key(sp: dict) -> str:
+    import hashlib
+    return hashlib.sha1(json.dumps(sp, sort_keys=True, default=str).encode()).hexdigest()[:10]
+
+
+def live_params_path(season: str, sp: dict) -> Path:
+    from .. import config
+    return config.data_dir() / "proj" / f"usage_params_{season}_{_sp_key(sp)}.json"
+
+
+def live_model(conn: sqlite3.Connection, season: str, sp: dict, *,
+               log: Callable[[str], None] | None = None) -> tuple[UsageParams, UsageData]:
+    """(params, UsageData with the box layer prepared) for the sim of season S, loaded once per
+    process and (S, rate state). Params fit on the N_TRAIN_SEASONS seasons < S (cached at
+    `live_params_path`, fit there when missing)."""
+    key = (season, _sp_key(sp))
+    hit = _LIVE.get(key)
+    if hit is not None:
+        return hit
+    say = log or (lambda m: None)
+    t0 = time.time()
+    s0 = ST.sidx_of(season)
+    seasons = [ST.season_label(y) for y in range(s0 - N_TRAIN_SEASONS, s0 + 1)]
+    D = UsageData(conn, seasons, sp, log=log)
+    path = live_params_path(season, sp)
+    if path.exists():
+        p = UsageParams.from_json(path.read_text())
+    else:
+        p = fit_frame(D, (D.rows["season"] < season).to_numpy(), log=log)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(p.to_json())
+    predict_log(D, p)
+    if len(_LIVE) >= 2:
+        _LIVE.clear()
+    _LIVE[key] = (p, D)
+    say(f"usage v1 (+us) {season} ready in {time.time() - t0:.0f}s ({path.name})")
+    return p, D
+
+
+def team_matrix(model: tuple[UsageParams, UsageData], team_players: pd.DataFrame, day
+                ) -> dict:
+    """`pair_matrix` of one team on `day` with the pair evidence strictly before it
+    (team_players: player_id, mpg, r_<stat>, grp, star, regular)."""
+    p, D = model
+    pids = team_players["player_id"].to_numpy(np.int64)
+    return pair_matrix(p, team_players, D.evidence(day, pids))
+
+
 def evaluate(conn: sqlite3.Connection, season: str, sp: dict, *,
              n_train: int = N_TRAIN_SEASONS, log: Callable[[str], None] | None = None,
              **kw) -> dict:

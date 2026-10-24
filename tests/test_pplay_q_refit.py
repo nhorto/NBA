@@ -105,12 +105,12 @@ def _flag_in_subprocess(value: str | None) -> str:
     return out.stdout.strip()
 
 
-def test_switch_defaults_off_and_reads_the_environment():
-    assert av.PPLAYQ_DEFAULT is False
+def test_switch_defaults_on_and_reads_the_environment():
+    assert av.PPLAYQ_DEFAULT is True                     # shipped 2026-10-24
     assert av.PPLAYQ_TAG == "+pq"
-    assert _flag_in_subprocess(None) == "False False"
-    assert _flag_in_subprocess("1") == "True False"
-    assert _flag_in_subprocess("0") == "False False"
+    assert _flag_in_subprocess(None) == "True True"
+    assert _flag_in_subprocess("1") == "True True"
+    assert _flag_in_subprocess("0") == "False True"
 
 
 def test_off_never_calls_the_refit(conn, monkeypatch):

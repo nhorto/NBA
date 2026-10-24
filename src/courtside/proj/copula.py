@@ -479,6 +479,10 @@ class TeamSpec:
     players: pd.DataFrame
     minutes: ScenarioMinutes
     implied: float
+    # usage v1 (+us, `usage.USAGE`): {stat: (n, n) log-factor matrix L[j, i]} from
+    # `usage.team_matrix`; the sim's per-minute rates use exp(clip(sum over absent j of L[j, i]))
+    # instead of the tier bump. None (OFF): the tier bump, exactly as before.
+    usage: dict | None = None
 
 
 @dataclass
@@ -773,6 +777,27 @@ def _scenario_fields(scen: dict) -> dict:
             "kept": {t: v[2] for t, v in scen.items()}}
 
 
+def _usage_means(ts: TeamSpec, sp: dict, x: np.ndarray, played: np.ndarray,
+                 absent: np.ndarray, po: dict | None, bo: dict | None) -> dict:
+    """Usage v1 (+us): per DK stat (S, n) expected counts given the sim's minutes, rate x m x
+    f(m/mpg) (no tier bump) x the usage factor of the sim's absent set (`usage.factor_matrix`
+    of `ts.usage`); the minutes-ratio plan grids and the blowout read as the bump path's."""
+    from . import usage as U
+    pl = ts.players.reset_index(drop=True)
+    if po is None:
+        GS = _stat_grids(pl, sp)
+
+        def look_s(key, rl, xx, GS=GS):
+            return _lookup(GS[key], rl, xx)
+    else:
+        look_s = _PlanGrids(_stat_grids, pl, sp, po["plan"], po["assign"]).look
+    if bo is not None:
+        look_s = _bo_look(look_s, bo["k"], played)
+    none = np.zeros(x.shape, np.int64)
+    F = U.factor_matrix(ts.usage, absent, U.CAP)
+    return {s: look_s(s, none, x) * played * F[s] for s in DK_STATS}
+
+
 def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dict,
                   n_sims: int, seed) -> GameSims:
     """Joint DK FP sims for one game (module doc, steps 1-5). Deterministic in `seed`."""
@@ -815,15 +840,22 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
         bonus = look("bonus", None, x) * played
         if bo is not None:                    # blowout arm: f read net of the margin curve
             look = _bo_look(look, bo["k"], played)
-        raw_pts = look("pts", role, x) * played
-        raw_oth = look("oth", role, x) * played
+        if ts.usage is not None:              # usage v1 (+us): per-stat counts x factors
+            us = _usage_means(ts, sp, x, played, absent, po, bo)
+            raw_pts, raw_oth = us["pts"], sum(DK_W[s] * us[s] for s in OTHER_STATS)
+        else:
+            raw_pts = look("pts", role, x) * played
+            raw_oth = look("oth", role, x) * played
         g = team_pts[side] / max(mean_pts[side], 1.0)
         rec = _reconcile(ts, ro, raw_pts, raw_oth, g, cp)
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
         mu = pts + oth + bonus
         stats = {"pts": pts}
         for s in ("reb", "ast", "fg3m"):
-            stats[s] = look(s, role, x) * played * _kp(k_pace)
+            if ts.usage is not None:
+                stats[s] = us[s] * _kp(k_pace)
+            else:
+                stats[s] = look(s, role, x) * played * _kp(k_pace)
         rec.update(sinfo)
         rec["team"] = ts.team
         teams_info[ts.team] = rec
@@ -1304,14 +1336,21 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
         if bo is not None:                    # blowout arm: f read net of the margin curve
             look = _bo_look(look, bo["k"], played)
             look_s = _bo_look(look_s, bo["k"], played)
-        raw_pts = look("pts", role, x) * played
-        raw_oth = look("oth", role, x) * played
+        if ts.usage is not None:              # usage v1 (+us): per-stat counts x factors
+            us = _usage_means(ts, sp, x, played, absent, po, bo)
+            raw_pts, raw_oth = us["pts"], sum(DK_W[s] * us[s] for s in OTHER_STATS)
+        else:
+            raw_pts = look("pts", role, x) * played
+            raw_oth = look("oth", role, x) * played
         g = team_pts[side] / max(mean_pts[side], 1.0)
         rec = _reconcile(ts, ro, raw_pts, raw_oth, g, cp)
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
         means = {"pts": pts}
         for s in OTHER_STATS:
-            means[s] = look_s(s, role, x) * played * _kp(k_pace)
+            if ts.usage is not None:
+                means[s] = us[s] * _kp(k_pace)
+            else:
+                means[s] = look_s(s, role, x) * played * _kp(k_pace)
         rec.update(sinfo)
         rec["team"] = ts.team
         teams_info[ts.team] = rec

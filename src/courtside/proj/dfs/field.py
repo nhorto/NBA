@@ -218,6 +218,61 @@ def field_k() -> int:
     return FIELD_K
 
 
+# Showdown captain term (IMPROVEMENTS.md B6, PLAYERS.md §5.7, docs/research/b6-d10.md; switch
+# COURTSIDE_SD_CPT, OFF by default). OFF, the CPT column of a Showdown allocation uses the UTIL
+# utility, so captains differ from UTIL only through the salary shadow price at 1.5x salary. ON,
+# the CPT column gets its own star-weighted utility (`cpt_utility`):
+#     u_cpt_i = conc * ( c_value*z(value_i) + c_proj*z(pub_i) + c_star*log(pub_i / pub_max)
+#                        + b_total*z(total_i) + b_repl*repl_i + b_q*q_i + b_bench*bench_i )
+# pub_max = the slate's best public projection, so the CPT weight carries a (pub_i / pub_max)
+# ^ (conc * c_star) star factor: a smooth version of the public-projection rank (a hard rank put
+# 28 % vs 11 % CPT on two players projected 41.1 and 41.0 on slate 154826). Value per $1k matters
+# much less than at UTIL. Measured on the 15 stored Showdown slates (research/b6_showdown_own.py):
+# OFF, the three best value plays outside the top-6 projections get 14 % of their ownership at CPT
+# vs 17 % for the top-3 projections (1/6 = proportional), and the top CPT is 16 %.
+# HAND-SET PRIOR, not fitted: no Showdown standings had been uploaded by 2026-10-24 and no public
+# Showdown ownership exists in our data. Version tag "+cpt" on the ownership proxy (and the field
+# built from it) of Showdown slates only; Classic is untouched either way.
+SD_CPT_ENV = "COURTSIDE_SD_CPT"
+SD_CPT_DEFAULT = False
+SD_CPT_TAG = "+cpt"
+CPT_PARAMS: dict[str, float] = {
+    "c_value": 0.40,        # z(public value per $1k) at CPT (UTIL: b_value 1.10)
+    "c_proj": 0.70,         # z(public projection) at CPT (UTIL on one game: b_proj + b_small)
+    "c_star": 3.00,         # log(public projection / the slate's best): star factor
+}
+
+
+def sd_cpt_mode(v: Any, default: bool = SD_CPT_DEFAULT) -> bool:
+    """'' / None -> `default`; 1 on true yes -> True; 0 off false no -> False."""
+    if v is None:
+        return bool(default)
+    if isinstance(v, bool):
+        return v
+    x = str(v).strip().lower()
+    if x == "":
+        return bool(default)
+    if x in ("1", "on", "true", "yes"):
+        return True
+    if x in ("0", "off", "false", "no"):
+        return False
+    log.warning("%s=%r not understood; Showdown captain term off", SD_CPT_ENV, v)
+    return False
+
+
+SD_CPT = sd_cpt_mode(os.environ.get(SD_CPT_ENV), SD_CPT_DEFAULT)
+
+
+def set_sd_cpt(on: Any) -> None:
+    """Turn the Showdown captain term on / off for later proxies (the env is read at import)."""
+    global SD_CPT
+    SD_CPT = sd_cpt_mode(on, False)
+
+
+def sd_cpt() -> bool:
+    return SD_CPT
+
+
 # ============================================================================== inputs
 
 def _f(v) -> float | None:
@@ -535,6 +590,25 @@ def utility(inputs: pd.DataFrame, params: Mapping[str, float], archetype: str = 
     return np.where(active, u, -np.inf), active, feats
 
 
+def cpt_utility(inputs: pd.DataFrame, params: Mapping[str, float], archetype: str,
+                feats: Mapping[str, Any], active: np.ndarray) -> np.ndarray:
+    """The Showdown captain utility (B6, `CPT_PARAMS`): star-weighted by the public projection
+    relative to the slate's best, with the UTIL utility's team-total, replacement, Q and bench
+    terms. -inf where inactive."""
+    P = {**DEFAULT_PARAMS, **CPT_PARAMS, **(params or {})}
+    pub = np.asarray(feats["pub"], float)
+    ref = active & (pub >= 8)
+    top = float(np.max(pub[active])) if active.any() else 1.0
+    star = np.log(np.clip(pub, MIN_PUB_PROJ, None) / max(top, MIN_PUB_PROJ))
+    zt = _z(inputs["team_total"].to_numpy(float), ref)
+    conc = ARCHETYPES[archetype]["conc"]
+    u = conc * (P["c_value"] * _z(np.asarray(feats["value"], float), ref)
+                + P["c_proj"] * _z(pub, ref) + P["c_star"] * star
+                + P["b_total"] * zt + P["b_repl"] * feats["repl"] + P["b_q"] * feats["q"]
+                + P["b_bench"] * feats["bench"])
+    return np.where(active, u, -np.inf)
+
+
 def sinkhorn(weights: np.ndarray, counts: np.ndarray, row_cap: float = ROW_CAP,
              iters: int = 300, tol: float = 1e-9) -> np.ndarray:
     """Balance a non-negative (players x slots) matrix so each column sums to its slot count and
@@ -558,10 +632,13 @@ def sinkhorn(weights: np.ndarray, counts: np.ndarray, row_cap: float = ROW_CAP,
 def ownership_proxy(inputs: pd.DataFrame, pool: SlatePool | Sequence[PoolPlayer],
                     rules: Rules | None = None, *, archetype: str = "large_gpp",
                     params: Mapping[str, float] | None = None, version: str | None = None,
-                    spend: float | None = None, row_cap: float | None = None) -> OwnershipProxy:
+                    spend: float | None = None, row_cap: float | None = None,
+                    cpt: bool | None = None) -> OwnershipProxy:
     """The ownership proxy (Σ own = number of slots). See the module docstring. `spend`
     (fraction of the cap the field spends on average) defaults to SPEND; `row_cap` (most
-    ownership any one player gets) to the archetype's (`row_cap_for`)."""
+    ownership any one player gets) to the archetype's (`row_cap_for`). `cpt` (None: the
+    COURTSIDE_SD_CPT switch, `sd_cpt()`): the Showdown captain term (B6, `cpt_utility`) for
+    the CPT column; ignored on rosters without a CPT slot."""
     spend = SPEND if spend is None else float(spend)
     row_cap = row_cap_for(archetype) if row_cap is None else float(row_cap)
     rules = rules or (pool.rules if isinstance(pool, SlatePool) else None)
@@ -582,8 +659,18 @@ def ownership_proxy(inputs: pd.DataFrame, pool: SlatePool | Sequence[PoolPlayer]
     s_k = S / 1000.0
     umax = np.max(u[active]) if active.any() else 0.0
     base = np.where(active, np.exp(np.clip(u - umax, -50, 0)), 0.0)
+    use_cpt = (SD_CPT if cpt is None else bool(cpt)) and "CPT" in names
+    if use_cpt:                         # B6: the CPT column gets its own utility
+        uc = cpt_utility(inputs, params, archetype, feats, active)
+        ucmax = np.max(uc[active]) if active.any() else 0.0
+        base2 = np.repeat(base[:, None], len(names), axis=1)
+        base2[:, names.index("CPT")] = np.where(active, np.exp(np.clip(uc - ucmax, -50, 0)), 0.0)
+        P = {**P, **CPT_PARAMS, **{k: v for k, v in params.items() if k in CPT_PARAMS}}
 
     def alloc(lam: float) -> np.ndarray:
+        if use_cpt:
+            W = base2 * np.exp(-lam * (s_k - s_k[E].mean() if E.any() else 0)) * E
+            return sinkhorn(W, counts, row_cap)
         W = base[:, None] * np.exp(-lam * (s_k - s_k[E].mean() if E.any() else 0)) * E
         return sinkhorn(W, counts, row_cap)
 
@@ -614,7 +701,8 @@ def ownership_proxy(inputs: pd.DataFrame, pool: SlatePool | Sequence[PoolPlayer]
     inputs["replacement"] = feats["repl"].astype(bool)
     return OwnershipProxy(pids=list(inputs["pid"]), names=list(inputs["name"]), own=X.sum(1),
                           by_slot=X, slot_names=names, slot_counts=counts, archetype=archetype,
-                          version=f"{version}/{archetype}", params=P, inputs=inputs, lam=lam,
+                          version=f"{version}/{archetype}" + (SD_CPT_TAG if use_cpt else ""),
+                          params=P, inputs=inputs, lam=lam,
                           spend=spent(X), row_cap=row_cap)
 
 
@@ -711,7 +799,10 @@ def fit_from_uploads(conn: sqlite3.Connection, *, save: bool = True,
         out = []
         for sid, pool, inp, arch, y in gs:
             op = ownership_proxy(inp, pool, archetype=arch, params=params, version="fit")
-            pred = dict(zip(op.pids, op.own))
+            # Showdown uploads store the UTIL %Drafted (standings._ownership_rows; CPT in the
+            # upload's detail), so a Showdown contest is compared on the UTIL column (B6)
+            pred = dict(zip(op.pids, op.by_slot[:, op.slot_names.index("UTIL")]
+                            if "CPT" in op.slot_names and "UTIL" in op.slot_names else op.own))
             out.append((np.array([pred.get(p, 0.0) for p in inp["pid"]]), y))
         return out
 
@@ -1060,6 +1151,13 @@ class Field:
                 "salary_use": self.salary_use(), "seconds": round(self.seconds, 2), **self.info}
 
 
+def field_version(op: "OwnershipProxy | None" = None, k: bool = False) -> str:
+    """The field proxy's version: FIELD_VERSION, + FIELD_K_TAG for K fields (D5), + SD_CPT_TAG
+    when the ownership proxy carries the Showdown captain term (B6)."""
+    return (FIELD_VERSION + (FIELD_K_TAG if k else "")
+            + (SD_CPT_TAG if op is not None and SD_CPT_TAG in op.version else ""))
+
+
 def _key(row: np.ndarray, cpt_first: bool) -> tuple:
     return (int(row[0]),) + tuple(sorted(int(x) for x in row[1:])) if cpt_first \
         else tuple(sorted(int(x) for x in row))
@@ -1321,6 +1419,8 @@ def build_field(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
               salary=sal_u, field_size=contest.field_size, mix=mix, archetype=archetype,
               ownership=op, n_solves=len(opt_pairs), opt_keys=okeys, dupe_c=dupe_c,
               cap=rules.salary_cap, slot_salary=S, opt_solves=opt_pairs)
+    if SD_CPT_TAG in op.version:        # B6 captain term ON (Showdown only)
+        f.version = field_version(op)
     f.info["contest"] = {"contest_id": contest.contest_id, "name": contest.name,
                          "source": contest.source}
     f.info["opt_unique"] = len(okeys)
@@ -1480,10 +1580,13 @@ def build_fields(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
         f = build_field(players, inputs, contest, rules=rules, n=n, mix=mix,
                         archetype=archetype, ownership=opj, n_solves=n_solves, seed=seed + j,
                         ipf_iters=ipf_iters, threads=threads, opt_pairs=shared)
-        f.version = FIELD_VERSION + FIELD_K_TAG
+        f.version = field_version(op, k=True)
         shared = f.opt_solves
         fields.append(f)
-    return FieldSet(fields, op, sdv, unc, seconds=time.perf_counter() - t0)
+    fs = FieldSet(fields, op, sdv, unc, seconds=time.perf_counter() - t0)
+    if SD_CPT_TAG in op.version:        # B6 captain term ON (Showdown only)
+        fs.version = field_version(op, k=True)
+    return fs
 
 
 def _evaluate_k(fs: FieldSet, fp: np.ndarray, contest: Contest, lineups: Sequence, *,
@@ -1912,7 +2015,7 @@ def score_run(conn: sqlite3.Connection, run_id: str, *, slate_id=None,
     if write:
         store_ownership(conn, run_id, own_gpp, commit=commit)
     out = {"status": "ok", "label": LABEL, "run_id": run_id, "version": own_gpp.version,
-           "field_version": FIELD_VERSION + (FIELD_K_TAG if K else "")}
+           "field_version": field_version(own_gpp, k=bool(K))}
     if ctx["sims"] is None:
         return {**out, "status": "no_sims", "lineups": 0,
                 "seconds": round(time.perf_counter() - t0, 2)}

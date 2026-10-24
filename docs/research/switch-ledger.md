@@ -503,3 +503,167 @@ one-way-by-date SEs are too small (IMPROVEMENTS E2).
   `reconcile_team` without `rw` equals a frozen HEAD copy).
 - **Decision:** keep OFF. The fitted version is the uniform factor; the version P4 describes is
   worse on every set and fails the tier check on three.
+
+## +cpt (Showdown captain ownership term, B6) -- keep OFF until Showdown standings exist, 2026-10-24; committed OFF
+
+- **What:** `COURTSIDE_SD_CPT` (`field.SD_CPT_DEFAULT = False`). The CPT column of a Showdown
+  ownership proxy gets its own utility (`field.cpt_utility`, hand-set `CPT_PARAMS`: value 0.4,
+  projection 0.7, star term 3.0 log(pub / best pub)) instead of the UTIL one. Version tag `+cpt` on
+  the ownership proxy and on the field (`field-proxy-1.2+cpt`, `+k+cpt` with D5) of Showdown slates
+  only; Classic is untouched. Write-up `docs/research/b6-d10.md`.
+- **Metric (pre-registered):** per uploaded Showdown contest, CPT and UTIL %Drafted vs the proxy
+  (`courtside dfs showdown-own`): MAE in pp (SE two-way slate x player, `metrics.paired_cluster2`)
+  and per-contest rank correlation (player bootstrap SE); ON minus OFF paired. Bar: CPT MAE lower by
+  > 2 SE, UTIL MAE not worse, CPT rank corr not lower, on >= 3 contests from >= 2 slates.
+- **Data:** none yet. No Showdown standings uploaded (the 4 uploads are Classic slate 154575) and no
+  public Showdown ownership in our data. No accuracy number exists.
+- **Descriptive (15 stored Showdown slates, large GPP, mean (SE over slates)):**
+
+| | OFF | ON |
+|---|---|---|
+| lambda (salary shadow price) | -0.082 (0.061) | -0.034 (0.064) |
+| CPT own, best projection | 0.160 (0.014) | 0.179 (0.014) |
+| CPT own, top-3 projections | 0.419 (0.031) | 0.495 (0.029) |
+| CPT share of own ownership, top-3 projections | 0.174 (0.007) | 0.213 (0.008) |
+| CPT share of own ownership, 3 best value plays | 0.142 (0.014) | 0.038 (0.011) |
+| rank corr (CPT own, public projection) | 0.876 (0.014) | 0.971 (0.005) |
+
+- **Effect downstream (D10 replay):** the builder vs Top N ordering is the same under either field
+  (E[payout] ratio at N = 20: 1.48 (0.15) OFF field, 1.49 (0.15) `+cpt` field).
+- **OFF:** bit-identical. Linux goldens from HEAD 91d131d (`tests/test_sd_cpt.py`: proxy `by_slot`
+  x 3 archetypes and a field, synthetic Showdown and Classic pools). On the Mac, 60 hashes (15 real
+  Showdown slates x 3 archetypes + a field each), switch unset vs the HEAD tree: identical.
+- **Decision:** keep OFF. Re-test on the first Showdown standings upload(s).
+
+## +us (usage v1 redistribution, P8) -- keep OFF, live shadow registered 2026-10-24 (owner OK)
+
+- **What:** `COURTSIDE_USAGE` (`usage.USAGE_DEFAULT = False`; `pipeline.set_usage`). The sim's
+  per-minute rates use usage v1's per-player with/without factors (T2.3: tier × position-pair
+  prior on the absentee's share, stint on/off and box with/without layers, log-additive, capped
+  ±0.4) for every absent regular (>= 10 mpg) in each availability draw, instead of the tier bump
+  that only fires when a top-2 star is out. Params fit on the 5 seasons < S with the arm's rate
+  state (`usage_params_<S>_<sp hash>.json`); pair evidence strictly before the day. Version
+  `<model version>+us` (after `+rw`); same bundle and seeds. Write-up `docs/research/p8-e3.md`;
+  `research/p8_e3_eval.py`.
+- **Metric:** DK CRPS (and MAE), paired `+us` minus OFF, E[min] >= 10 in either arm, DNP = 0, SE
+  two-way date × player (`metrics.paired_cluster2`). Value = E4 `corr(ours − s, actual − s)` ON
+  − OFF on the DFS population, s per date from the real salary (RotoGuru) or DK FPPG to date
+  (elsewhere), players known out removed, SE by date.
+- **Arm:** the live stack `pathA-v0.3+mf+ep+ms+p2+rx+rb+tr`, 4,000 sims. Live / live10 with the
+  real tip times (see the tip-time note below). Rows: Mac `~/Developer/courtside-compute/p8e3/out/`.
+
+| set | n | diff | SE 1-way | SE 2-way | z 2-way | MAE diff (z) | worst tier (z) | star-out rows z | non-star rows z | value diff (z) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2023-24 | 21914 | -0.0021 | 0.0010 | 0.0011 | -1.79 | -0.0035 (-2.06) | bench -0.13 | -2.42 | -0.00 | +0.0010 (+2.65) |
+| 2024-25 | 22068 | -0.0035 | 0.0010 | 0.0011 | -3.33 | -0.0071 (-3.63) | bench +0.49 | -3.48 | -0.66 | +0.0015 (+4.00) |
+| live | 15061 | +0.0004 | 0.0013 | 0.0013 | +0.28 | -0.0021 (-0.93) | star +0.87 | +0.05 | +0.13 | +0.0004 (+1.00) |
+| live10 | 14934 | -0.0007 | 0.0013 | 0.0013 | -0.57 | -0.0038 (-1.74) | star +0.42 | -0.75 | -0.17 | +0.0006 (+1.41) |
+| RG 2019-20 | 18841 | -0.0032 | 0.0011 | 0.0012 | -2.73 | -0.0051 (-2.90) | bench -0.65 | -1.53 | -2.63 | +0.0005 (+2.72) |
+| RG 2020-21 | 19243 | -0.0049 | 0.0011 | 0.0012 | -4.21 | -0.0083 (-4.43) | bench -1.96 | -2.99 | -3.17 | +0.0007 (+4.92) |
+| 2023-25 pooled | 43982 | -0.0028 | 0.0007 | 0.0008 | -3.44 | -0.0053 (-3.97) | bench +0.27 | -4.06 | -0.44 | +0.0013 (+4.76) |
+| 2025-26 avail (full season, check) | 22510 | -0.0014 | 0.0009 | 0.0009 | -1.53 | -0.0039 (-2.41) | bench +1.23 | -1.77 | -0.17 | +0.0009 (+3.24) |
+
+- **Per-set sign:** negative on the four backtest sets; live / live10 neutral. 2025-26 under the
+  avail oracle is weaker (z −1.53) than 2023-25, so part of the live gap is the season and part is
+  the uncertain availability (no live absentee has P(available) exactly 0).
+- **Tiers:** none worse by 2 SE on any set. Means move 0.13 DK on average (0.22 on teammates of
+  an absent rotation player): stars +0.10 to +0.13, rotation −0.03 to −0.08.
+- **OFF:** bit-identical (HEAD 91d131d vs the working tree, live stack: 2 `project_historical`
+  days and `project_slate` 154575, 5.05M fp values; the full OFF harness rows of 2023-24,
+  2024-25 and 2019-20 equal the `p46` rows exactly; `tests/test_usage_switch.py`).
+- **Decision:** keep OFF. Consistent on the four reused backtest sets and on the value metric,
+  but the untouched 2025-26 slice does not confirm it. Recommend a live shadow (registry entry in
+  `docs/research/p8-e3.md` §4).
+
+## +pq on the live stack (E3 re-test, 2026-10-24) -- SHIPPED 2026-10-24 (owner OK)
+
+- **Set:** 2025-26 slice, lock−10 (`live10`), real tips, offsets fit leaving the month out
+  (`pq_lomo.json`, as `pplay_q_refit.py slice`); arm = the live stack. Lock−45 is identical by
+  construction (checked: 0 rows move).
+
+| set | n | diff | SE 2-way | z 2-way | MAE z | worst tier (z) | value diff (z) |
+|---|---|---|---|---|---|---|---|
+| live10 | 14972 | -0.0137 | 0.0053 | -2.56 | -3.33 | rotation +0.02 | +0.0057 (+3.38) |
+
+- **Decision:** the 2026-10-22 result holds on the current stack (was −2.7 SE on `pathA-v0.3+p2`).
+  Owner decision; the `+pq` shadow only sees it on the latest pregame run, so it will gather few
+  changed rows.
+
+## +gd on the live stack (E3 re-test, 2026-10-24) -- neutral; leave OFF until the shadow grades
+
+- **Set:** 2025-26 slice with `injury_snapshots.game_date` copied in from a backfilled snapshot
+  (178,512 / 181,172 rows; the 2,660 unmatched are 2026-10 ESPN rows). OFF on that DB equals OFF on
+  the original DB exactly (both locks, 26,626 rows).
+
+| set | n | diff | SE 2-way | z 2-way | worst tier (z) | value diff (z) |
+|---|---|---|---|---|---|---|
+| live | 15071 | +0.0008 | 0.0091 | +0.09 | starter +1.39 | -0.0017 (-0.86) |
+| live10 | 14943 | -0.0005 | 0.0051 | -0.11 | starter +0.82 | -0.0010 (-0.84) |
+
+- **Decision:** neutral on DK CRPS; it remains a correctness cleanup (B8). The active `+gd` shadow
+  (P(play) log loss at 10:00) is the right judge.
+
+## E3 stack test (forward selection over the OFF player switches) -- 2026-10-24
+
+- **Method:** `docs/research/p8-e3.md` §3. Base = the live stack `pathA-v0.3+mf+ep+ms+p2+rx+rb+tr`;
+  each step adds the candidate with the most negative pooled 2023-24 + 2024-25 harness DK CRPS z
+  (two-way date × player), if z <= −2, both seasons negative and no tier past +2 SE. The selected
+  set is then confirmed on live / live10 (real tips) and RotoGuru 2019-20 / 2020-21. 4,000 sims,
+  same seeds. Rows: Mac `~/Developer/courtside-compute/p8e3/out/`.
+- **Not in the selection:** `+pq` (lock−10 only) and `+gd` (reports only) are no-ops on the avail
+  harness and were tested on the slice directly (entries above); `+lf`, `+rs` have no historical
+  inputs; `+nsl`, `+as` are game-model switches.
+
+| step | base | +us | +c1r | +mr | +rw | +bo | +tm | +rr | added |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | live stack | **-3.44** | -3.08 | -2.47 | -1.23 | -0.68 | +0.35 | +3.44 (starter +2.93) | +us |
+| 2 | + us | -- | **-3.75** | -1.98 | -1.15 | -0.93 | +0.54 | -- | +c1r |
+| 3 | + us + c1r | -- | -- | -1.89 | -- | -- | -- | -- | stop |
+
+(pooled 2023-25 z, two-way; per-season diffs and tiers in `p8-e3.md` §3.2-3.3.)
+
+- **Confirmation, `+us +c1r` vs the live stack (z two-way):** 2023-24 −2.73, 2024-25 −4.87, live
+  −3.48, live10 −3.53, RG 2019-20 −3.98, RG 2020-21 −6.05; no tier worse on any set; value
+  +0.0005 to +0.0017 (z +1.3 to +5.2).
+- **Increments:** `+c1r` given `+us`: live −6.63, live10 −4.95, RG −3.18 / −3.84, harness −3.75.
+  `+us` given `+c1r`: live −0.22, live10 −1.15, RG pooled −5.03, harness −3.59. The live gain of
+  the pair is `+c1r`'s.
+- **Decision (ranked):** (1) `+c1r` ship, owner decision (entry below); (2) `+pq` ship, owner
+  decision; (3) `+us` live shadow; (4) `+mr`, `+rw`, `+bo`, `+tm`, `+gd` stay OFF; (5) `+rr` retire.
+
+## +c1r on the live stack (E3, 2026-10-24) -- owner OK; ships after the +tr / STRETCH_TR refit on c1r sims
+
+- **What:** `COURTSIDE_COPULA=v1r` (`pipeline.COPULA_DEFAULT = "v0"`), first evaluated 2026-10-21
+  on `pathA-v0.3(+mf)`. Bundle `<arm>_c1r` = the arm's bundle + `copula.fit_copula_v1r` on seasons
+  < S (13 s); version `<arm>+c1r`; seeds unchanged.
+- **Metric / arm / population:** as `+us` above; c1r bundles fit per season in the scratch data dir.
+
+| set | n | diff | SE 1-way | SE 2-way | z 2-way | MAE diff (z) | worst tier (z) | starter MAE z | value diff (z) |
+|---|---|---|---|---|---|---|---|---|---|
+| 2023-24 | 21914 | -0.0009 | 0.0006 | 0.0006 | -1.43 | +0.0002 (+0.60) | starter +1.62 | +1.35 | +0.0001 (+1.01) |
+| 2024-25 | 22068 | -0.0020 | 0.0006 | 0.0006 | -3.30 | -0.0004 (-1.38) | starter +0.55 | +1.61 | +0.0001 (+2.14) |
+| live | 15061 | -0.0044 | 0.0007 | 0.0008 | -5.63 | -0.0000 (-0.08) | starter -1.96 | +1.43 | +0.0001 (+1.42) |
+| live10 | 14934 | -0.0032 | 0.0007 | 0.0008 | -4.03 | +0.0002 (+0.58) | bench -1.21 | +0.75 | +0.0001 (+1.16) |
+| RG 2019-20 | 18841 | -0.0017 | 0.0006 | 0.0006 | -3.06 | +0.0004 (+1.19) | starter +0.84 | +2.93 | -0.0000 (-0.50) |
+| RG 2020-21 | 19243 | -0.0020 | 0.0006 | 0.0007 | -2.96 | +0.0001 (+0.27) | starter +0.63 | +4.33 | +0.0000 (+0.81) |
+
+- **Per-set sign:** negative on all six; strongest on the 2025-26 slice, the set its original
+  shape choices did not use.
+- **Tiers:** CRPS no tier worse than +1.62 (2023-24 starter). Starter MAE is worse (+0.8 to +4.3
+  z), as at its first evaluation (exact DD/TD bonus); overall MAE flat.
+- **OFF:** `COPULA` "v0" runs none of it (2026-10-21 identity runs). The `+us` hook added to
+  `simulate_game_v1` is inert with `+us` OFF: `+c1r` ON, HEAD 91d131d vs the working tree,
+  `project_historical` 2024-01-10, players / stats / sims (1.23M fp values) / meta identical.
+- **To ship:** copy `bundle_2026-27_v1_cx_mf_ep_ms_c1r.json` and `corr_2026-27.json` from Mac
+  `courtside-compute/p8e3/data_ship/proj/` to prod `var/proj/`, set `COPULA_DEFAULT = "v1r"`;
+  roll back with `COURTSIDE_COPULA=v0`. Then refit `+tr`'s map and `xfactor.STRETCH_TR` on c1r
+  sims and re-check props.
+
+## Note: live-slice tip times (2026-10-24)
+
+The live / live10 rows of the `+rx`, `+rb`, `+tr`, `+ep`, `+ms` and `+rw` entries were run in
+scratch data dirs without `raw/espn_odds/scoreboard` and without 2025-26 `games` rows, so every
+slice game ran at the 19:30 ET default tip. Their paired diffs compare like with like, but on a
+distorted information set (OFF CRPS 5.69 / 5.59 vs 5.64 / 5.53 with real tips; 19 % / 37 % of
+means equal). The `+us`, `+c1r`, `+pq`, `+gd` entries above use the real tips. See
+`docs/research/p8-e3.md` §4b.

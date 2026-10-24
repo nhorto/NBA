@@ -187,6 +187,20 @@ projection joins. The upside is in four places:
   current proxy.
 - **Priority:** low unless the owner plays Showdown (they mostly play Classic).
 
+- **Status 2026-10-24: built behind `COURTSIDE_SD_CPT` (`+cpt` on the own/field proxy version,
+  Showdown only; OFF); keep OFF until Showdown standings exist** (`docs/research/b6-d10.md`).
+  - **Measured first** (15 stored Showdown slates): λ ≈ 0 (−0.08 ± 0.06, < 0 on 9/15); where
+    negative it favours expensive captains, as §9 said (+$545 CPT mean salary vs λ = 0). The real
+    defect: OFF captains value plays almost as often per unit of ownership as stars (CPT share
+    0.142 vs 0.174 for the top-3 projections).
+  - **ON:** `field.cpt_utility`, a hand-set prior, star-weighted by (pub / best pub)^3 with value
+    0.4 (UTIL 1.1). Value plays' CPT share 0.038, rank corr (CPT, public projection) 0.97 vs 0.88.
+  - **No accuracy number yet:** no Showdown standings uploaded (all uploads are Classic) and no
+    public Showdown ownership in our data. `courtside dfs showdown-own` reports CPT and UTIL
+    MAE / rank corr OFF vs ON with SEs once one is uploaded.
+  - `fit_from_uploads` now compares Showdown contests on the UTIL column (latent mismatch; no
+    effect today). OFF bit-identical (Linux goldens + 60 hashes on the real slates).
+
 ### B7. Minor inconsistencies (L / S)
 - **Status 2026-10-23: props φ and fringe parts done, uncommitted** (`docs/research/b7-oos.md`).
   The minutes-eval sd part is now done too (below).
@@ -419,6 +433,7 @@ projection joins. The upside is in four places:
 - **Depends on:** B2 (fix the target first).
 
 ### P5. Ship the switches that clear the bar (M / S; owner decision)
+- **Status 2026-10-24 (evening): `+pq` SHIPPED** (owner OK; rollback `COURTSIDE_PPLAYQ=0`). `+c1r` approved by the owner; ships after the `+tr`/`STRETCH_TR` refit on c1r sims.
 - **Status 2026-10-23: `+mf` shipped** (owner OK; commit 5598456; live `pathA-v0.3+mf+p2`; pre-fit
   bundle copied to prod; rollback `COURTSIDE_MINFIX=0`). Next: `+pq`.
 - **`+mf` (MINFIX):**
@@ -469,6 +484,20 @@ projection joins. The upside is in four places:
     35 min. 4/46 had no re-run before tip (the 10-21 missed lock10).
 
 ### P8. Usage redistribution beyond the top-2 star bump (M / M)
+- **Status 2026-10-24 (evening): `+us` added as a live shadow** (owner OK; registry arm `+us`, 21 nights; usage params + stint tallies in prod `var/proj/`).
+- **Status 2026-10-24: built behind `COURTSIDE_USAGE` (`+us`, OFF); keep OFF, run as a live
+  shadow** (`docs/research/p8-e3.md`, ledger `+us`). OFF is bit-identical (HEAD vs tree: 2 days +
+  1 slate, 5.05M fp values; whole-season OFF harness rows equal the `p46` rows).
+  - Usage v1's with/without factors (every absent regular >= 10 mpg, per DK stat, capped ±0.4)
+    replace the tier bump in the sim, per availability draw (`copula._usage_means`, v0 and v1);
+    params fit on the 5 seasons < S per rate state.
+  - DK CRPS z (two-way): harness −1.79 / −3.33, RotoGuru −2.73 / −4.21, live +0.28, live10
+    −0.57; no tier worse by 2 SE (worst live star +0.87). Value ranking (E4) better on every set:
+    +0.0013 (z +4.8) harness, +0.0006 (z +5.3) RotoGuru, z +1.0 / +1.4 live / live10.
+  - The gain is on teammates of an absent star (2023-25 z −4.1); only-non-star absences gain on
+    RotoGuru (z −4.0) but not 2023-25 (−0.4). 2025-26 under the avail oracle: z −1.5.
+  - To shadow: registry entry + `shadows.SWITCHES["+us"]` + `usage_params_2026-27_8cb7bb0a1b.json`
+    and `usage_stint_tallies.pkl` in prod `var/proj/` (`p8-e3.md` §4).
 - **Where:** live redistribution is a tier bump only when one of a team's top-2 stars is out
   (`pipeline.py:~919-930`, `state.py:~702`). A third starter out gives no per-minute shift.
   Usage v1 barely moved MAE (−0.006).
@@ -723,6 +752,22 @@ OFF.
 Point Showdown users at the contest builder (joint sims carry single-game correlation) rather
 than Top N by mean. Depends on B6.
 
+- **Status 2026-10-24 (evening): D10 display SHIPPED** (owner OK); B6 `+cpt` committed OFF until Showdown standings exist.
+- **Status 2026-10-24: built, display only (no switch); recommend ship** (`docs/research/b6-d10.md`).
+  - **End to end:** the builder works on Showdown (build → save → CSV with CPT draftable ids →
+    page; 13 s for N = 20). No Showdown build had been run in prod before.
+  - **Replay** (15 stored Showdown slates; held-out report sims, fresh field and truth noise):
+    builder E[payout] / Top N = 1.48 (SE 0.15) at N = 20, 1.99 (0.37) at N = 5, 3.60 (0.87) at
+    N = 1; builder better on 13–14 of 15. Same with the `+cpt` field (1.49).
+  - **Trade-off:** fewer cashes (−3.7 pp at N = 20, −10.9 pp at N = 5) and fewer any-top-1 %
+    finishes at N ≥ 5 (−3.9 ± 2.0 pp at N = 20).
+  - **Actual box scores vs the modelled field:** lumpy (builder ahead on 7 of 15 slates at
+    N = 20, three 1st places), too noisy to confirm.
+  - **Page changes:** the Showdown slate page leads with a "one game" note linking the builder
+    and puts the builder first in the nav. The builder page gets a Showdown guidance line,
+    "(of 6)" overlap with choices 3–5, and six-slot captions. Classic is unchanged. No lineup or
+    default changes.
+
 ### Not recommended
 NBA stacking or bring-back rules: causal teammate correlation is −0.03, opponents ~0
 (`docs/research/dfs.md`), and the joint sims already carry it.
@@ -788,6 +833,40 @@ NBA stacking or bring-back rules: causal teammate correlation is −0.03, oppone
   season). Revisit only if blowout-minute errors trace to it.
 
 ### G3. Props: pre-register the blend test now (M now, H later / S)
+- **Status 2026-10-24 (evening): deployed** (owner OK); `props-blend-eval --ledger <data>/reports/props_blend/ledger.csv` runs after each postgame job.
+- **Status 2026-10-24: pre-registered; evaluator built, uncommitted; report only.**
+  - **Pre-registration:** `docs/research/g3-preregistration.md` (frozen once the 10-24 slate
+    is graded; the evaluator pins its sha256 and flags edits; deviations go here).
+    - Rows are (game, player, stat) at the lock-45 state: the newest ok `lock45` run before tip,
+      with the market at that run's `created_at`.
+    - Blend `a·logit(m) + b·logit(o)` with no intercept, walk-forward on earlier days, at least
+      1,000 training rows.
+    - Primary: LL(blend) − LL(proportional no-vig market), SE two-way game × player.
+    - **Bar:** the decision set is the first **60 scored slates from 2026-10-24**. PASS if
+      z ≤ −2.0. Stat guard: any stat at z ≥ +2 makes it owner review. No decision before 60.
+    - 10-20..10-23 only train. A pass only allows proposing the blended chance as information.
+  - **Evaluator:** `src/courtside/proj/props_blend.py`, `courtside proj props-blend-eval
+    [--ledger CSV] [--devig] [--json]`.
+    - It opens the DB read-only and nothing imports it except the CLI registry (tested).
+      `--ledger` freezes the per-row inputs of fully graded slates.
+    - It cross-checks against `prop_compare`. On prod that is 601 matched rows: ours and the
+      market are identical, with 0 grade mismatches.
+    - The planned de-vig comparison (multiplicative / power / additive, each with an over-side
+      shade term c, and in the blend) is an option. It runs automatically at 10k graded rows
+      and is reported only.
+    - Tests: `tests/test_props_blend.py` (14).
+  - **Prod read-only run (11:45 ET, Mac scratch `~/Developer/courtside-compute/g3/out/`):**
+    status collecting, **0 of 60 scored slates**.
+    - 1,671 eligible graded rows over 4 pre-registration slates (4 void, 0 push). A further
+      36 props have no projection; the 8 games of 10-24 have no lock-45 run yet.
+    - Descriptive, in sample: LL market 0.6882 vs ours 0.7082 (ours − market +0.0200, z +3.2;
+      reb +0.044 and pra +0.033 are the worst). Fitted a 0.73 (SE 0.24), b 0.21 (SE 0.08).
+    - Ad hoc dry run (training minimum 300, not the test): 10-22/10-23, n 824, blend − market
+      −0.0004 (z −0.2).
+    - De-vig, interim (1,671 of 10k rows): power +0.0001 (z 0.6) and additive +0.0001 (z 0.5)
+      vs multiplicative. Over-side shade c −0.19 (SE 0.06; above rate 0.447).
+  - **Next:** run it by hand or wire `--ledger` into the postgame job (owner OK; it writes only
+    the ledger file); decision at the 60th scored slate (~late December).
 - **Form:** logit p = a·logit(market) + b·logit(ours), fit on earlier dates only.
 - **Inputs:** the same lock−45 snapshot state.
 - **SEs:** clustered by game and player.
@@ -843,6 +922,19 @@ NBA stacking or bring-back rules: causal teammate correlation is −0.03, oppone
   it in the ledger.
 
 ### E3. Test the stack, not single toggles (M / M)
+- **Status 2026-10-24: done** (`docs/research/p8-e3.md` §3, ledger "E3 stack test").
+  - Forward selection on the 2023-24 / 2024-25 harness over `+us +c1r +mr +rw +bo +tm +rr` (z
+    pooled, two-way): step 1 adds `+us` (−3.44), step 2 `+c1r` (−3.75), step 3 stops (`+mr`
+    −1.89). `+rr` is worse (+3.44, starter tier +2.93).
+  - Confirmed: `+us +c1r` vs the live stack −2.7 / −4.9 harness, −3.5 / −3.5 live / live10, −4.0
+    / −6.1 RotoGuru, no tier worse. The live gain is `+c1r`'s (given `+us`: −6.6 / −5.0);
+    `+us` given `+c1r` on live: −0.2 / −1.2.
+  - Slice-only switches: `+pq` live10 −2.56 (value +3.4 z); `+gd` neutral (+0.09 / −0.11).
+  - **Ranked:** ship `+c1r` (owner; copy the pre-fit `_c1r` bundle + `corr_2026-27.json`, then
+    refit `+tr` / `STRETCH_TR` on c1r sims), ship `+pq` (owner), shadow `+us`, leave `+mr +rw
+    +bo +tm +gd` OFF, retire `+rr`. `+lf +rs` not testable on history; `+nsl +as` are game-model.
+  - Found: earlier live-slice runs (`+rx +rb +tr +ep +ms +rw`) used 19:30 ET for every tip (no
+    scoreboard archive in their scratch data); this test used real tips.
 Switches interact: `+bo` ≈ 0 over `+mf`, and `+mr` costs the bench without `+mf`. Use forward
 selection over the candidate stack on the harness, then confirm once on E1.
 

@@ -22,6 +22,7 @@ PROJ_MODULES: tuple[str, ...] = (
     "courtside.proj.live_path_eval",
     "courtside.proj.shadows",
     "courtside.proj.value_eval",
+    "courtside.proj.props_blend",
 )
 DFS_MODULES: tuple[str, ...] = (
     "courtside.proj.dfs.rules",

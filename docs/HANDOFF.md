@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-24 (live model pathA-v0.3+mf+ep+ms+p2+rx+rb+tr).*
+*Last updated 2026-10-24 (live model pathA-v0.3+mf+ep+ms+p2+pq+rx+rb+tr).*
 
 **2026-10-23: methodology review done → `docs/IMPROVEMENTS.md`** is the improvement spec and
 work list (bugs B1–B11, owner decisions in its §6, revised order in §7, Fable second review in §9). Read it after this file.
@@ -28,6 +28,16 @@ DB backup: `~/Developer/backups/courtside-pre-7b7b693.db` on the Mac.
 - Shipped OFF in the same batch: E6 retrain/monitoring, P7 `+rs` + latency card, G1 `+nsl`,
   G4 `+as`, B7 margin sd.
 - New rollbacks: `COURTSIDE_TAIL_REMAP=0`, `COURTSIDE_EARLY_PRIOR=0`, `COURTSIDE_XF_V2=0`.
+
+**2026-10-24 (evening): batch 5 (owner OK).** Live `pathA-v0.3+mf+ep+ms+p2+pq+rx+rb+tr`:
+- **`+pq` lock-10 Questionable refit** ON (rollback `COURTSIDE_PPLAYQ=0`).
+- **`+us` usage redistribution (P8)** built OFF and registered as a live shadow (usage params and
+  `usage_stint_tallies.pkl` in prod `var/proj/`). E3 stack test done (`p8-e3.md`).
+- **D10:** the Showdown page points to the contest builder (display). **B6 `+cpt`** built OFF
+  until Showdown standings exist.
+- **G3:** props blend test pre-registered (`docs/research/g3-preregistration.md`, frozen);
+  `props-blend-eval --ledger` runs after postgame.
+- **Next:** `+c1r` (owner OK) after the `+tr` / `STRETCH_TR` refit on c1r sims.
 
 **2026-10-24 (later): batch 4 shipped (owner OK).** Live `pathA-v0.3+mf+ep+ms+p2+rx+rb+tr`:
 - **`+ms` per-player minutes spread (P6)** ON; pre-fit `bundle_2026-27_v1_cx_mf_ep_ms.json` and

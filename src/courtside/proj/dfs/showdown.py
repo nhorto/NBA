@@ -27,9 +27,14 @@ DK prices Showdown UTIL in $200 steps, so 1.5x is always a whole $300 step and n
 happens (`check_cpt_salaries`). Classic salaries ($100 steps) can give $x50 captains; we keep
 them exact (integer dollars) because DK never needs a rounding rule for its own prices.
 
+**Captain ownership (B6).** `ownership_eval` scores the ownership proxy's CPT and UTIL columns,
+captain term OFF vs ON (`field.cpt_utility`, COURTSIDE_SD_CPT), against uploaded Showdown
+standings (docs/research/b6-d10.md).
+
 CLI::
 
     courtside dfs showdown-check [--n 30] [--seed 2026] [--json]
+    courtside dfs showdown-own [--archetype large_gpp] [--json]
 """
 
 from __future__ import annotations
@@ -297,6 +302,151 @@ def run_check(conn: sqlite3.Connection, n: int = 30, *, seed: int = 2026,
             "pydfs": {"budget": st.budget, "max_from_one_team": st.max_from_one_team}}
 
 
+# ============================================================================== ownership (B6)
+
+def _spearman(a, b) -> float:
+    import numpy as np
+    import pandas as pd
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    if len(a) < 3:
+        return float("nan")
+    ra, rb = pd.Series(a).rank().to_numpy(), pd.Series(b).rank().to_numpy()
+    if ra.std() == 0 or rb.std() == 0:
+        return float("nan")
+    return float(np.corrcoef(ra, rb)[0, 1])
+
+
+def own_metrics(rows, arms: Sequence[str], *, boot: int = 500, seed: int = 0) -> dict:
+    """MAE (percentage points) and rank correlation of predicted vs real ownership per slot and
+    arm, with SEs. `rows`: a DataFrame with contest_id, slate_id, player_id, slot ('CPT' |
+    'UTIL'), actual (fraction) and one prediction column per arm (fraction). Rows where both
+    the prediction of every arm and the actual are below 0.1 % are dropped (as the Classic fit).
+    MAE SE: two-way clustered by slate x player (`metrics.paired_cluster2`) with >= 2 slates,
+    else iid. Rank correlation: the mean per-contest Spearman, SE by a player bootstrap within
+    contests (`boot` draws). Paired arm differences (each arm minus the first) the same way."""
+    import numpy as np
+    from .. import metrics as M
+    out: dict = {}
+    rng = np.random.default_rng(seed)
+    for slot, g in rows.groupby("slot"):
+        keep = (g["actual"] > 0.001) | np.any(np.stack([g[a] > 0.001 for a in arms]), axis=0)
+        g = g[keep].reset_index(drop=True)
+        res: dict = {"n": int(len(g)), "contests": int(g["contest_id"].nunique()),
+                     "slates": int(g["slate_id"].nunique())}
+
+        def mean_se(d):
+            if g["slate_id"].nunique() >= 2:
+                r = M.paired_cluster2(d, g["slate_id"].to_numpy(), g["player_id"].to_numpy())
+                return r["mean"], r["se"]
+            d = np.asarray(d, float)
+            return float(d.mean()), (float(d.std(ddof=1) / np.sqrt(len(d))) if len(d) > 1
+                                     else float("nan"))
+
+        groups = [gg.index.to_numpy() for _, gg in g.groupby("contest_id")]
+
+        def rank_corr(col, idx_sets):
+            v = [_spearman(g.loc[ix, col], g.loc[ix, "actual"]) for ix in idx_sets]
+            v = [x for x in v if np.isfinite(x)]
+            return float(np.mean(v)) if v else float("nan")
+
+        boots = [[rng.choice(ix, len(ix), replace=True) for ix in groups] for _ in range(boot)]
+        for a in arms:
+            err = 100 * np.abs(g[a].to_numpy() - g["actual"].to_numpy())
+            m, se = mean_se(err)
+            rc = rank_corr(a, groups)
+            bs = [rank_corr(a, b) for b in boots]
+            res[a] = {"mae_pp": m, "mae_se": se, "rank_corr": rc,
+                      "rank_corr_se": float(np.nanstd(bs)) if boots else float("nan"),
+                      "bias_pp": float(100 * (g[a] - g["actual"]).mean())}
+        for a in arms[1:]:
+            d = 100 * (np.abs(g[a] - g["actual"]) - np.abs(g[arms[0]] - g["actual"])).to_numpy()
+            m, se = mean_se(d)
+            db = [rank_corr(a, b) - rank_corr(arms[0], b) for b in boots]
+            res[f"{a}-{arms[0]}"] = {
+                "mae_pp": m, "mae_se": se,
+                "rank_corr": res[a]["rank_corr"] - res[arms[0]]["rank_corr"],
+                "rank_corr_se": float(np.nanstd(db)) if boots else float("nan")}
+        out[slot] = res
+    return out
+
+
+def ownership_eval(conn: sqlite3.Connection, *, archetype: str | None = None,
+                   boot: int = 500) -> dict:
+    """B6 acceptance: the ownership proxy's CPT and UTIL columns, captain term OFF and ON
+    (`field.ownership_proxy(cpt=...)`), against the real %Drafted of every uploaded Showdown
+    contest (UTIL from ``dfs_contest_ownership``, CPT from the upload's ``detail.cpt_pct_drafted``).
+    Inputs are rebuilt as the public saw them at lock (`field.slate_inputs(as_of=lock)`, the
+    reference run of `standings._reference_run_before`). The archetype is the contest's (or
+    `archetype`). Returns {"status": "no_data"} until a Showdown standings file is uploaded."""
+    import pandas as pd
+    from .. import ids as IDS
+    from . import field as F
+    from . import standings as ST
+    ups = conn.execute(
+        "SELECT u.contest_id, u.detail, c.slate_id, s.lock_utc FROM dfs_uploads u "
+        "JOIN dfs_contests c ON c.contest_id=u.contest_id JOIN dfs_slates s "
+        "ON s.slate_id=c.slate_id WHERE u.kind='standings' AND (s.tag='showdown' OR "
+        "s.game_type_id=?) ORDER BY u.upload_id", (SHOWDOWN_GAME_TYPE,)).fetchall()
+    latest = {}
+    for u in ups:
+        latest[str(u["contest_id"])] = u              # the newest upload of a contest wins
+    if not latest:
+        return {"status": "no_data", "contests": 0,
+                "note": "no Showdown standings uploaded (dfs_uploads kind='standings' on a "
+                        "Showdown slate)"}
+    arms = ("off", "cpt")
+    nba2dk_all = {v: k for k, v in IDS.nba_ids(conn, IDS.DK).items()}
+    rows, skipped, cache = [], {}, {}
+    for cid, u in latest.items():
+        sid, lock = str(u["slate_id"]), u["lock_utc"]
+        try:
+            det = json.loads(u["detail"] or "{}")
+        except ValueError:
+            det = {}
+        cpt_real = {str(k): (v or {}).get("pct") for k, v in (det.get("cpt_pct_drafted")
+                                                            or {}).items()}
+        util_real = {str(r[0]): r[1] for r in conn.execute(
+            "SELECT player_id, pct_drafted FROM dfs_contest_ownership WHERE contest_id=?",
+            (cid,))}
+        if not cpt_real:
+            skipped[cid] = "upload has no CPT %Drafted"
+            continue
+        if sid not in cache:
+            run = ST._reference_run_before(conn, sid, lock)
+            try:
+                cache[sid] = F.slate_inputs(conn, sid, run["run_id"] if run else None,
+                                            as_of=lock)[:2]
+            except Exception as e:  # noqa: BLE001
+                cache[sid] = None
+                skipped[cid] = f"inputs: {type(e).__name__}: {e}"
+        if cache[sid] is None:
+            skipped.setdefault(cid, "no inputs")
+            continue
+        pool, inp = cache[sid]
+        c = F.load_contest(conn, cid)
+        arch = archetype or (c.archetype if c else "large_gpp")
+        pred = {}
+        for a in arms:
+            op = F.ownership_proxy(inp, pool, archetype=arch, cpt=(a == "cpt"))
+            k_c, k_u = op.slot_names.index("CPT"), op.slot_names.index("UTIL")
+            pred[a] = {"CPT": dict(zip(op.pids, op.by_slot[:, k_c])),
+                       "UTIL": dict(zip(op.pids, op.by_slot[:, k_u]))}
+        for nba, dk in nba2dk_all.items():
+            if dk not in pred["off"]["CPT"]:
+                continue
+            for slot, real in (("CPT", cpt_real), ("UTIL", util_real)):
+                act = real.get(str(nba))
+                rows.append({"contest_id": cid, "slate_id": sid, "player_id": int(nba),
+                             "slot": slot, "actual": float(act or 0.0) / 100.0,
+                             **{a: float(pred[a][slot][dk]) for a in arms}})
+    if not rows:
+        return {"status": "no_usable_contests", "contests": len(latest), "skipped": skipped}
+    df = pd.DataFrame(rows)
+    return {"status": "ok", "contests": int(df["contest_id"].nunique()),
+            "slates": int(df["slate_id"].nunique()), "arms": list(arms), "skipped": skipped,
+            "cpt_params": dict(F.CPT_PARAMS), "metrics": own_metrics(df, arms, boot=boot)}
+
+
 # ============================================================================== CLI
 
 def add_commands(sub) -> dict:
@@ -307,7 +457,28 @@ def add_commands(sub) -> dict:
     p.add_argument("--no-real", action="store_true", help="skip captured Showdown slates")
     p.add_argument("--no-noisy", action="store_true", help="actual points only")
     p.add_argument("--json", action="store_true")
-    return {"showdown-check": _check_cmd}
+    q = sub.add_parser("showdown-own", help="B6: proxy CPT / UTIL ownership (captain term OFF "
+                                            "vs ON) against uploaded Showdown standings")
+    q.add_argument("--archetype", default=None, help="override the contest archetype")
+    q.add_argument("--json", action="store_true")
+    return {"showdown-check": _check_cmd, "showdown-own": _own_cmd}
+
+
+def _own_cmd(args) -> int:
+    from ... import db
+    rep = ownership_eval(db.connect(), archetype=args.archetype)
+    if args.json or rep.get("status") != "ok":
+        print(json.dumps(rep, indent=2, default=str))
+        return 0
+    print(f"Showdown ownership proxy vs real %Drafted: {rep['contests']} contest(s), "
+          f"{rep['slates']} slate(s); arms off = UTIL utility at CPT, cpt = captain term (B6)")
+    for slot, r in rep["metrics"].items():
+        print(f"  {slot}: n={r['n']}")
+        for a in rep["arms"] + [f"{a}-{rep['arms'][0]}" for a in rep["arms"][1:]]:
+            x = r[a]
+            print(f"    {a:<8} MAE {x['mae_pp']:6.2f} pp (SE {x['mae_se']:.2f})  rank corr "
+                  f"{x['rank_corr']:+.3f} (SE {x['rank_corr_se']:.3f})")
+    return 0
 
 
 def _check_cmd(args) -> int:

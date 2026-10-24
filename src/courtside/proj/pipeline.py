@@ -129,6 +129,12 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   evidence (`state.rate_frame(..., ep=)`). Suffix on any arm: bundle `<arm's bundle>_ep.json`
   (after `_bo`, before `_mr` / `_c1`; the arm's bundle + `state["early_prior"]`), version
   `<arm>+ep`; seeds unchanged. OFF: bit-identical. `docs/research/early-prior.md`.
+* **Usage redistribution** (us, `usage.USAGE`, IMPROVEMENTS.md P8, default OFF; env
+  ``COURTSIDE_USAGE=1``; `set_usage`): the sim's per-minute rates use usage v1's per-player
+  with/without factors for every absent regular in each availability draw (`usage.team_matrix`
+  on `TeamSpec.usage`, `copula._usage_means`) instead of the top-2-star tier bump; params fit
+  on seasons < S per rate state (`usage.live_model`). Version `<model version>+us` (after
+  `+rw`); same bundle and seeds. OFF: bit-identical. `docs/research/p8-e3.md`.
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -172,6 +178,7 @@ from . import reconcile as RC
 from . import role_blend as RB
 from . import state as ST
 from . import tail_remap as TR
+from . import usage as US
 from . import store as SO
 from .dfs.optimizer import Projection
 
@@ -340,6 +347,9 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
     # the weighted reconciliation (reconcile.RECON_WEIGHTED, `+rw`): model version only, same
     # bundle and seeds; its theta lives in reconcile's own params file
     mv = mv + RC.RECON_WEIGHTED_TAG if RC.RECON_WEIGHTED else mv
+    # usage v1 redistribution (usage.USAGE, `+us`, P8): model version only, same bundle and
+    # seeds; its params live in usage's own per-season files
+    mv = mv + US.USAGE_TAG if US.USAGE else mv
     # line freshness (LINE_FRESH, `+lf`): model version only, same bundle and seeds
     return vs, (mv + LINE_FRESH_TAG if LINE_FRESH else mv)
 
@@ -548,6 +558,14 @@ def set_early_prior(on: bool) -> None:
     MODEL_VERSION together."""
     global _VS, MODEL_VERSION
     EP.set_early_prior(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_usage(on: bool) -> None:
+    """Flip usage v1 redistribution (usage.USAGE, `+us`) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    US.set_usage(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
                                    MINFIX, BLOWOUT)
 
@@ -1244,6 +1262,7 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
     rates = ST.rate_frame(conn, q, b.state, games=ctx.games, pos=ctx.pos,
                           **({"ep": ep} if ep is not None else {}))
     panel["_star"] = _stars(panel, rates)
+    usage = US.live_model(conn, ctx.season, b.state) if US.USAGE else None   # +us (P8)
     if CONTEXT_ON and b.context is not None and len(panel):
         rates = apply_context(ctx, b, conn, day, games, panel, rates, env, p_avail=p_avail)
     shares = ctx.shares
@@ -1278,6 +1297,12 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
                 RB.attach(pl, _rb_history(ctx, conn), team, day)
             if COPULA in COPULA_V1_VERSIONS:  # position group for the T2.7 tier x position cells
                 pl["grp"] = r["grp"].to_numpy(int)
+            if usage is not None:             # usage v1 (+us): regulars, position groups
+                pl["regular"] = (((p["app10"].to_numpy(float) >= 7)
+                                  | (p["missed_now"].to_numpy(float) < 3))
+                                 & p["last_date"].notna().to_numpy())
+                if "grp" not in pl:
+                    pl["grp"] = r["grp"].to_numpy(int)
             pm = p.drop(columns=["_star"])
             if pp_fix:
                 pm["pp_fix"] = [pp_fix.get((key, int(pid)), np.nan) for pid in pm["player_id"]]
@@ -1287,6 +1312,8 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
                                    starters=_team_starters(starters, p))
             teams[side] = C.TeamSpec(team=team, players=pl, minutes=sm,
                                      implied=e["home_pts"] if side == "home" else e["away_pts"])
+            if usage is not None:
+                teams[side].usage = US.team_matrix(usage, pl, day)
         out.append(C.GameSpec(game_id=g.game_id, home=teams["home"], away=teams["away"],
                               mu_margin=e["mu_margin"], mu_total=e["mu_total"],
                               env_source=e.get("source", "")))

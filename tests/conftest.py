@@ -30,6 +30,10 @@ os.environ.setdefault("COURTSIDE_RECON_WEIGHTED", "0")
 os.environ.setdefault("COURTSIDE_MIN_SPREAD", "0")
 os.environ.setdefault("COURTSIDE_PORTFOLIO_OBJ", "off")
 os.environ.setdefault("COURTSIDE_SWAP_CONTEST", "0")
+# The lock-10 Questionable refit (`+pq`, availability.PPLAYQ_DEFAULT) shipped 2026-10-24 too.
+os.environ.setdefault("COURTSIDE_PPLAYQ", "0")
+# P8 usage v1 redistribution (+us): built OFF 2026-10-24 (tests/test_usage_switch.py).
+os.environ.setdefault("COURTSIDE_USAGE", "0")
 
 
 @pytest.fixture(autouse=True)

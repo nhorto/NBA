@@ -53,6 +53,15 @@ GUIDANCE = (
     "Large fields carry the most variance: most entries win nothing, and the expected payout "
     "rests on rare top finishes.",
 )
+# Showdown (IMPROVEMENTS.md D10): one game, so the entries move together; the builder's joint
+# simulations carry that, Top N by projection does not (docs/research/b6-d10.md).
+GUIDANCE_SHOWDOWN = (
+    "Showdown is a single game: every entry rides on the same game script and the same few "
+    "stars. The top lineups by projection often differ by one player and win or lose together; "
+    "a set picked here on our joint simulations of the game spreads across captains and game "
+    "scripts. On past Showdown slates such sets had a higher simulated payout than the top "
+    "lineups by projection, but cashed somewhat less often: the payout sits in the top places.",
+)
 STAKES = ("Sensible stakes: even a strong player loses money in about half of all 100-contest "
           "stretches. Play only with money you are happy to spend on entertainment.")
 
@@ -301,7 +310,11 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str, *, now:
         label = f"Showdown {games[0]['label']}"
     lock = slate["lock"]
     run = dfs_field.latest_run(conn, slate_id)
+    is_sd = tag == "showdown"
+    if is_sd:
+        v["guidance"] = GUIDANCE_SHOWDOWN + GUIDANCE
     v["slate"] = {"id": slate_id, "label": label, "url": f"/dfs/{day}/{slate_id}",
+                  "is_showdown": is_sd, "n_slots": 6 if is_sd else 8,
                   "games": len(games), "lock_text": V.lock_text(lock, now),
                   "locked": bool(lock and lock <= now), "has_sims": run is not None,
                   "run_text": (f"Projection run {fmt.stamp(run['created_at'])}" if run else "")}
@@ -319,7 +332,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str, *, now:
                  "max_exp": form.get("max_exp") or str(EXP_DEFAULT),
                  "gamma": form.get("gamma") or str(GAMMA_DEFAULT),
                  "acts": {k[2:]: val for k, val in form.items() if k.startswith("p_")}}
-    v["gamma_choices"] = GAMMA_CHOICES
+    v["gamma_choices"] = tuple(g for g in GAMMA_CHOICES if g < 6) if is_sd else GAMMA_CHOICES
     v["players"] = _players(conn, slate, run) if run else []
     v["can_build"] = bool(contests) and run is not None and not v["slate"]["locked"]
     v["why_not"] = ("" if v["can_build"] else

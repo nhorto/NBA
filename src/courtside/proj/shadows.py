@@ -92,6 +92,7 @@ SWITCHES: dict[str, tuple[str, str, str]] = {
     "+tm": ("set_tier_match", "courtside.proj.copula", "TIER_MATCH"),
     "+rs": ("set_min_restrict", "courtside.proj.min_restrict", "MIN_RESTRICT"),
     "+pq": ("set_pplayq", "courtside.proj.availability", "PPLAYQ"),
+    "+us": ("set_usage", "courtside.proj.usage", "USAGE"),
 }
 
 

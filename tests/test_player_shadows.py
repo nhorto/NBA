@@ -24,7 +24,7 @@ from courtside.proj import tail_remap as TR
 
 from test_proj_pipeline import SEASON, _copy, _fill, _late_day
 
-ALL_ARMS = ["+tr", "+ep", "+gd", "+lf", "+tm", "+rs", "+pq"]
+ALL_ARMS = ["+tr", "+ep", "+gd", "+lf", "+tm", "+rs", "+pq", "+us"]
 SID = "777"
 N_SIMS = 1500
 
@@ -459,9 +459,10 @@ def test_registry_is_complete_and_preregistered():
     assert arms["+tr"]["run"] == "13:30" and arms["+tr"]["metric"] == "dk_crps"
     assert arms["+tr"]["bar"] == {"direction": "lower", "z": -2.0, "tier_z": 2.0}
     assert arms["+tr"]["min_nights"] == 14
-    # +tr and +ep shipped 2026-10-24 (now in the champion): registered, no longer run
-    assert arms["+tr"]["status"] == arms["+ep"]["status"] == "shipped"
-    assert [a["arm"] for a in SH.select_arms(reg)] == [a for a in ALL_ARMS if a not in ("+tr", "+ep")]
+    # +tr, +ep and +pq shipped 2026-10-24 (now in the champion): registered, no longer run
+    assert arms["+tr"]["status"] == arms["+ep"]["status"] == arms["+pq"]["status"] == "shipped"
+    assert [a["arm"] for a in SH.select_arms(reg)] == [a for a in ALL_ARMS
+                                                       if a not in ("+tr", "+ep", "+pq")]
 
 
 def test_arm_list_override(monkeypatch):

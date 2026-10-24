@@ -162,6 +162,13 @@ else
     nice -n 10 "$uv_bin" run --frozen courtside dfs real-calib --sims 2000 2>&1 | log_lines
     r="${PIPESTATUS[0]}"
     [ "$r" -ne 0 ] && echo "[run-job] real-calib failed (exit $r), not fatal" | log_lines
+    # Pre-registered props blend test (IMPROVEMENTS G3, proj/props_blend.py): freezes each fully
+    # graded slate's rows in the ledger; report only. A failure never fails the job.
+    mkdir -p "$data_dir/reports/props_blend"
+    nice -n 10 "$uv_bin" run --frozen courtside proj props-blend-eval \
+      --ledger "$data_dir/reports/props_blend/ledger.csv" 2>&1 | log_lines
+    r="${PIPESTATUS[0]}"
+    [ "$r" -ne 0 ] && echo "[run-job] props-blend-eval failed (exit $r), not fatal" | log_lines
   fi
 fi
 

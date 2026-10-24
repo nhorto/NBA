@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% import "_macros.html" as m %}
 {% set s = v.slate %}
+{% set slots_word = "six" if s and s.is_showdown else "eight" %}
 {# a probability as a range: the estimate +/- 3 pp of field-sampling error, rounded outward #}
 {% macro pband(p) -%}
 {%- set pm = (p * 1000)|round -%}
@@ -115,6 +116,10 @@
       {% if s.captured_text %}<span>{{ s.captured_text }}</span>{% endif %}
     </p>
     {% if not s.is_showdown %}<p class="dfs-swap-act"><a class="btn btn-sm btn-ghost" href="/dfs/{{ v.day }}/{{ s.id }}/swap">Late swap</a><span class="muted">Re-solve the open slots once games have started; upload your DK entries file for your own lineups.</span></p>{% endif %}
+    {% if s.is_showdown %}<div class="dfs-sd-guide" role="note">
+      <p><strong>Showdown is one game.</strong> Every lineup rides on the same game script, and the Top {{ v.n }} below, ranked by projection alone, often differ by a single player, so they tend to win or lose together. For more than one entry, the contest builder picks a set for a specific contest from our joint simulations of this game, scored against a modelled field (a proxy, not real entries). It aims at the simulated payout, which in Showdown sits mostly in the top few places, so its sets spread across more captains and cash somewhat less often than the Top {{ v.n }}.</p>
+      {% if v.contests %}<p><a class="btn btn-sm" href="/dfs/{{ v.day }}/{{ s.id }}/contest">Open the contest builder</a></p>{% else %}<p class="muted">The contest builder opens once this slate&rsquo;s contests are captured.</p>{% endif %}
+    </div>{% endif %}
     {% if s.failed_note %}<p class="caveat dfs-note">{{ s.failed_note }}</p>{% endif %}
     {% if s.stale_note %}<p class="caveat dfs-note">{{ s.stale_note }}</p>{% endif %}
   </section>
@@ -132,17 +137,18 @@
 
 <nav class="secnav" aria-label="Sections">
   <div class="wrap secnav-in">
+    {% if s.is_showdown %}<a href="#contest">Contest builder</a>{% endif %}
     <a href="#cash">Cash</a>
     <a href="#topn">Top {{ v.n }}</a>
     <a href="#pool">Player pool</a>
-    <a href="#contest">Contests</a>
+    {% if not s.is_showdown %}<a href="#contest">Contests</a>{% endif %}
   </div>
 </nav>
 
 <div class="wrap dfs-body">
   {# ------------------------------------------------------------ cash #}
   <section class="section" id="cash" aria-labelledby="cash-title">
-    {{ m.sec_head("cash", "1", "Cash lineup", "Eight slots, $50,000 cap") if not v.cash_fallback else m.sec_head("cash", "1", "Highest-projection lineup", "Cash build arrives with the next run") }}
+    {{ m.sec_head("cash", "1", "Cash lineup", ("Captain plus five, $50,000 cap" if s.is_showdown else "Eight slots, $50,000 cap")) if not v.cash_fallback else m.sec_head("cash", "1", "Highest-projection lineup", "Cash build arrives with the next run") }}
     {% if v.cash %}
     {% set lu = v.cash %}
     {% if v.cash_note %}<p class="footnote dfs-srcnote">{{ v.cash_note }}.</p>{% endif %}
@@ -156,7 +162,7 @@
           {% if lu.late %}<span class="flag flag-neg">Late news: {{ lu.late|join(", ") }}</span>{% endif %}
         </p>
       </div>
-      {{ lineup_table(lu, "Cash lineup, eight roster slots") }}
+      {{ lineup_table(lu, "Cash lineup, " ~ slots_word ~ " roster slots") }}
       {{ why_block(lu, "cash") }}
       {{ simdet(lu) }}
       <div class="dfs-actions">
@@ -172,6 +178,7 @@
   {# ------------------------------------------------------------ top n #}
   <section class="section" id="topn" aria-labelledby="topn-title">
     {{ m.sec_head("topn", "2", "Top " ~ (v.topn|length if v.topn else v.n) ~ " lineups", "Ranked by projection") }}
+    {% if v.topn and s.is_showdown %}<p class="footnote dfs-srcnote">Ranked one lineup at a time by projected points. Fine for a single entry; for several entries in one Showdown contest, see the <a href="{{ '#contest' if not v.contests else '/dfs/' ~ v.day ~ '/' ~ s.id ~ '/contest' }}">contest builder</a>.</p>{% endif %}
     {% if v.topn %}
     {% if v.topn_note %}<p class="footnote dfs-srcnote">{{ v.topn_note }}.</p>{% endif %}
     <div class="dfs-topn-bar">
@@ -201,7 +208,7 @@
             </span>
           </summary>
           <div class="dfs-card-body">
-            {{ lineup_table(lu, "Top N lineup " ~ lu.rank ~ ", eight roster slots", bars=False) }}
+            {{ lineup_table(lu, "Top N lineup " ~ lu.rank ~ ", " ~ slots_word ~ " roster slots", bars=False) }}
             {{ why_block(lu, "t" ~ lu.rank) }}
             {{ simdet(lu) }}
             <div class="dfs-actions">
@@ -283,7 +290,7 @@
   <section class="section" id="contest" aria-labelledby="contest-title">
     {{ m.sec_head("contest", "4", "Contest builder", (v.contests ~ " contest" ~ ("s" if v.contests != 1 else "") ~ " captured") if v.contests else "") }}
     <div class="card dfs-soon">
-      <p>Pick one of this slate&rsquo;s contests, choose how many entries, and get a diversified lineup set with its simulated payout against a modelled field.</p>
+      <p>Pick one of this slate&rsquo;s contests, choose how many entries, and get a diversified lineup set with its simulated payout against a modelled field.{% if s.is_showdown %} In Showdown this is the place to build several entries: the set is chosen on simulations of the whole game, so it accounts for lineups that would sink together.{% endif %}</p>
       {% if v.contests %}<p><a class="btn btn-sm" href="/dfs/{{ v.day }}/{{ v.slate.id }}/contest">Open the contest builder</a></p>
       {% else %}<p class="muted">No contests captured for this slate yet.</p>{% endif %}
     </div>
