@@ -53,9 +53,10 @@ def _cases(pool):
     }
 
 
+# "se": the entries curve's simulation SEs (D9, display only), added after these goldens
 def _strip(x):
     if isinstance(x, dict):
-        return {k: _strip(v) for k, v in x.items() if k not in ("seconds", "timing")}
+        return {k: _strip(v) for k, v in x.items() if k not in ("seconds", "timing", "se")}
     if isinstance(x, (list, tuple)):
         return [_strip(v) for v in x]
     if isinstance(x, (np.floating, float)):

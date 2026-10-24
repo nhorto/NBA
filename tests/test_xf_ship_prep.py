@@ -316,7 +316,16 @@ def test_runner_hook_off_adds_nothing_on_stores_the_table(tmp_path, pipe, avail,
     off, on = fps[False], fps[True]
     assert XF.DETAIL_KEY not in off["detail"]
     assert on["detail"].pop(XF.DETAIL_KEY)["players"] == {"1": {"lev": 2.0}}
-    assert off == on                                   # lineups, detail, late news, version
+    assert _no_timing(off) == _no_timing(on)          # lineups, detail, late news, version
+
+
+def _no_timing(x):
+    """`x` without wall-clock 'seconds' entries (the field scorer's timing varies run to run)."""
+    if isinstance(x, dict):
+        return {k: _no_timing(v) for k, v in x.items() if k != "seconds"}
+    if isinstance(x, list):
+        return [_no_timing(v) for v in x]
+    return x
 
 
 def test_runner_hook_failure_never_fails_the_run(conn, slate3, pipe, avail, v2, monkeypatch):

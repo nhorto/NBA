@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-24 (live model pathA-v0.3+mf+ep+p2+rx+rb+tr).*
+*Last updated 2026-10-24 (live model pathA-v0.3+mf+ep+ms+p2+rx+rb+tr).*
 
 **2026-10-23: methodology review done → `docs/IMPROVEMENTS.md`** is the improvement spec and
 work list (bugs B1–B11, owner decisions in its §6, revised order in §7, Fable second review in §9). Read it after this file.
@@ -28,6 +28,18 @@ DB backup: `~/Developer/backups/courtside-pre-7b7b693.db` on the Mac.
 - Shipped OFF in the same batch: E6 retrain/monitoring, P7 `+rs` + latency card, G1 `+nsl`,
   G4 `+as`, B7 margin sd.
 - New rollbacks: `COURTSIDE_TAIL_REMAP=0`, `COURTSIDE_EARLY_PRIOR=0`, `COURTSIDE_XF_V2=0`.
+
+**2026-10-24 (later): batch 4 shipped (owner OK).** Live `pathA-v0.3+mf+ep+ms+p2+rx+rb+tr`:
+- **`+ms` per-player minutes spread (P6)** ON; pre-fit `bundle_2026-27_v1_cx_mf_ep_ms.json` and
+  `minutes_params_2026-27_v1_mf_ms.json` in prod `var/proj/`.
+- **Contest builder `blend` selection objective (D9)** ON, plus SEs on the entries curve.
+- **Contest-aware late swap (D8, `swap-contest-1`)** ON; the web swap now runs in a background job.
+- **E4/E5:** value-ranking metric, `courtside proj value-eval`, `courtside dfs real-calib` (runs
+  after postgame; "Real contests vs our chances" card on /health/dfs); history uploads infer
+  their slate.
+- Shadows budget 90 → 240 s (the 10-24 10:00 run timed out `+lf` and skipped `+tm`).
+- Built OFF: P4 `+rw` (neutral to worse).
+- New rollbacks: `COURTSIDE_MIN_SPREAD=0`, `COURTSIDE_PORTFOLIO_OBJ=off`, `COURTSIDE_SWAP_CONTEST=0`.
 
 Rollbacks: `COURTSIDE_MINFIX=0`, `COURTSIDE_RESERVE_EXTRAS=0`, `COURTSIDE_ROLE_BLEND=0`,
 `COURTSIDE_PORTFOLIO_SPLIT=off`, `COURTSIDE_TAIL_REMAP=0`, `COURTSIDE_EARLY_PRIOR=0`,

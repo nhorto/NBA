@@ -22,6 +22,14 @@ os.environ.setdefault("COURTSIDE_ROLE_BLEND", "0")
 os.environ.setdefault("COURTSIDE_TAIL_REMAP", "0")
 os.environ.setdefault("COURTSIDE_EARLY_PRIOR", "0")
 os.environ.setdefault("COURTSIDE_XF_V2", "0")
+# P4 `+rw` (built OFF 2026-10-24) and P6 `+ms` (shipped 2026-10-24): pinned off for the suite
+# (tests/test_recon_weighted.py, tests/test_min_spread.py turn them on explicitly). Also shipped
+# 2026-10-24: the builder's `blend` selection objective (D9, tests/test_d9_tail_noise.py) and the
+# contest-aware late swap (D8, tests/test_swap_contest.py).
+os.environ.setdefault("COURTSIDE_RECON_WEIGHTED", "0")
+os.environ.setdefault("COURTSIDE_MIN_SPREAD", "0")
+os.environ.setdefault("COURTSIDE_PORTFOLIO_OBJ", "off")
+os.environ.setdefault("COURTSIDE_SWAP_CONTEST", "0")
 
 
 @pytest.fixture(autouse=True)

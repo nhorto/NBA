@@ -25,7 +25,9 @@ Per sim s of a game (home H, away A):
    (alpha = elasticity of non-points DK to team points, fit on seasons < S); `reconcile` then
    scales each team so that sum_i E[pts_i] equals the implied team total exactly (reserve
    switch `reconcile.RECON_RESERVE`: the implied total minus E[reserve minutes] x the league
-   bench points per minute, the share of the players outside the candidate set).
+   bench points per minute, the share of the players outside the candidate set; weighted
+   switch `reconcile.RECON_WEIGHTED`, `+rw`: one factor per player, the gap split by rate
+   uncertainty).
    Marginal: normal when the player's projected DK (played) >= 25, gamma below (Wilson-Hilferty
    cube transform of the copula normal, renormalised to the exact mean), sd = CV(mu) x mu with
    the CV-by-level table fit on seasons < S on residuals *given actual minutes and the actual
@@ -455,6 +457,8 @@ class ScenarioMinutes:
                             "pf36": p["pf36"].to_numpy(float), "reserve": det["reserve"],
                             "base": base, "lift": det["lift"], "pstart": det["pstart"],
                             "promoted": det["promoted"], "exp_start": det["exp_start"]})
+        if getattr(self.params, "spread", None):     # minutes spread (+ms, minutes.fit_spread)
+            out["sp_lo"], out["sp_hi"] = M.spread_columns(p, self.params, absent, mean)
         self._cache[key] = out
         return out
 
@@ -712,7 +716,11 @@ def _bo_look(look, k: np.ndarray, played: np.ndarray):
 def _reconcile(ts: TeamSpec, ro: dict | None, raw_pts: np.ndarray, raw_oth: np.ndarray,
                g: np.ndarray, cp: CopulaParams) -> dict:
     """`reconcile.reconcile_team` to the implied total, or (reserve switch: `ro` from
-    `_team_minutes`) to implied - E[reserve minutes] x the bench rate of season S."""
+    `_team_minutes`) to implied - E[reserve minutes] x the bench rate of season S. With the
+    weighted reconciliation (`reconcile.RECON_WEIGHTED`, `+rw`) the gap is split by the players'
+    rate uncertainty (`_rw_inputs`) and a gap > GAP_CHECK is logged (`gap_error`)."""
+    if RC.RECON_WEIGHTED:
+        return _reconcile_rw(ts, ro, raw_pts, raw_oth, g, cp)
     if ro is None:
         return RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, ts.implied, cp.env_weight)
     tgt = RC.reserve_target(ts.implied, ro["mean"], cp.season)
@@ -720,6 +728,41 @@ def _reconcile(ts: TeamSpec, ro: dict | None, raw_pts: np.ndarray, raw_oth: np.n
     rec.update(implied=float(ts.implied), reserve_min=ro["mean"],
                reserve_pts=float(ts.implied) - tgt)
     return rec
+
+
+RW_KAPPA_DEFAULT = 300.0        # state.default_params' kappa (TeamSpecs without `k_pts`)
+
+
+def _rw_inputs(ts: TeamSpec, cp: CopulaParams) -> dict:
+    """The weighted reconciliation's inputs: the EB points rate, its evidence minutes and prior
+    minutes (pipeline.build_games adds `n_pts` / `k_pts` when the switch is on; a TeamSpec
+    without them counts every player as new) and theta of season S."""
+    pl = ts.players
+    n = len(pl)
+    return {"r_pts": pl["r_pts"].to_numpy(float),
+            "n_pts": pl["n_pts"].to_numpy(float) if "n_pts" in pl else np.zeros(n),
+            "kappa": float(pl["k_pts"].iloc[0]) if "k_pts" in pl and n else RW_KAPPA_DEFAULT,
+            "theta": RC.rw_theta(cp.season)}
+
+
+def _reconcile_rw(ts: TeamSpec, ro: dict | None, raw_pts: np.ndarray, raw_oth: np.ndarray,
+                  g: np.ndarray, cp: CopulaParams) -> dict:
+    rw = _rw_inputs(ts, cp)
+    tgt = ts.implied if ro is None else RC.reserve_target(ts.implied, ro["mean"], cp.season)
+    rec = RC.reconcile_team(raw_pts, raw_oth, g, cp.alpha, tgt, cp.env_weight, rw=rw)
+    if ro is not None:
+        rec.update(implied=float(ts.implied), reserve_min=ro["mean"],
+                   reserve_pts=float(ts.implied) - tgt)
+    err = RC.log_gap_error(rec, ts.team, ts.players["player_id"].to_numpy())
+    if err is not None:
+        rec["gap_error"] = err
+    return rec
+
+
+def _kp(k_pace: np.ndarray) -> np.ndarray:
+    """The pace factor of the non-points stats as (S, 1) (one team factor) or (S, n) (the
+    weighted reconciliation's per-player factors)."""
+    return k_pace if k_pace.ndim == 2 else k_pace[:, None]
 
 
 def _scenario_fields(scen: dict) -> dict:
@@ -780,7 +823,7 @@ def simulate_game(game: GameSpec, cp: CopulaParams, mp: M.MinutesParams, sp: dic
         mu = pts + oth + bonus
         stats = {"pts": pts}
         for s in ("reb", "ast", "fg3m"):
-            stats[s] = look(s, role, x) * played * k_pace[:, None]
+            stats[s] = look(s, role, x) * played * _kp(k_pace)
         rec.update(sinfo)
         rec["team"] = ts.team
         teams_info[ts.team] = rec
@@ -1268,7 +1311,7 @@ def simulate_game_v1(game: GameSpec, cp: CopulaParams, v1: CopulaV1Params,
         pts, oth, k_pace = rec.pop("pts"), rec.pop("oth"), rec.pop("pace")
         means = {"pts": pts}
         for s in OTHER_STATS:
-            means[s] = look_s(s, role, x) * played * k_pace[:, None]
+            means[s] = look_s(s, role, x) * played * _kp(k_pace)
         rec.update(sinfo)
         rec["team"] = ts.team
         teams_info[ts.team] = rec

@@ -397,6 +397,17 @@ projection joins. The upside is in four places:
   - **Pre-fit bundle:** Mac `~/Developer/courtside-compute/ep/data_ship/proj/bundle_2026-27_v1_cx_mf_ep.json`.
 
 ### P4. Non-uniform reconciliation (M / S)
+- **Status 2026-10-24 (later): owner agreed to leave OFF** (committed OFF).
+- **Status 2026-10-24: built behind `COURTSIDE_RECON_WEIGHTED` (`+rw`, OFF); do not ship**
+  (`docs/research/p4-p6.md`, ledger). OFF is bit-identical.
+  - The gap is split by Gaussian conditioning on the team sum (team-common term theta + each
+    player's EB rate variance); theta fit walk-forward. A |gap| > 6 is logged with its absorbers.
+  - The fit wants the uniform split: theta 0.01, then uniform from 2024-25. DK CRPS neutral
+    (|z| ≤ 1.64, worst tier +1.82).
+  - The pure uncertainty split (theta 0) is worse on all six sets (z +1.7 to +3.6) and fails the
+    tier check on three. The market's gap is about the team, not our thin rates.
+  - |gap| > 6 happens in about a third of harness team-games, so GAP_CHECK = 6 is not an error
+    threshold; ~15 would be (owner choice).
 - **Where:** `proj/reconcile.py:44-66` scales every player by one factor c, clipped to
   [0.75, 1.33].
 - **Change:**
@@ -421,6 +432,17 @@ projection joins. The upside is in four places:
 - **Leave off:** `+mr` (adds little over `+mf`, costs the bench) and `+bo` (~0 over `+mf`).
 
 ### P6. Player-specific minutes spread (M / M)
+- **Status 2026-10-24 (later): SHIPPED** (`+ms` ON, owner OK; `bundle_2026-27_v1_cx_mf_ep_ms.json` + `minutes_params_2026-27_v1_mf_ms.json` in prod `var/proj/`; rollback `COURTSIDE_MIN_SPREAD=0`).
+- **Status 2026-10-24: built behind `COURTSIDE_MIN_SPREAD` (`+ms`, OFF); recommend ship**
+  (owner decision; `docs/research/p4-p6.md`, ledger). OFF is bit-identical.
+  - Per-player lower / upper noise scales from LightGBM q10 / q50 / q90 of the log ratio (the
+    GBM's features + the plan), fit on seasons < S on out-of-fold plans; tier mu / sigma
+    recalibrated by simulation. Bundle `_ms`, version `+ms`.
+  - On the live stack: DK CRPS z −8.2 / −6.2 (harness), −5.3 / −5.3 (live / live10),
+    −6.8 / −10.5 (RotoGuru). Minutes CRPS z −8.1 to −11.0. No tier worse (worst: live bench
+    +0.05). The per-player shape is 96-99 % of the gain.
+  - To ship: copy the pre-fit 2026-27 `_ms` files from Mac `courtside-compute/p46/data_ship/proj/`
+    to prod `var/proj/` and set `pipeline.MIN_SPREAD_DEFAULT = True`.
 - **Where:** minutes noise σ is per tier only (`minutes.py` step 6, `_fit_noise`). `+mf`'s
   gains came mostly from fixing noise, so the spread clearly matters.
 - **Change:** a distributional or quantile model for minutes (NGBoost-style or LightGBM
@@ -649,6 +671,25 @@ OFF.
 - **Precondition:** E8 (fit on log-odds).
 
 ### D8. Contest-aware late swap (M / M)
+- **Status 2026-10-24 (later): SHIPPED** (contest-aware swap ON, owner OK; the web swap now runs in the background; rollback `COURTSIDE_SWAP_CONTEST=0`).
+- **Status 2026-10-24: built behind `COURTSIDE_SWAP_CONTEST` (`swap-contest-1`, OFF); owner to
+  decide** (`docs/research/d8-d9.md` §3; `proj/dfs/swap_contest.py`, hook in `swap.plan`, CLI
+  `--contest-aware`).
+  - **ON:** GPP entries chosen by the builder's joint E[payout] in their contest, cash by
+    P(cash); candidates = the mean solve + 16 scenario solves + the entry as is; known Outs
+    condition the sims via P10 scenario rows; locked players at realised points when given (live
+    has no in-game feed, so live they keep their sims). An entry that can stay changes only for
+    a gain > 1 paired SE.
+  - **Replay, 7 stored swap nights, held-out sims:** builder sets (20) +9.8 % E[payout] vs the
+    mean re-solve (6/7 nights up, 7th all locked; median +10 %); saved Top N +11 %; cash lineup
+    unchanged. The mean re-solve is often worse than not swapping (-1 to -28 % on 5 nights).
+  - **OFF bit-identical** to HEAD's swap.py (golden, `tests/test_swap_contest.py`).
+  - **Before ON:** take the page's plan off the request (ON 6-45 s vs the 30 s budget). The
+    runner's automatic swap of saved lineups (`resolve_targets`) is unchanged.
+  - **2026-10-24: web swap now runs in the background** (`web/dfs_swap.py` `SwapJobs`: 2
+    workers, own read-only connection, keyed by slate/scope/at/upload sha256/run id, 120 s
+    cap). The page waits 2 s, else shows "Working out the swap…" and refreshes itself; the
+    CSV downloads reuse the finished plan (202 while running). Fast plans render as before.
 - **Where:** builder entries are re-solved by mean (`proj/dfs/swap.py:~116, ~166`), which
   strips the leverage and diversity they were built with.
 - **Change:**
@@ -660,6 +701,18 @@ OFF.
   contest-aware vs mean re-solve, on held-out sims.
 
 ### D9. Tail-estimation noise (M / S)
+- **Status 2026-10-24 (later): `blend` SHIPPED** (owner OK; `flat` stays available but unused; rollback `COURTSIDE_PORTFOLIO_OBJ=off`).
+- **Status 2026-10-24: curve SEs built (display only, always on); selection objective built
+  behind `COURTSIDE_PORTFOLIO_OBJ` (`+obj-flat` / `+obj-blend`, OFF); owner to decide**
+  (`docs/research/d8-d9.md` §1-2).
+  - **SEs:** every curve point stores `se` (binomial for the chances, per-sim sd for
+    E[payout]); the page shows "± 0.4 pt" / "± 35%" under each chance. Numbers unchanged.
+  - **Objective (OFF):** the greedy picks on a smoothed ladder (`flat`: top 0.1 % of ranks pay
+    their mean prize; `blend`: top 1 % half-flattened), report unchanged. Picks on two disjoint
+    sim halves from one candidate pool, 6 stored GPPs: lineup overlap 0.45 -> 0.53 / 0.51 (N =
+    20) and 0.53 -> 0.67 / 0.61 (N = 150) for flat / blend; held-out E[payout] flat -0.1 % ± 0.6
+    / +2.3 % ± 1.0, blend +0.5 % ± 0.2 / +1.2 % ± 0.3. Recommend `blend`; `flat` costs 1-2 % at
+    N = 20 on 7.8k-14k fields.
 - In a 30k GPP, P(1st) per lineup is ~1e-4, so 25k sims give a handful of events.
 - Report SEs on the entries-curve points.
 - Consider choosing on E[payout] with the top prizes flattened, or blended with P(top 1 %).
@@ -794,6 +847,17 @@ Switches interact: `+bo` ≈ 0 over `+mf`, and `+mr` costs the bench without `+m
 selection over the candidate stack on the harness, then confirm once on E1.
 
 ### E4. DFS-relevant evaluation populations and a value-ranking metric (M / S)
+- **Status 2026-10-24 (later): deployed** (owner OK; display/report only).
+- **Status 2026-10-24: built, uncommitted; report only** (`docs/research/e4-e5.md`).
+  - `metrics.dfs_population` / `salary_implied` / `corr_cluster` / `corr_paired_cluster` /
+    `value_ranking`; harness `player_report()["dfs_pop"]` and slice population `V`;
+    `courtside proj value-eval` (`proj/value_eval.py`); shadows `reported_only` (no bar changes).
+  - Live grades 10-20..10-23 (4 nights, 27 games), DFS rows (salary $4k+ or projected 15+ by
+    either side, DK OUT removed, n 476): value r ours 0.227 vs DK FPPG 0.101, diff +0.126 (SE date
+    0.011 from 4 clusters, not usable; SE game 0.061). Projected 10+ min rows: 0.158 vs 0.114,
+    +0.043 (SE game 0.058). Most of the gap is availability; on DFS rows we projected for 10+ min
+    it is +0.052 (SE game 0.065).
+  - live10 as the gate for minutes / availability changes: process rule, no code.
 - Add a salary ≥ $4k / projected ≥ 15 DK population. All-row CRPS is diluted by deep-bench
   zeros.
 - Add a value-ranking metric: corr(ours − salary-implied, actual − salary-implied). This is
@@ -802,6 +866,20 @@ selection over the candidate stack on the harness, then confirm once on E1.
   scenario redistribution.
 
 ### E5. Real-standings calibration process (M / S)
+- **Status 2026-10-24 (later): deployed** (owner OK; `courtside dfs real-calib --sims 2000` runs after each postgame job; card on /health/dfs).
+- **Status 2026-10-24: built, uncommitted; report only** (`docs/research/e4-e5.md`).
+  - `courtside dfs real-calib [--sims 2000]` (`proj/dfs/real_calib.py`) writes
+    `reports/real_calib/real_calib.json`; card "Real contests vs our chances" on /health/dfs.
+    Not in the nightly job: run it after uploads (~25 s on the Mac).
+  - `standings.import_history` links entries to the one slate of their game type locking at
+    Contest_Date_EST (Eastern wall time); keeps places paid per contest. `field.calibration_report`
+    fix: its proxy columns were always missing (arguments swapped).
+  - 10-20 (standings): DUs 3 of 5 in the money vs 0.66 simulated, line PIT 0.52; GPP place PIT
+    0.18. 10-23 (history only, 5 GPPs): 22 of 27 in the money vs ~0.65 simulated, place PIT 0.63;
+    cash lines bracketed (e.g. 253.50-259.75 in the 5,112 mini-MAX). Two slates: no signal yet.
+  - Nightly (10 Classic slates): cash lineup - FPPG optimizer +47 (SE 18), Top N +42 (SE 16).
+  - Owner: one big-GPP standings file per slate (10-23: the $35K mini-MAX 197041978), and some
+    double-ups (none on 10-23).
 - **Unit = slate.** Every lineup on a night shares one draw.
 - **DU P(cash):** use the percentile of (lineup score − real cash line) within its simulated
   distribution. That detects a 0.10 shift in ~33 slates and 0.15 in ~15. A plain cash rate

@@ -112,6 +112,17 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   capped (parsed cap, else 0.75 x normal minutes) via the panel's `rs_cap` column
   (`project_games` -> `build_games(rs_caps=)`). Version `<model version>+rs` (after `+tr`); same
   bundle and seeds. OFF: bit-identical. `docs/research/min-restrict.md`.
+* **Minutes spread** (ms, `minutes.fit_spread`, IMPROVEMENTS.md P6), behind `MIN_SPREAD` (default
+  OFF; env ``COURTSIDE_MIN_SPREAD=1``): the minutes noise gets a per-player lower / upper scale
+  from LightGBM quantile models (seasons < S) instead of the tier's alone. Suffix on any arm:
+  bundle `<arm's bundle>_ms.json` (after `_ep`, before `_mr` / `_c1`; minutes params
+  `minutes_params_<S>_v1[_pre][_mf][_bo]_ms.json`), version `<arm>+ms`; seeds unchanged. OFF:
+  bit-identical. `docs/research/p4-p6.md`.
+* **Weighted reconciliation** (rw, `reconcile.RECON_WEIGHTED`, default OFF; env
+  ``COURTSIDE_RECON_WEIGHTED=1``; `set_recon_weighted`): the team gap to the implied total is
+  split by each player's rate uncertainty (EB evidence minutes, `n_pts` / `k_pts` added to the
+  TeamSpec players) instead of one factor c; theta fit on seasons < S. Version
+  `<model version>+rw` (after `+rs`); same bundle and seeds. `docs/research/p4-p6.md`.
 * **Early-season prior** (ep, `early_prior.EARLY_PRIOR`, default OFF; env
   ``COURTSIDE_EARLY_PRIOR=1``; `set_early_prior`): the rate state adds the season's preseason
   games (weight and per-minute level per stat, fit on seasons < S) to the current-season
@@ -244,6 +255,16 @@ BLOWOUT_DEFAULT = False                # shipping = True here (env still overrid
 BLOWOUT_ENV = "COURTSIDE_BLOWOUT"
 BLOWOUT_SUFFIX = "_bo"
 BLOWOUT_TAG = "+bo"
+# Player-specific minutes spread (ms; `minutes.fit_spread`, IMPROVEMENTS.md P6). OFF by default
+# (env COURTSIDE_MIN_SPREAD=1 / 0 overrides; `set_min_spread` at run time). ON = a suffix on
+# whatever arm is active: bundle `<arm>_ms` (after `_ep`, before `_mr` / `_c1`) = the arm's
+# bundle with the spread models added to its minutes params (`minutes_params_<S>_v1[_pre][_mf]
+# [_bo]_ms.json`; mu / sigma recalibrated), version `<arm>+ms`; seeds unchanged (common random
+# numbers with the arm's OFF runs). OFF: nothing of it runs (bit-identical).
+MIN_SPREAD_DEFAULT = True              # shipped 2026-10-24 (owner OK; env still overrides)
+MIN_SPREAD_ENV = "COURTSIDE_MIN_SPREAD"
+MIN_SPREAD_SUFFIX = "_ms"
+MIN_SPREAD_TAG = "+ms"
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -316,6 +337,9 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
     mv = mv + TR.TAIL_REMAP_TAG if TR.TAIL_REMAP else mv
     # the minutes restriction (min_restrict.MIN_RESTRICT, `+rs`): model version only
     mv = mv + MRS.MIN_RESTRICT_TAG if MRS.MIN_RESTRICT else mv
+    # the weighted reconciliation (reconcile.RECON_WEIGHTED, `+rw`): model version only, same
+    # bundle and seeds; its theta lives in reconcile's own params file
+    mv = mv + RC.RECON_WEIGHTED_TAG if RC.RECON_WEIGHTED else mv
     # line freshness (LINE_FRESH, `+lf`): model version only, same bundle and seeds
     return vs, (mv + LINE_FRESH_TAG if LINE_FRESH else mv)
 
@@ -339,6 +363,8 @@ def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool =
         vs, mv = vs + BLOWOUT_SUFFIX, mv + BLOWOUT_TAG
     if EP.EARLY_PRIOR:          # early-season prior (+ep): its own bundle (state["early_prior"])
         vs, mv = vs + EP.EARLY_PRIOR_SUFFIX, mv + EP.EARLY_PRIOR_TAG
+    if MIN_SPREAD:              # player-specific minutes spread (+ms): its own minutes params
+        vs, mv = vs + MIN_SPREAD_SUFFIX, mv + MIN_SPREAD_TAG
     if mr:
         vs, mv = vs + MINRATIO_SUFFIX, mv + MINRATIO_TAG
     if copula == "v1":
@@ -356,6 +382,7 @@ MINRATIO = _env_flag(MINRATIO_ENV, MINRATIO_DEFAULT)
 PRESEASON = _env_flag(PRESEASON_ENV, PRESEASON_DEFAULT)
 MINFIX = _env_flag(MINFIX_ENV, MINFIX_DEFAULT)
 BLOWOUT = _env_flag(BLOWOUT_ENV, BLOWOUT_DEFAULT)
+MIN_SPREAD = _env_flag(MIN_SPREAD_ENV, MIN_SPREAD_DEFAULT)
 _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
                                MINFIX, BLOWOUT)
 # Seeds use the base version in both states: ON and OFF runs of the same slate/day draw common
@@ -435,6 +462,15 @@ def set_blowout(on: bool) -> None:
                                    MINFIX, BLOWOUT)
 
 
+def set_min_spread(on: bool) -> None:
+    """Flip the player-specific minutes spread: updates MIN_SPREAD, the bundle suffix and
+    MODEL_VERSION together (the other switches are kept)."""
+    global MIN_SPREAD, _VS, MODEL_VERSION
+    MIN_SPREAD = bool(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
 def set_pplayq(on: bool) -> None:
     """Flip the lock-10 Questionable refit (availability.PPLAYQ) and MODEL_VERSION together."""
     global _VS, MODEL_VERSION
@@ -463,6 +499,14 @@ def set_recon_reserve(on: bool) -> None:
     """Flip the reconciliation reserve (reconcile.RECON_RESERVE) and MODEL_VERSION together."""
     global _VS, MODEL_VERSION
     RC.set_recon_reserve(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_recon_weighted(on: bool) -> None:
+    """Flip the weighted reconciliation (reconcile.RECON_WEIGHTED) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    RC.set_recon_weighted(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
                                    MINFIX, BLOWOUT)
 
@@ -737,6 +781,8 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
         return _load_bundle_v1(conn, season, ctx, refit=refit, log=log)
     if COPULA == "v1r":
         return _load_bundle_v1r(conn, season, ctx, refit=refit, log=log)
+    if MIN_SPREAD:
+        return _load_bundle_ms(conn, season, ctx, refit=refit, log=log)
     if EP.EARLY_PRIOR:
         return _load_bundle_ep(conn, season, ctx, refit=refit, log=log)
     if BLOWOUT:
@@ -996,6 +1042,47 @@ def _load_bundle_ep(conn: sqlite3.Connection, season: str, ctx: Context | None, 
     return b
 
 
+def _load_bundle_ms(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
+                    refit: bool, log) -> Bundle:
+    """The minutes-spread arm's bundle: the same arm's bundle with MIN_SPREAD off (loaded or
+    fitted the usual way) with `minutes.fit_spread` added to its minutes params on seasons < S
+    (`minutes_params_<S>_v1[_pre][_mf][_bo]_ms.json`), cached as `bundle_<S><arm>_ms.json`. Rate
+    state, copula and context layer are the arm's."""
+    say = log or (lambda m: None)
+    path = cache_dir() / f"bundle_{season}{_VS}.json"
+    if path.exists() and not refit:
+        b = Bundle.from_json(path.read_text())
+        if (b.minutes.spread and bool(b.minutes.minfix) == MINFIX
+                and bool(b.minutes.blowout) == BLOWOUT
+                and M.uses_preseason(b.minutes) == PRESEASON):
+            return b
+    set_min_spread(False)
+    try:
+        base = load_bundle(conn, season, ctx, refit=refit, log=log)
+    finally:
+        set_min_spread(True)
+    t0 = time.time()
+    tag = (_VS_BASE + (PRESEASON_SUFFIX if PRESEASON else "") + (MINFIX_SUFFIX if MINFIX else "")
+           + (BLOWOUT_SUFFIX if BLOWOUT else "") + MIN_SPREAD_SUFFIX)
+    mpath = cache_dir() / f"minutes_params_{season}{tag}.json"
+    if mpath.exists() and not refit:
+        mp = M.MinutesParams.from_json(mpath.read_text())
+    else:
+        ctx = ctx or Context(conn, season, log=say)
+        if PRESEASON and ctx.h.pre is None:
+            M.attach_preseason(ctx.h, conn)
+        panel = ctx.train_panel()
+        mp = M.fit_spread(base.minutes, panel, M.PairShares(M.pair_events(panel)), log=say)
+        mpath.parent.mkdir(parents=True, exist_ok=True)
+        mpath.write_text(mp.to_json())
+    b = Bundle(season=season, minutes=mp, state=base.state, copula=base.copula,
+               context=base.context, copula_v1=base.copula_v1)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(b.to_json())
+    say(f"bundle {season} (minutes spread) in {time.time() - t0:.0f}s -> {path}")
+    return b
+
+
 def _load_bundle_mr(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
                     refit: bool, log) -> Bundle:
     """The minutes-ratio arm's bundle: the same arm's bundle with MINRATIO off (loaded or fitted
@@ -1184,6 +1271,9 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
             pl["tier_state"] = r["tier"].to_numpy(int)
             pl["star"] = p["_star"].to_numpy(bool)
             pl["rotation"] = pl["mpg"].to_numpy() >= 15.0
+            if RC.RECON_WEIGHTED:             # weighted reconciliation (+rw): rate evidence
+                pl["n_pts"] = r["n_pts"].to_numpy(float)
+                pl["k_pts"] = float(b.state["stats"]["pts"]["kappa"])
             if RB.ROLE_BLEND:                 # role blend (+rb): L10 / last-10 minutes inputs
                 RB.attach(pl, _rb_history(ctx, conn), team, day)
             if COPULA in COPULA_V1_VERSIONS:  # position group for the T2.7 tier x position cells

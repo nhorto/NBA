@@ -1,0 +1,4177 @@
+{
+ "news": {
+  "portfolio": {
+   "exposure": [
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 3,
+     "player_id": "1106"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "2004"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "3007"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "3107"
+    },
+    {
+     "after": "1.0",
+     "before": "0.6666666666666666",
+     "fixed": 0,
+     "player_id": "2002"
+    },
+    {
+     "after": "1.0",
+     "before": "0.6666666666666666",
+     "fixed": 0,
+     "player_id": "3105"
+    },
+    {
+     "after": "0.6666666666666666",
+     "before": "0.6666666666666666",
+     "fixed": 2,
+     "player_id": "1104"
+    },
+    {
+     "after": "0.6666666666666666",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3101"
+    },
+    {
+     "after": "0.3333333333333333",
+     "before": "0.3333333333333333",
+     "fixed": 1,
+     "player_id": "1006"
+    },
+    {
+     "after": "0.3333333333333333",
+     "before": "0.3333333333333333",
+     "fixed": 1,
+     "player_id": "1102"
+    },
+    {
+     "after": "0.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "2102"
+    },
+    {
+     "after": "0.0",
+     "before": "0.3333333333333333",
+     "fixed": 0,
+     "player_id": "3005"
+    }
+   ],
+   "groups": {
+    "c:gpp1": {
+     "entries": 3,
+     "identical_after": 0,
+     "identical_before": 0,
+     "max_shared_after": 7,
+     "max_shared_before": 7
+    }
+   },
+   "max_exposure_n": null,
+   "max_overlap": null
+  },
+  "results": [
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3107"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "3101"
+     ],
+     [
+      "F",
+      "3007"
+     ],
+     [
+      "UTIL",
+      "2004"
+     ]
+    ],
+    "after_mean": "318.1",
+    "after_salary": 46900,
+    "before_mean": "285.3",
+    "key": "o1",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "test"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      false,
+      null,
+      true,
+      "Moved to SG"
+     ],
+     [
+      "F",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      false,
+      null
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3007"
+     ],
+     [
+      "PF",
+      "2004"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "3101"
+     ],
+     [
+      "F",
+      "3107"
+     ],
+     [
+      "UTIL",
+      "1102"
+     ]
+    ],
+    "after_mean": "315.6",
+    "after_salary": 48300,
+    "before_mean": "282.8",
+    "key": "o2",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "test"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      false,
+      null,
+      true,
+      "Moved to SG"
+     ],
+     [
+      "F",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      true,
+      "Game started",
+      false,
+      null
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1006"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3007"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "1106"
+     ],
+     [
+      "F",
+      "3107"
+     ],
+     [
+      "UTIL",
+      "2004"
+     ]
+    ],
+    "after_mean": "325.9",
+    "after_salary": 49700,
+    "before_mean": "282.8",
+    "key": "o3",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "test"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      false,
+      null
+     ]
+    ],
+    "status": "swapped"
+   }
+  ],
+  "ruled_out": {
+   "2102": "test"
+  },
+  "summary": {
+   "entries": 3,
+   "now": "2026-10-20T23:01:00Z",
+   "portfolio": {
+    "exposure": [
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 3,
+      "player_id": "1106"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "2004"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "3007"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "3107"
+     },
+     {
+      "after": "1.0",
+      "before": "0.6666666666666666",
+      "fixed": 0,
+      "player_id": "2002"
+     },
+     {
+      "after": "1.0",
+      "before": "0.6666666666666666",
+      "fixed": 0,
+      "player_id": "3105"
+     },
+     {
+      "after": "0.6666666666666666",
+      "before": "0.6666666666666666",
+      "fixed": 2,
+      "player_id": "1104"
+     },
+     {
+      "after": "0.6666666666666666",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3101"
+     },
+     {
+      "after": "0.3333333333333333",
+      "before": "0.3333333333333333",
+      "fixed": 1,
+      "player_id": "1006"
+     },
+     {
+      "after": "0.3333333333333333",
+      "before": "0.3333333333333333",
+      "fixed": 1,
+      "player_id": "1102"
+     },
+     {
+      "after": "0.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "2102"
+     },
+     {
+      "after": "0.0",
+      "before": "0.3333333333333333",
+      "fixed": 0,
+      "player_id": "3005"
+     }
+    ],
+    "groups": {
+     "c:gpp1": {
+      "entries": 3,
+      "identical_after": 0,
+      "identical_before": 0,
+      "max_shared_after": 7,
+      "max_shared_before": 7
+     }
+    },
+    "max_exposure_n": null,
+    "max_overlap": null
+   },
+   "projection": {
+    "created_at": null,
+    "model_version": "given",
+    "run_id": null,
+    "source": "given"
+   },
+   "ruled_out": 1,
+   "slate_id": "S1",
+   "source": "saved",
+   "status": {
+    "swapped": 3
+   },
+   "swapped": 3,
+   "warnings": []
+  },
+  "warnings": []
+ },
+ "overlap": {
+  "portfolio": {
+   "exposure": [
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "1106"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "2004"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "2102"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "3107"
+    },
+    {
+     "after": "0.75",
+     "before": "0.75",
+     "fixed": 0,
+     "player_id": "1104"
+    },
+    {
+     "after": "0.75",
+     "before": "0.75",
+     "fixed": 0,
+     "player_id": "3105"
+    },
+    {
+     "after": "0.5",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "3007"
+    },
+    {
+     "after": "0.5",
+     "before": "0.75",
+     "fixed": 0,
+     "player_id": "2002"
+    },
+    {
+     "after": "0.5",
+     "before": "0.25",
+     "fixed": 0,
+     "player_id": "1006"
+    },
+    {
+     "after": "0.25",
+     "before": "0.25",
+     "fixed": 0,
+     "player_id": "1102"
+    },
+    {
+     "after": "0.25",
+     "before": "0.25",
+     "fixed": 0,
+     "player_id": "3005"
+    },
+    {
+     "after": "0.25",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "1004"
+    }
+   ],
+   "groups": {
+    "c:gpp1": {
+     "entries": 4,
+     "identical_after": 1,
+     "identical_before": 1,
+     "max_shared_after": 8,
+     "max_shared_before": 8
+    }
+   },
+   "max_exposure_n": null,
+   "max_overlap": 5
+  },
+  "results": [
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2102"
+     ],
+     [
+      "SF",
+      "3107"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "2002"
+     ],
+     [
+      "F",
+      "3007"
+     ],
+     [
+      "UTIL",
+      "2004"
+     ]
+    ],
+    "after_mean": "328.4",
+    "after_salary": 48300,
+    "before_mean": "328.4",
+    "key": "o1",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      false,
+      null
+     ]
+    ],
+    "status": "unchanged"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2102"
+     ],
+     [
+      "SF",
+      "2107"
+     ],
+     [
+      "PF",
+      "2004"
+     ],
+     [
+      "C",
+      "3005"
+     ],
+     [
+      "G",
+      "1006"
+     ],
+     [
+      "F",
+      "3107"
+     ],
+     [
+      "UTIL",
+      "1104"
+     ]
+    ],
+    "after_mean": "322.7",
+    "after_salary": 49700,
+    "before_mean": "325.9",
+    "key": "o2",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "G",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "F",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1006"
+     ],
+     [
+      "SG",
+      "2102"
+     ],
+     [
+      "SF",
+      "3107"
+     ],
+     [
+      "PF",
+      "2004"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "1106"
+     ],
+     [
+      "F",
+      "1004"
+     ],
+     [
+      "UTIL",
+      "1102"
+     ]
+    ],
+    "after_mean": "322.6",
+    "after_salary": 49700,
+    "before_mean": "325.9",
+    "key": "o3",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "PF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "G",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "Moved to SF"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Moved to PF"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2102"
+     ],
+     [
+      "SF",
+      "3107"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "2002"
+     ],
+     [
+      "F",
+      "3007"
+     ],
+     [
+      "UTIL",
+      "2004"
+     ]
+    ],
+    "after_mean": "328.4",
+    "after_salary": 48300,
+    "before_mean": "328.4",
+    "key": "o1b",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      false,
+      null
+     ]
+    ],
+    "status": "unchanged"
+   }
+  ],
+  "ruled_out": {},
+  "summary": {
+   "entries": 4,
+   "now": "2026-10-20T20:30:00Z",
+   "portfolio": {
+    "exposure": [
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "1106"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "2004"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "2102"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "3107"
+     },
+     {
+      "after": "0.75",
+      "before": "0.75",
+      "fixed": 0,
+      "player_id": "1104"
+     },
+     {
+      "after": "0.75",
+      "before": "0.75",
+      "fixed": 0,
+      "player_id": "3105"
+     },
+     {
+      "after": "0.5",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "3007"
+     },
+     {
+      "after": "0.5",
+      "before": "0.75",
+      "fixed": 0,
+      "player_id": "2002"
+     },
+     {
+      "after": "0.5",
+      "before": "0.25",
+      "fixed": 0,
+      "player_id": "1006"
+     },
+     {
+      "after": "0.25",
+      "before": "0.25",
+      "fixed": 0,
+      "player_id": "1102"
+     },
+     {
+      "after": "0.25",
+      "before": "0.25",
+      "fixed": 0,
+      "player_id": "3005"
+     },
+     {
+      "after": "0.25",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "1004"
+     }
+    ],
+    "groups": {
+     "c:gpp1": {
+      "entries": 4,
+      "identical_after": 1,
+      "identical_before": 1,
+      "max_shared_after": 8,
+      "max_shared_before": 8
+     }
+    },
+    "max_exposure_n": null,
+    "max_overlap": 5
+   },
+   "projection": {
+    "created_at": null,
+    "model_version": "given",
+    "run_id": null,
+    "source": "given"
+   },
+   "ruled_out": 0,
+   "slate_id": "S1",
+   "source": "saved",
+   "status": {
+    "swapped": 2,
+    "unchanged": 2
+   },
+   "swapped": 2,
+   "warnings": []
+  },
+  "warnings": []
+ },
+ "random0": {
+  "portfolio": {
+   "exposure": [
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 4,
+     "player_id": "1006"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "3103"
+    },
+    {
+     "after": "0.75",
+     "before": "0.75",
+     "fixed": 3,
+     "player_id": "1102"
+    },
+    {
+     "after": "0.75",
+     "before": "0.75",
+     "fixed": 3,
+     "player_id": "1107"
+    },
+    {
+     "after": "0.75",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2105"
+    },
+    {
+     "after": "0.75",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3107"
+    },
+    {
+     "after": "0.5",
+     "before": "0.5",
+     "fixed": 2,
+     "player_id": "1002"
+    },
+    {
+     "after": "0.5",
+     "before": "0.5",
+     "fixed": 2,
+     "player_id": "1004"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2107"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3101"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3106"
+    },
+    {
+     "after": "0.25",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "3105"
+    }
+   ],
+   "groups": {
+    "m:topn": {
+     "entries": 2,
+     "identical_after": 0,
+     "identical_before": 0,
+     "max_shared_after": 6,
+     "max_shared_before": 6
+    }
+   },
+   "max_exposure_n": null,
+   "max_overlap": null
+  },
+  "results": [
+   {
+    "after": [
+     [
+      "PG",
+      "1006"
+     ],
+     [
+      "SG",
+      "3106"
+     ],
+     [
+      "SF",
+      "3103"
+     ],
+     [
+      "PF",
+      "2107"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "1102"
+     ],
+     [
+      "F",
+      "3107"
+     ],
+     [
+      "UTIL",
+      "1004"
+     ]
+    ],
+    "after_mean": "344.8562196249728",
+    "after_salary": 49700,
+    "before_mean": "271.3545433999948",
+    "key": "t0-1",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      true,
+      "Game started",
+      false,
+      null
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1006"
+     ],
+     [
+      "SG",
+      "3106"
+     ],
+     [
+      "SF",
+      "1107"
+     ],
+     [
+      "PF",
+      "3107"
+     ],
+     [
+      "C",
+      "2105"
+     ],
+     [
+      "G",
+      "1102"
+     ],
+     [
+      "F",
+      "3103"
+     ],
+     [
+      "UTIL",
+      "3101"
+     ]
+    ],
+    "after_mean": "313.8026429293969",
+    "after_salary": 49700,
+    "before_mean": "266.18481978011266",
+    "key": "t0-2",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1006"
+     ],
+     [
+      "SG",
+      "1002"
+     ],
+     [
+      "SF",
+      "1107"
+     ],
+     [
+      "PF",
+      "2107"
+     ],
+     [
+      "C",
+      "2105"
+     ],
+     [
+      "G",
+      "1102"
+     ],
+     [
+      "F",
+      "3103"
+     ],
+     [
+      "UTIL",
+      "3101"
+     ]
+    ],
+    "after_mean": "303.1588822879029",
+    "after_salary": 49700,
+    "before_mean": "219.7558824526494",
+    "key": "t0-3",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Moved to F"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1006"
+     ],
+     [
+      "SG",
+      "1002"
+     ],
+     [
+      "SF",
+      "3103"
+     ],
+     [
+      "PF",
+      "1004"
+     ],
+     [
+      "C",
+      "2105"
+     ],
+     [
+      "G",
+      "2102"
+     ],
+     [
+      "F",
+      "3107"
+     ],
+     [
+      "UTIL",
+      "1107"
+     ]
+    ],
+    "after_mean": "314.3557490331775",
+    "after_salary": 49700,
+    "before_mean": "269.33247915196944",
+    "key": "t0-4",
+    "notes": [],
+    "objective": "cash",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "G",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      true,
+      "Game started",
+      false,
+      null
+     ]
+    ],
+    "status": "swapped"
+   }
+  ],
+  "ruled_out": {
+   "2004": "test: out",
+   "3007": "test: out"
+  },
+  "summary": {
+   "entries": 4,
+   "now": "2026-10-20T23:00:00Z",
+   "portfolio": {
+    "exposure": [
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 4,
+      "player_id": "1006"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "3103"
+     },
+     {
+      "after": "0.75",
+      "before": "0.75",
+      "fixed": 3,
+      "player_id": "1102"
+     },
+     {
+      "after": "0.75",
+      "before": "0.75",
+      "fixed": 3,
+      "player_id": "1107"
+     },
+     {
+      "after": "0.75",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2105"
+     },
+     {
+      "after": "0.75",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3107"
+     },
+     {
+      "after": "0.5",
+      "before": "0.5",
+      "fixed": 2,
+      "player_id": "1002"
+     },
+     {
+      "after": "0.5",
+      "before": "0.5",
+      "fixed": 2,
+      "player_id": "1004"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2107"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3101"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3106"
+     },
+     {
+      "after": "0.25",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "3105"
+     }
+    ],
+    "groups": {
+     "m:topn": {
+      "entries": 2,
+      "identical_after": 0,
+      "identical_before": 0,
+      "max_shared_after": 6,
+      "max_shared_before": 6
+     }
+    },
+    "max_exposure_n": null,
+    "max_overlap": null
+   },
+   "projection": {
+    "created_at": null,
+    "model_version": "given",
+    "run_id": null,
+    "source": "given"
+   },
+   "ruled_out": 2,
+   "slate_id": "S1",
+   "source": "saved",
+   "status": {
+    "swapped": 4
+   },
+   "swapped": 4,
+   "warnings": []
+  },
+  "warnings": []
+ },
+ "random1": {
+  "portfolio": {
+   "exposure": [
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 4,
+     "player_id": "1106"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "2002"
+    },
+    {
+     "after": "1.0",
+     "before": "0.75",
+     "fixed": 0,
+     "player_id": "3105"
+    },
+    {
+     "after": "1.0",
+     "before": "0.75",
+     "fixed": 0,
+     "player_id": "3107"
+    },
+    {
+     "after": "0.75",
+     "before": "0.75",
+     "fixed": 0,
+     "player_id": "2107"
+    },
+    {
+     "after": "0.75",
+     "before": "0.25",
+     "fixed": 0,
+     "player_id": "3007"
+    },
+    {
+     "after": "0.75",
+     "before": "0.25",
+     "fixed": 0,
+     "player_id": "3101"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3005"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3103"
+    },
+    {
+     "after": "0.25",
+     "before": "0.25",
+     "fixed": 1,
+     "player_id": "1104"
+    },
+    {
+     "after": "0.25",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2101"
+    },
+    {
+     "after": "0.25",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3003"
+    }
+   ],
+   "groups": {
+    "c:cash1": {
+     "entries": 4,
+     "identical_after": 0,
+     "identical_before": 0,
+     "max_shared_after": 6,
+     "max_shared_before": 6
+    }
+   },
+   "max_exposure_n": null,
+   "max_overlap": 6
+  },
+  "results": [
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3007"
+     ],
+     [
+      "PF",
+      "2107"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "3101"
+     ],
+     [
+      "F",
+      "1104"
+     ],
+     [
+      "UTIL",
+      "3107"
+     ]
+    ],
+    "after_mean": "401.26441178756636",
+    "after_salary": 48300,
+    "before_mean": "270.4833081604097",
+    "key": "t1-1",
+    "notes": [],
+    "objective": "cash",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      false,
+      null,
+      true,
+      "Moved to SG"
+     ],
+     [
+      "F",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "test: out"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "3101"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3107"
+     ],
+     [
+      "PF",
+      "2107"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "1106"
+     ],
+     [
+      "F",
+      "3103"
+     ],
+     [
+      "UTIL",
+      "3005"
+     ]
+    ],
+    "after_mean": "404.2452268287885",
+    "after_salary": 49000,
+    "before_mean": "338.97987539946683",
+    "key": "t1-2",
+    "notes": [],
+    "objective": "cash",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Moved to SG"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3107"
+     ],
+     [
+      "PF",
+      "3007"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "2101"
+     ],
+     [
+      "F",
+      "2107"
+     ],
+     [
+      "UTIL",
+      "3103"
+     ]
+    ],
+    "after_mean": "401.32885626164614",
+    "after_salary": 46900,
+    "before_mean": "289.204533563166",
+    "key": "t1-3",
+    "notes": [],
+    "objective": "cash",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      false,
+      null,
+      true,
+      "Moved to SG"
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "test: out"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3107"
+     ],
+     [
+      "PF",
+      "3007"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "3101"
+     ],
+     [
+      "F",
+      "3003"
+     ],
+     [
+      "UTIL",
+      "3005"
+     ]
+    ],
+    "after_mean": "398.38309211526206",
+    "after_salary": 48300,
+    "before_mean": "252.59327384095351",
+    "key": "t1-4",
+    "notes": [],
+    "objective": "cash",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "G",
+      false,
+      null,
+      true,
+      "Moved to SG"
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   }
+  ],
+  "ruled_out": {
+   "2103": "test: out",
+   "2105": "test: out"
+  },
+  "summary": {
+   "entries": 4,
+   "now": "2026-10-20T23:00:00Z",
+   "portfolio": {
+    "exposure": [
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 4,
+      "player_id": "1106"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "2002"
+     },
+     {
+      "after": "1.0",
+      "before": "0.75",
+      "fixed": 0,
+      "player_id": "3105"
+     },
+     {
+      "after": "1.0",
+      "before": "0.75",
+      "fixed": 0,
+      "player_id": "3107"
+     },
+     {
+      "after": "0.75",
+      "before": "0.75",
+      "fixed": 0,
+      "player_id": "2107"
+     },
+     {
+      "after": "0.75",
+      "before": "0.25",
+      "fixed": 0,
+      "player_id": "3007"
+     },
+     {
+      "after": "0.75",
+      "before": "0.25",
+      "fixed": 0,
+      "player_id": "3101"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3005"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3103"
+     },
+     {
+      "after": "0.25",
+      "before": "0.25",
+      "fixed": 1,
+      "player_id": "1104"
+     },
+     {
+      "after": "0.25",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2101"
+     },
+     {
+      "after": "0.25",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3003"
+     }
+    ],
+    "groups": {
+     "c:cash1": {
+      "entries": 4,
+      "identical_after": 0,
+      "identical_before": 0,
+      "max_shared_after": 6,
+      "max_shared_before": 6
+     }
+    },
+    "max_exposure_n": null,
+    "max_overlap": 6
+   },
+   "projection": {
+    "created_at": null,
+    "model_version": "given",
+    "run_id": null,
+    "source": "given"
+   },
+   "ruled_out": 2,
+   "slate_id": "S1",
+   "source": "saved",
+   "status": {
+    "swapped": 4
+   },
+   "swapped": 4,
+   "warnings": []
+  },
+  "warnings": []
+ },
+ "random2": {
+  "portfolio": {
+   "exposure": [
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 4,
+     "player_id": "1102"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 4,
+     "player_id": "1106"
+    },
+    {
+     "after": "1.0",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2002"
+    },
+    {
+     "after": "1.0",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2105"
+    },
+    {
+     "after": "1.0",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3007"
+    },
+    {
+     "after": "0.75",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "3107"
+    },
+    {
+     "after": "0.75",
+     "before": "0.25",
+     "fixed": 0,
+     "player_id": "3101"
+    },
+    {
+     "after": "0.75",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2004"
+    },
+    {
+     "after": "0.25",
+     "before": "0.75",
+     "fixed": 0,
+     "player_id": "3103"
+    },
+    {
+     "after": "0.25",
+     "before": "0.25",
+     "fixed": 1,
+     "player_id": "1104"
+    },
+    {
+     "after": "0.25",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3005"
+    },
+    {
+     "after": "0.0",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "2005"
+    }
+   ],
+   "groups": {
+    "m:topn": {
+     "entries": 3,
+     "identical_after": 0,
+     "identical_before": 0,
+     "max_shared_after": 6,
+     "max_shared_before": 6
+    }
+   },
+   "max_exposure_n": null,
+   "max_overlap": 6
+  },
+  "results": [
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3007"
+     ],
+     [
+      "PF",
+      "3107"
+     ],
+     [
+      "C",
+      "3005"
+     ],
+     [
+      "G",
+      "1102"
+     ],
+     [
+      "F",
+      "2004"
+     ],
+     [
+      "UTIL",
+      "2105"
+     ]
+    ],
+    "after_mean": "378.8706845524882",
+    "after_salary": 49700,
+    "before_mean": "219.867482928607",
+    "key": "t2-1",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3107"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "2105"
+     ],
+     [
+      "G",
+      "1102"
+     ],
+     [
+      "F",
+      "3007"
+     ],
+     [
+      "UTIL",
+      "3101"
+     ]
+    ],
+    "after_mean": "376.0782939509434",
+    "after_salary": 47600,
+    "before_mean": "264.84487294331035",
+    "key": "t2-2",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2002"
+     ],
+     [
+      "SF",
+      "3103"
+     ],
+     [
+      "PF",
+      "2004"
+     ],
+     [
+      "C",
+      "2105"
+     ],
+     [
+      "G",
+      "1102"
+     ],
+     [
+      "F",
+      "3007"
+     ],
+     [
+      "UTIL",
+      "3101"
+     ]
+    ],
+    "after_mean": "356.96170490215707",
+    "after_salary": 44800,
+    "before_mean": "240.40543432031933",
+    "key": "t2-3",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "PF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Moved to SF"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "3101"
+     ],
+     [
+      "SG",
+      "1102"
+     ],
+     [
+      "SF",
+      "3007"
+     ],
+     [
+      "PF",
+      "3107"
+     ],
+     [
+      "C",
+      "2105"
+     ],
+     [
+      "G",
+      "1106"
+     ],
+     [
+      "F",
+      "2004"
+     ],
+     [
+      "UTIL",
+      "2002"
+     ]
+    ],
+    "after_mean": "374.86994981761904",
+    "after_salary": 47600,
+    "before_mean": "258.62057408705715",
+    "key": "t2-4",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "PF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   }
+  ],
+  "ruled_out": {
+   "2005": "test: out",
+   "2007": "test: out"
+  },
+  "summary": {
+   "entries": 4,
+   "now": "2026-10-20T23:30:00Z",
+   "portfolio": {
+    "exposure": [
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 4,
+      "player_id": "1102"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 4,
+      "player_id": "1106"
+     },
+     {
+      "after": "1.0",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2002"
+     },
+     {
+      "after": "1.0",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2105"
+     },
+     {
+      "after": "1.0",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3007"
+     },
+     {
+      "after": "0.75",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "3107"
+     },
+     {
+      "after": "0.75",
+      "before": "0.25",
+      "fixed": 0,
+      "player_id": "3101"
+     },
+     {
+      "after": "0.75",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2004"
+     },
+     {
+      "after": "0.25",
+      "before": "0.75",
+      "fixed": 0,
+      "player_id": "3103"
+     },
+     {
+      "after": "0.25",
+      "before": "0.25",
+      "fixed": 1,
+      "player_id": "1104"
+     },
+     {
+      "after": "0.25",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3005"
+     },
+     {
+      "after": "0.0",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "2005"
+     }
+    ],
+    "groups": {
+     "m:topn": {
+      "entries": 3,
+      "identical_after": 0,
+      "identical_before": 0,
+      "max_shared_after": 6,
+      "max_shared_before": 6
+     }
+    },
+    "max_exposure_n": null,
+    "max_overlap": 6
+   },
+   "projection": {
+    "created_at": null,
+    "model_version": "given",
+    "run_id": null,
+    "source": "given"
+   },
+   "ruled_out": 2,
+   "slate_id": "S1",
+   "source": "saved",
+   "status": {
+    "swapped": 4
+   },
+   "swapped": 4,
+   "warnings": []
+  },
+  "warnings": []
+ },
+ "random3": {
+  "portfolio": {
+   "exposure": [
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 4,
+     "player_id": "1104"
+    },
+    {
+     "after": "0.75",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "2102"
+    },
+    {
+     "after": "0.75",
+     "before": "0.75",
+     "fixed": 3,
+     "player_id": "1106"
+    },
+    {
+     "after": "0.75",
+     "before": "0.25",
+     "fixed": 0,
+     "player_id": "3103"
+    },
+    {
+     "after": "0.75",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2002"
+    },
+    {
+     "after": "0.75",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3007"
+    },
+    {
+     "after": "0.5",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "3005"
+    },
+    {
+     "after": "0.5",
+     "before": "0.5",
+     "fixed": 2,
+     "player_id": "1002"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2005"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3001"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3106"
+    },
+    {
+     "after": "0.25",
+     "before": "1.0",
+     "fixed": 0,
+     "player_id": "2004"
+    }
+   ],
+   "fixed_over": {
+    "1104": 4
+   },
+   "groups": {
+    "m:topn": {
+     "entries": 3,
+     "identical_after": 0,
+     "identical_before": 0,
+     "max_shared_after": 6,
+     "max_shared_before": 6
+    }
+   },
+   "max_exposure_n": 3,
+   "max_overlap": 6,
+   "over_cap": [
+    "1104"
+   ]
+  },
+  "results": [
+   {
+    "after": [
+     [
+      "PG",
+      "3001"
+     ],
+     [
+      "SG",
+      "2102"
+     ],
+     [
+      "SF",
+      "3103"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "3005"
+     ],
+     [
+      "G",
+      "1106"
+     ],
+     [
+      "F",
+      "3007"
+     ],
+     [
+      "UTIL",
+      "2002"
+     ]
+    ],
+    "after_mean": "369.3329564475925",
+    "after_salary": 44800,
+    "before_mean": "274.2102047112494",
+    "key": "t3-1",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "SG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "test: out"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "2102"
+     ],
+     [
+      "SF",
+      "3007"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "2005"
+     ],
+     [
+      "G",
+      "1002"
+     ],
+     [
+      "F",
+      "3103"
+     ],
+     [
+      "UTIL",
+      "2002"
+     ]
+    ],
+    "after_mean": "379.95282885978554",
+    "after_salary": 44800,
+    "before_mean": "294.9160981952886",
+    "key": "t3-2",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "test: out"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "3106"
+     ],
+     [
+      "SG",
+      "2102"
+     ],
+     [
+      "SF",
+      "3103"
+     ],
+     [
+      "PF",
+      "3007"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "1106"
+     ],
+     [
+      "F",
+      "1104"
+     ],
+     [
+      "UTIL",
+      "2002"
+     ]
+    ],
+    "after_mean": "368.31872242344343",
+    "after_salary": 45500,
+    "before_mean": "292.9090262825513",
+    "key": "t3-3",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "SG",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "PF",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "3001"
+     ],
+     [
+      "SG",
+      "3106"
+     ],
+     [
+      "SF",
+      "1007"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "2005"
+     ],
+     [
+      "G",
+      "1002"
+     ],
+     [
+      "F",
+      "2004"
+     ],
+     [
+      "UTIL",
+      "3005"
+     ]
+    ],
+    "after_mean": "320.779731145138",
+    "after_salary": 44800,
+    "before_mean": "275.6326369857692",
+    "key": "t3-4",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "SG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      false,
+      null
+     ]
+    ],
+    "status": "swapped"
+   }
+  ],
+  "ruled_out": {
+   "2105": "test: out",
+   "3101": "test: out"
+  },
+  "summary": {
+   "entries": 4,
+   "now": "2026-10-20T23:00:00Z",
+   "portfolio": {
+    "exposure": [
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 4,
+      "player_id": "1104"
+     },
+     {
+      "after": "0.75",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "2102"
+     },
+     {
+      "after": "0.75",
+      "before": "0.75",
+      "fixed": 3,
+      "player_id": "1106"
+     },
+     {
+      "after": "0.75",
+      "before": "0.25",
+      "fixed": 0,
+      "player_id": "3103"
+     },
+     {
+      "after": "0.75",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2002"
+     },
+     {
+      "after": "0.75",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3007"
+     },
+     {
+      "after": "0.5",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "3005"
+     },
+     {
+      "after": "0.5",
+      "before": "0.5",
+      "fixed": 2,
+      "player_id": "1002"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2005"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3001"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3106"
+     },
+     {
+      "after": "0.25",
+      "before": "1.0",
+      "fixed": 0,
+      "player_id": "2004"
+     }
+    ],
+    "fixed_over": {
+     "1104": 4
+    },
+    "groups": {
+     "m:topn": {
+      "entries": 3,
+      "identical_after": 0,
+      "identical_before": 0,
+      "max_shared_after": 6,
+      "max_shared_before": 6
+     }
+    },
+    "max_exposure_n": 3,
+    "max_overlap": 6,
+    "over_cap": [
+     "1104"
+    ]
+   },
+   "projection": {
+    "created_at": null,
+    "model_version": "given",
+    "run_id": null,
+    "source": "given"
+   },
+   "ruled_out": 2,
+   "slate_id": "S1",
+   "source": "saved",
+   "status": {
+    "swapped": 4
+   },
+   "swapped": 4,
+   "warnings": [
+    "DET P3 is locked into 4 entries, above the exposure cap. Locked slots cannot change."
+   ]
+  },
+  "warnings": [
+   "DET P3 is locked into 4 entries, above the exposure cap. Locked slots cannot change."
+  ]
+ },
+ "random4": {
+  "portfolio": {
+   "exposure": [
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 4,
+     "player_id": "1006"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 4,
+     "player_id": "1104"
+    },
+    {
+     "after": "1.0",
+     "before": "1.0",
+     "fixed": 4,
+     "player_id": "1106"
+    },
+    {
+     "after": "0.75",
+     "before": "0.5",
+     "fixed": 0,
+     "player_id": "3103"
+    },
+    {
+     "after": "0.75",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2002"
+    },
+    {
+     "after": "0.75",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2003"
+    },
+    {
+     "after": "0.5",
+     "before": "0.5",
+     "fixed": 2,
+     "player_id": "1002"
+    },
+    {
+     "after": "0.5",
+     "before": "0.5",
+     "fixed": 2,
+     "player_id": "1005"
+    },
+    {
+     "after": "0.5",
+     "before": "0.5",
+     "fixed": 0,
+     "player_id": "3105"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "2107"
+    },
+    {
+     "after": "0.5",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3005"
+    },
+    {
+     "after": "0.25",
+     "before": "0.0",
+     "fixed": 0,
+     "player_id": "3006"
+    }
+   ],
+   "fixed_over": {
+    "1006": 4,
+    "1104": 4,
+    "1106": 4
+   },
+   "groups": {
+    "c:gpp1": {
+     "entries": 2,
+     "identical_after": 0,
+     "identical_before": 0,
+     "max_shared_after": 4,
+     "max_shared_before": 6
+    }
+   },
+   "max_exposure_n": 3,
+   "max_overlap": null,
+   "over_cap": [
+    "1006",
+    "1104",
+    "1106"
+   ]
+  },
+  "results": [
+   {
+    "after": [
+     [
+      "PG",
+      "1006"
+     ],
+     [
+      "SG",
+      "1106"
+     ],
+     [
+      "SF",
+      "2107"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "2002"
+     ],
+     [
+      "F",
+      "3103"
+     ],
+     [
+      "UTIL",
+      "3005"
+     ]
+    ],
+    "after_mean": "325.9294970716698",
+    "after_salary": 49700,
+    "before_mean": "202.9016544918705",
+    "key": "t4-1",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Moved to F"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "1006"
+     ],
+     [
+      "SF",
+      "2003"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "3105"
+     ],
+     [
+      "G",
+      "1002"
+     ],
+     [
+      "F",
+      "3103"
+     ],
+     [
+      "UTIL",
+      "2002"
+     ]
+    ],
+    "after_mean": "300.88183422414",
+    "after_salary": 49700,
+    "before_mean": "178.84154874020538",
+    "key": "t4-2",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      false,
+      null,
+      false,
+      null
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "1106"
+     ],
+     [
+      "SG",
+      "1006"
+     ],
+     [
+      "SF",
+      "2003"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "1005"
+     ],
+     [
+      "G",
+      "1002"
+     ],
+     [
+      "F",
+      "3103"
+     ],
+     [
+      "UTIL",
+      "2002"
+     ]
+    ],
+    "after_mean": "267.38237433750743",
+    "after_salary": 47600,
+    "before_mean": "170.67108887635464",
+    "key": "t4-3",
+    "notes": [],
+    "objective": "cash",
+    "slots": [
+     [
+      "PG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Moved to F"
+     ]
+    ],
+    "status": "swapped"
+   },
+   {
+    "after": [
+     [
+      "PG",
+      "3006"
+     ],
+     [
+      "SG",
+      "1106"
+     ],
+     [
+      "SF",
+      "2003"
+     ],
+     [
+      "PF",
+      "1104"
+     ],
+     [
+      "C",
+      "1005"
+     ],
+     [
+      "G",
+      "1006"
+     ],
+     [
+      "F",
+      "2107"
+     ],
+     [
+      "UTIL",
+      "3005"
+     ]
+    ],
+    "after_mean": "259.65459293944366",
+    "after_salary": 49700,
+    "before_mean": "144.0731945824561",
+    "key": "t4-4",
+    "notes": [],
+    "objective": "mean",
+    "slots": [
+     [
+      "PG",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ],
+     [
+      "SG",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "SF",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "PF",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "C",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "G",
+      true,
+      "Game started",
+      false,
+      null
+     ],
+     [
+      "F",
+      false,
+      null,
+      true,
+      "test: out"
+     ],
+     [
+      "UTIL",
+      false,
+      null,
+      true,
+      "Higher projection elsewhere"
+     ]
+    ],
+    "status": "swapped"
+   }
+  ],
+  "ruled_out": {
+   "3007": "test: out",
+   "3107": "test: out"
+  },
+  "summary": {
+   "entries": 4,
+   "now": "2026-10-20T23:00:00Z",
+   "portfolio": {
+    "exposure": [
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 4,
+      "player_id": "1006"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 4,
+      "player_id": "1104"
+     },
+     {
+      "after": "1.0",
+      "before": "1.0",
+      "fixed": 4,
+      "player_id": "1106"
+     },
+     {
+      "after": "0.75",
+      "before": "0.5",
+      "fixed": 0,
+      "player_id": "3103"
+     },
+     {
+      "after": "0.75",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2002"
+     },
+     {
+      "after": "0.75",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2003"
+     },
+     {
+      "after": "0.5",
+      "before": "0.5",
+      "fixed": 2,
+      "player_id": "1002"
+     },
+     {
+      "after": "0.5",
+      "before": "0.5",
+      "fixed": 2,
+      "player_id": "1005"
+     },
+     {
+      "after": "0.5",
+      "before": "0.5",
+      "fixed": 0,
+      "player_id": "3105"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "2107"
+     },
+     {
+      "after": "0.5",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3005"
+     },
+     {
+      "after": "0.25",
+      "before": "0.0",
+      "fixed": 0,
+      "player_id": "3006"
+     }
+    ],
+    "fixed_over": {
+     "1006": 4,
+     "1104": 4,
+     "1106": 4
+    },
+    "groups": {
+     "c:gpp1": {
+      "entries": 2,
+      "identical_after": 0,
+      "identical_before": 0,
+      "max_shared_after": 4,
+      "max_shared_before": 6
+     }
+    },
+    "max_exposure_n": 3,
+    "max_overlap": null,
+    "over_cap": [
+     "1006",
+     "1104",
+     "1106"
+    ]
+   },
+   "projection": {
+    "created_at": null,
+    "model_version": "given",
+    "run_id": null,
+    "source": "given"
+   },
+   "ruled_out": 2,
+   "slate_id": "S1",
+   "source": "saved",
+   "status": {
+    "swapped": 4
+   },
+   "swapped": 4,
+   "warnings": [
+    "BOS P5 is locked into 4 entries, above the exposure cap. Locked slots cannot change.",
+    "DET P5 is locked into 4 entries, above the exposure cap. Locked slots cannot change.",
+    "DET P3 is locked into 4 entries, above the exposure cap. Locked slots cannot change."
+   ]
+  },
+  "warnings": [
+   "BOS P5 is locked into 4 entries, above the exposure cap. Locked slots cannot change.",
+   "DET P5 is locked into 4 entries, above the exposure cap. Locked slots cannot change.",
+   "DET P3 is locked into 4 entries, above the exposure cap. Locked slots cannot change."
+  ]
+ }
+}

@@ -224,6 +224,10 @@ class MinutesParams:
     # reserve offsets and the margin curve calibrated by simulation (see BO_* below). Empty =
     # off (and the key is left out of the JSON).
     blowout: dict = field(default_factory=dict)
+    # player-specific minutes spread (COURTSIDE_MIN_SPREAD, `fit_spread`): quantile models of the
+    # log ratio and the tier references (see SPREAD_* below). Empty = off (and the key is left
+    # out of the JSON).
+    spread: dict = field(default_factory=dict)
 
     def to_json(self) -> str:
         d = asdict(self)
@@ -233,6 +237,8 @@ class MinutesParams:
             del d["minfix"]
         if not d["blowout"]:                # likewise
             del d["blowout"]
+        if not d["spread"]:                 # likewise
+            del d["spread"]
         return json.dumps(d)
 
     @classmethod
@@ -1563,7 +1569,7 @@ def _mf_sim_stats(prm: MinutesParams, r: pd.DataFrame, sims: int, seed: int
     minutes and the tier of its plan."""
     rng = np.random.default_rng(seed)
     out = []
-    cols = ["p_play", "pf36", "reserve", "mean0"]
+    cols = ["p_play", "pf36", "reserve", "mean0"] + [c for c in SPREAD_COLS if c in r]
     ms = r["margin"].to_numpy(float)
     ot = r["n_ot"].fillna(0).to_numpy(float)
     for _, idx in r.groupby("key", sort=False).indices.items():
@@ -1885,6 +1891,195 @@ def _bo_fit(prm: MinutesParams, r: pd.DataFrame, log: Callable[[str], None],
                cov0=np.round(cov0, 4).tolist())
     prm.blowout = saved
     return out
+
+
+# --- player-specific minutes spread (ms; pipeline.MIN_SPREAD, env COURTSIDE_MIN_SPREAD=1,
+# default OFF; IMPROVEMENTS.md P6, docs/research/p4-p6.md) -----------------------------------
+# Step 6's noise is per tier: (plan + g) x exp(mu_t + sigma_t xi). ON, each player gets his own
+# lower / upper scale, sigma_t s_lo (xi < 0) and sigma_t s_hi (xi >= 0): a two-piece normal in
+# log minutes, re-centred so that E[exp(noise)] stays the tier's (the GBM sets the mean, the
+# spread model only the shape). s_lo = (q50 - q10) / z90 and s_hi = (q90 - q50) / z90 come from
+# LightGBM quantile models of log(actual / (plan + g(margin))) (played, plan >= 5) on the
+# minutes GBM's own features (volatility min_sd / ew_vf, fouls pf36 / last_pf, return from
+# injury missed_now / gsr_now / abs_len_now and new_team among them) plus the plan (log plan,
+# plan vs the fast / slow EWMA), each divided by its tier's mean on the training rows and
+# clipped to SPREAD_BOUNDS. `fit_spread` fits them on the 5 seasons < S on out-of-fold plans and
+# then recalibrates mu / sigma per tier by simulation with the spread on (`_mf_calibrate_noise`);
+# nothing else of the arm's params changes. The draws are the same (common random numbers).
+# With params.spread empty (OFF) nothing of it runs.
+
+SPREAD_VERSION = 1
+SPREAD_QUANTS = (0.1, 0.5, 0.9)
+SPREAD_EXTRA = ("sp_lplan", "sp_lrf", "sp_lrs")
+SPREAD_COLS = ("sp_lo", "sp_hi")
+SPREAD_BOUNDS = (0.4, 2.5)
+SPREAD_ROUNDS = 300
+SPREAD_MIN_PLAN = 5.0
+SPREAD_GBM = {"objective": "quantile", "learning_rate": 0.05, "num_leaves": 15,
+              "min_data_in_leaf": 400, "feature_fraction": 0.8, "bagging_fraction": 0.8,
+              "bagging_freq": 1, "lambda_l2": 5.0, "seed": 11, "deterministic": True,
+              "force_col_wise": True, "verbose": -1}
+_Z90 = 1.2815515655446004
+
+
+def spread_matrix(p: pd.DataFrame, absent: np.ndarray, names, plan: np.ndarray) -> np.ndarray:
+    """The spread models' features: `v1_matrix` (the GBM's) + SPREAD_EXTRA of the plan."""
+    X = v1_matrix(p, absent, names)
+    lb = np.log(np.maximum(np.asarray(plan, float), 0.5))
+    ex = [lb, lb - np.log(np.maximum(p["ew_f"].to_numpy(float), 1.0)),
+          lb - np.log(np.maximum(p["ew_s"].to_numpy(float), 1.0))]
+    return np.column_stack([X] + ex)
+
+
+def spread_scales(q: np.ndarray, tiers: np.ndarray, ref_lo, ref_hi
+                  ) -> tuple[np.ndarray, np.ndarray]:
+    """(s_lo, s_hi) from quantile predictions q (n, 3) (q10, q50, q90; sorted, so no crossing)
+    relative to the tier references, clipped to SPREAD_BOUNDS."""
+    q = np.sort(np.asarray(q, float), axis=1)
+    lo = np.maximum(q[:, 1] - q[:, 0], 1e-3) / _Z90
+    hi = np.maximum(q[:, 2] - q[:, 1], 1e-3) / _Z90
+    s_lo = np.clip(lo / np.asarray(ref_lo, float)[tiers], *SPREAD_BOUNDS)
+    s_hi = np.clip(hi / np.asarray(ref_hi, float)[tiers], *SPREAD_BOUNDS)
+    return s_lo, s_hi
+
+
+def spread_columns(p: pd.DataFrame, params: MinutesParams, absent: np.ndarray,
+                   plan: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per row of the team panel p (one availability scenario, plan = E[min | plays] before
+    the margin): (s_lo, s_hi). Panels without the v1 columns get 1 (the tier's spread)."""
+    sp = params.spread
+    n = len(p)
+    if not n or not has_v1_columns(p):
+        return np.ones(n), np.ones(n)
+    X = spread_matrix(p, absent, sp["features"], plan)
+    q = np.column_stack([_booster(m).predict(X, num_threads=1) for m in sp["models"]])
+    return spread_scales(q, tier_of(plan), sp["ref_lo"], sp["ref_hi"])
+
+
+def spread_noise(mu: np.ndarray, sg: np.ndarray, s_lo: np.ndarray, s_hi: np.ndarray,
+                 xi: np.ndarray) -> np.ndarray:
+    """Log noise (S, n) of the two-piece normal: mu + c + sigma s(xi) xi, with c re-centring
+    E[exp(noise)] to exp(mu + sigma^2 / 2), the tier normal's."""
+    from scipy.special import ndtr
+    a, b = sg * s_lo, sg * s_hi
+    m = np.exp(a * a / 2.0) * ndtr(-a) + np.exp(b * b / 2.0) * ndtr(b)
+    c = sg * sg / 2.0 - np.log(m)
+    return (mu + c)[None, :] + np.where(xi < 0, a[None, :], b[None, :]) * xi
+
+
+def _pinball(y: np.ndarray, q: np.ndarray, a: float) -> float:
+    d = y - q
+    return float(np.mean(np.maximum(a * d, (a - 1.0) * d)))
+
+
+def fit_spread(prm_off: MinutesParams, panel: pd.DataFrame, shares: "PairShares | None",
+               log: Callable[[str], None] = print, max_rounds: int = 3000,
+               gbm_params: dict | None = None, rounds: int = SPREAD_ROUNDS,
+               spread_gbm: dict | None = None, min_fold_rows: int = 1000) -> MinutesParams:
+    """The arm's v1 params + the spread models, on the arm's own training panel (seasons < S,
+    oracle scenario). 1. The out-of-fold plans exactly as `fit_v1` makes them (leave-one-season-
+    out GBM folds, then `run_projection` with the arm's params). 2. The quantile models
+    (SPREAD_QUANTS) of the log ratio, out of fold by season for the references and the
+    calibration, then refit on all rows. 3. mu / sigma per tier recalibrated by simulation with
+    the spread on (`_mf_calibrate_noise`). Everything else is the arm's."""
+    import lightgbm as lgb
+    import time as _time
+    t0 = _time.time()
+    prm = MinutesParams.from_json(prm_off.to_json())
+    if prm.version != "v1" or not prm.gbm_model:
+        raise ValueError("fit_spread needs v1 params")
+    if not has_v1_columns(panel):
+        raise ValueError("fit_spread: the training panel has no v1 columns")
+    names = list(prm.gbm_features)
+    gp = dict(GBM_PARAMS, **(gbm_params or {}))
+    ab = panel["absent"].to_numpy(bool)
+    X = v1_matrix(panel, ab, names)
+    y = panel["act_min_r"].to_numpy(float)
+    ok = v1_ok(panel)
+    rows = panel["played"].to_numpy(bool) & ~ab & ok
+    seas = panel["season"].to_numpy()
+    oof = np.full(len(panel), np.nan)
+    for s in sorted(set(seas)):                # = fit_v1 step 1
+        tr, va = rows & (seas != s), rows & (seas == s)
+        if va.sum() < 100 or tr.sum() < 100:
+            continue
+        dtr = lgb.Dataset(X[tr], y[tr], feature_name=names, free_raw_data=False)
+        dva = lgb.Dataset(X[va], y[va], reference=dtr)
+        m = lgb.train(gp, dtr, num_boost_round=max_rounds, valid_sets=[dva],
+                      callbacks=[lgb.early_stopping(100, verbose=False)])
+        it = m.best_iteration or max_rounds
+        pr = ~ab & ok & (seas == s)
+        oof[pr] = m.predict(X[pr], num_iteration=it, num_threads=gp["num_threads"])
+        log(f"  fit_spread plan fold {s}: rounds {it}")
+    tp = panel.copy()
+    tp["_v1_oof"] = oof
+    r = run_projection(tp, prm, shares=shares)
+    plan = r["mean0"].to_numpy(float)
+    tiers = tier_of(plan)
+    lvl = np.maximum(plan + _g_rows(prm, tiers, r["margin"].to_numpy(float)), 1.0)
+    ys = np.log(np.maximum(r["act_min_r"].to_numpy(float), 0.5) / lvl)
+    fit_rows = r["played"].to_numpy(bool) & ~ab & (plan >= SPREAD_MIN_PLAN) & np.isfinite(ys)
+    XS = spread_matrix(r, ab, names, plan)
+    sq = dict(SPREAD_GBM, num_threads=gp["num_threads"], **(spread_gbm or {}))
+    nq = len(SPREAD_QUANTS)
+    oofq = np.full((len(r), nq), np.nan)
+    for s in sorted(set(seas)):
+        tr, te = fit_rows & (seas != s), seas == s
+        if tr.sum() < min_fold_rows or not te.any():
+            continue
+        for k, a in enumerate(SPREAD_QUANTS):
+            m = lgb.train(dict(sq, alpha=a), lgb.Dataset(XS[tr], ys[tr]), num_boost_round=rounds)
+            oofq[te, k] = m.predict(XS[te], num_threads=sq["num_threads"])
+        log(f"  fit_spread quantile fold {s} ({_time.time() - t0:.0f}s)")
+    models = []
+    for a in SPREAD_QUANTS:
+        m = lgb.train(dict(sq, alpha=a), lgb.Dataset(XS[fit_rows], ys[fit_rows]),
+                      num_boost_round=rounds)
+        models.append(m.model_to_string())
+    have = fit_rows & np.isfinite(oofq).all(1)
+    if have.sum() < 50:
+        raise ValueError(f"fit_spread: {int(have.sum())} out-of-fold rows (too few seasons?)")
+    qs = np.sort(oofq[have], axis=1)
+    lo_all = np.maximum(qs[:, 1] - qs[:, 0], 1e-3) / _Z90
+    hi_all = np.maximum(qs[:, 2] - qs[:, 1], 1e-3) / _Z90
+    nt = len(TIER_EDGES) + 1
+    th = tiers[have]
+    ref_lo = [float(lo_all[th == t].mean()) if (th == t).sum() >= 200 else float(lo_all.mean())
+              for t in range(nt)]
+    ref_hi = [float(hi_all[th == t].mean()) if (th == t).sum() >= 200 else float(hi_all.mean())
+              for t in range(nt)]
+    # out-of-fold pinball loss vs one quantile per tier (training rows of the other seasons)
+    pin = {}
+    for k, a in enumerate(SPREAD_QUANTS):
+        base = np.full(len(r), np.nan)
+        for s in sorted(set(seas)):
+            tr, te = fit_rows & (seas != s), have & (seas == s)
+            for t in range(nt):
+                sel = tr & (tiers == t)
+                if sel.sum() >= 50:
+                    base[te & (tiers == t)] = np.quantile(ys[sel], a)
+        ok_ = have & np.isfinite(base)
+        pin[f"q{int(a * 100)}"] = {"gbm": round(_pinball(ys[ok_], oofq[ok_, k], a), 5),
+                                  "tier": round(_pinball(ys[ok_], base[ok_], a), 5)}
+    prm.spread = {"version": SPREAD_VERSION, "features": names, "extra": list(SPREAD_EXTRA),
+                  "quants": list(SPREAD_QUANTS), "models": models, "ref_lo": ref_lo,
+                  "ref_hi": ref_hi, "rounds": int(rounds), "bounds": list(SPREAD_BOUNDS),
+                  "mu_arm": list(prm_off.mu), "sigma_arm": list(prm_off.sigma)}
+    s_lo, s_hi = np.ones(len(r)), np.ones(len(r))
+    okq = np.isfinite(oofq).all(1)
+    s_lo[okq], s_hi[okq] = spread_scales(oofq[okq], tiers[okq], ref_lo, ref_hi)
+    r = r.assign(sp_lo=s_lo, sp_hi=s_hi)
+    cal = _mf_calibrate_noise(prm, r, log)
+    prm.spread["calibration"] = cal["calib"]
+    sel = fit_rows & okq
+    prm.diagnostics = dict(prm.diagnostics, spread={
+        "train_rows": int(fit_rows.sum()), "pinball_oof": pin,
+        "s_lo_q": np.round(np.quantile(s_lo[sel], [0.1, 0.5, 0.9]), 3).tolist(),
+        "s_hi_q": np.round(np.quantile(s_hi[sel], [0.1, 0.5, 0.9]), 3).tolist(),
+        "seconds": round(_time.time() - t0, 1)})
+    log(f"  fit_spread: {int(fit_rows.sum())} rows, pinball {pin}, mu {np.round(prm.mu, 3).tolist()}"
+        f" sigma {np.round(prm.sigma, 3).tolist()} ({_time.time() - t0:.0f}s)")
+    return prm
 
 
 def departed(h: History, panel: pd.DataFrame) -> np.ndarray:
@@ -2488,7 +2683,12 @@ def sample_minutes(proj: pd.DataFrame, params: MinutesParams, margins: np.ndarra
     if noise:
         mu = np.asarray(params.mu)[tiers]
         sg = np.asarray(bo["sigma"] if bo and "sigma" in bo else params.sigma)[tiers]
-        x = x * np.exp(mu[None, :] + sg[None, :] * rng.standard_normal((S, n)))
+        if getattr(params, "spread", None) and "sp_lo" in proj:   # +ms: two-piece spread
+            x = x * np.exp(spread_noise(mu, sg, proj["sp_lo"].to_numpy(float),
+                                        proj["sp_hi"].to_numpy(float),
+                                        rng.standard_normal((S, n))))
+        else:
+            x = x * np.exp(mu[None, :] + sg[None, :] * rng.standard_normal((S, n)))
         q = np.clip(params.q0 + params.q1 * pf, 0.0, 0.5)
         ex = rng.random((S, n)) < q[None, :]
         x = np.where(ex, x * rng.uniform(*EXIT_U, size=(S, n)), x)

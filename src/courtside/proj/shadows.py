@@ -17,7 +17,7 @@ Isolation (the champion is never affected):
   any slate falls within [now - 10 min, now + budget + 2 min] (`lock_conflict`);
 * every arm runs in try/except; the switch flags, the bundle suffix and MODEL_VERSION are
   restored (and checked) after every arm (`arm_on`);
-* a time budget (default 90 s for the whole run, `COURTSIDE_SHADOW_BUDGET_S`) is enforced: an
+* a time budget (default 240 s for the whole run, `COURTSIDE_SHADOW_BUDGET_S`) is enforced: an
   arm that would not fit is skipped, and a running arm is interrupted by SIGALRM at the deadline;
 * an arm whose bundle file is not on disk is skipped: a shadow never fits or writes a bundle;
 * `COURTSIDE_SHADOWS=0` (or SHADOWS_DEFAULT = False) turns the step off; the arm list comes from
@@ -63,9 +63,9 @@ SHADOWS_DEFAULT = True                 # accumulate from the day it is merged; e
 SHADOWS_ENV = "COURTSIDE_SHADOWS"      # "0" / "off" disables the pregame step
 ARMS_ENV = "COURTSIDE_SHADOW_ARMS"     # "+tr,+ep" (or "tr,ep"): overrides the registry's active list
 BUDGET_ENV = "COURTSIDE_SHADOW_BUDGET_S"
-BUDGET_S = 90.0                        # whole run: context, champion and every arm
+BUDGET_S = 240.0                       # whole run (90 s timed out +lf and skipped +tm on 2026-10-24)
 SIMS_ENV = "COURTSIDE_SHADOW_SIMS"
-SHADOW_SIMS = 10_000                   # champion and arms alike (25,000 x 8 does not fit 90 s)
+SHADOW_SIMS = 10_000                   # champion and arms alike (25,000 x 8 does not fit the budget)
 SEED_KIND = "pregame"                  # stable_seed(slate, SEED_KIND, SEED_VERSION), shared
 K_LEVELS = 100
 LEVELS = (np.arange(K_LEVELS) + 0.5) / K_LEVELS
@@ -560,6 +560,7 @@ def night_rows(conn: sqlite3.Connection, day: date, out_root: Path | None = None
     pending = any(s == "pending" for s in states.values())
     box = G.load_box(conn, final)
     frames = []
+    sal_cache: dict = {}
     for man, tag, rdf, rq, adf, aq in pairs:
         r = rdf.reset_index().rename(columns={"index": "ri"})
         a = adf.reset_index().rename(columns={"index": "ai"})
@@ -588,7 +589,10 @@ def night_rows(conn: sqlite3.Connection, day: date, out_root: Path | None = None
             "mae_c": np.where(played == 1, np.abs(mp_c - amin), np.nan),
             "mae_a": np.where(played == 1, np.abs(mp_a - amin), np.nan),
             "ll_c": _ll(m["p_play_c"], played), "ll_a": _ll(m["p_play_a"], played),
-            "changed": changed.astype(int)})
+            "changed": changed.astype(int),
+            # E4 report-only columns (EXTRA_COLS): signed E[DK] of both arms and the salary
+            "dk_c": m["dk_mean_c"].to_numpy(float), "dk_a": m["dk_mean_a"].to_numpy(float),
+            "salary": _salaries_for(conn, man, pid, sal_cache)})
         frames.append(f)
     if not frames:
         return None, "pending" if pending else "none"
@@ -597,6 +601,77 @@ def night_rows(conn: sqlite3.Connection, day: date, out_root: Path | None = None
 
 def _rows_cache(day_dir: Path) -> Path:
     return day_dir / "graded.csv.gz"
+
+
+EXTRA_COLS = ("dk_c", "dk_a", "salary")     # E4 report-only columns (added 2026-10-24)
+_MERGE_KEYS = ("day", "run", "arm", "game_id", "player_id")
+
+
+def _salaries_for(conn: sqlite3.Connection, man: dict, pids: np.ndarray, cache: dict
+                  ) -> np.ndarray:
+    """DK Classic salary of each NBA player id on the manifest's slate (latest capture at or
+    before the run; the first one if none is earlier). NaN when unknown. Report-only."""
+    sid, at = man.get("slate_id"), man.get("at")
+    out = np.full(len(pids), np.nan)
+    if not sid:
+        return out
+    key = (str(sid), str(at or ""))
+    if key not in cache:
+        tab: dict = {}
+        try:
+            caps = [r[0] for r in conn.execute(
+                "SELECT DISTINCT captured_at FROM dfs_salaries WHERE slate_id=? ORDER BY "
+                "captured_at", (str(sid),))]
+            if caps:
+                pick = max((c for c in caps if at and c <= str(at)), default=caps[0])
+                from . import ids as IDS
+                dk2nba = IDS.nba_ids(conn, IDS.DK)
+                for dk, sal, slot in conn.execute(
+                        "SELECT site_player_id, salary, roster_slot FROM dfs_salaries WHERE "
+                        "slate_id=? AND captured_at=?", (str(sid), pick)):
+                    nba = dk2nba.get(str(dk))
+                    if nba is None or sal is None or slot == "CPT":
+                        continue
+                    tab.setdefault(nba, float(sal))
+        except sqlite3.Error as e:
+            log.warning("shadow salaries for slate %s: %s", sid, e)
+        cache[key] = tab
+    tab = cache[key]
+    for i, p in enumerate(pids):
+        v = tab.get(int(p))
+        if v is not None:
+            out[i] = v
+    return out
+
+
+def _with_extra(conn: sqlite3.Connection, day: date, base: Path, df: pd.DataFrame,
+                cache: Path) -> pd.DataFrame:
+    """A cached night written before EXTRA_COLS existed: recompute the night and merge ONLY the
+    new columns onto the cached rows (every cached number is kept as it was). The cache is
+    rewritten when the night is final."""
+    try:
+        fresh, state = night_rows(conn, day, base)
+    except Exception as e:  # noqa: BLE001 - report-only columns must never break grading
+        log.warning("shadow extra columns for %s: %s", day, e)
+        return df
+    if fresh is None:
+        return df
+    keys = list(_MERGE_KEYS)
+    f = fresh[keys + list(EXTRA_COLS)].copy()
+    for k in ("day", "run", "arm", "game_id"):
+        f[k] = f[k].astype(str)
+    f["player_id"] = f["player_id"].astype(np.int64)
+    d = df.drop(columns=[c for c in EXTRA_COLS if c in df.columns])
+    left = d.assign(**{k: d[k].astype(str) for k in ("day", "run", "arm", "game_id")},
+                    player_id=d["player_id"].astype(np.int64))
+    out = left.merge(f.drop_duplicates(keys), on=keys, how="left")
+    out = out.assign(**{k: df[k].to_numpy() for k in ("day", "run", "arm", "game_id",
+                                                       "player_id")})
+    if state == "final":
+        tmp = cache.with_name(cache.name + ".tmp")
+        out.to_csv(tmp, index=False, compression="gzip")
+        os.replace(tmp, cache)
+    return out
 
 
 def season_rows(conn: sqlite3.Connection, as_of: date, *, force: bool = False,
@@ -616,7 +691,10 @@ def season_rows(conn: sqlite3.Connection, as_of: date, *, force: bool = False,
         cache = _rows_cache(dd)
         newest = max((p.stat().st_mtime for p in dd.glob("*.json")), default=0.0)
         if cache.exists() and not force and cache.stat().st_mtime >= newest:
-            frames.append(pd.read_csv(cache, dtype={"game_id": str, "run": str}))
+            cached = pd.read_csv(cache, dtype={"game_id": str, "run": str})
+            if not set(EXTRA_COLS) <= set(cached.columns):
+                cached = _with_extra(conn, day, base, cached, cache)
+            frames.append(cached)
             continue
         df, state = night_rows(conn, day, base)
         if df is None:
@@ -770,8 +848,42 @@ def arm_report(rows: pd.DataFrame, entry: dict) -> dict:
             by_night.append({"day": day, "n": int(len(x)), "mean": float(x["_d"].mean())})
     return {**out, "decision": status, "reason": reason, "primary": prim, "tiers": tiers,
             "guards": guards, "secondary": sec, "by_night": by_night,
+            "reported_only": reported_only(at_run),
             "changed_share": (float(at_run["changed"].mean()) if len(at_run) else None),
             "rows_all_runs": int(len(sub))}
+
+
+def reported_only(at_run: pd.DataFrame) -> dict:
+    """E4 metrics shown next to an arm, never part of its decision (no arm's bar changes):
+    on the DFS-relevant rows (salary >= $4k or E[DK] >= 15 in either arm,
+    `metrics.dfs_population`) the paired DK CRPS (arm - champion, two-way SE) and the
+    value-ranking metric corr(E[DK] - salary-implied, actual - salary-implied) of each, the
+    salary-implied line fit per night on the slate's rows (`metrics.value_ranking`, SE
+    clustered by night), arm minus champion. {} until the rows carry EXTRA_COLS."""
+    from . import metrics as MT
+    if not len(at_run) or not set(EXTRA_COLS) <= set(at_run.columns):
+        return {}
+    sal = at_run["salary"].to_numpy(float)
+    m = MT.dfs_population(sal, at_run["dk_c"].to_numpy(float), at_run["dk_a"].to_numpy(float))
+    d = at_run[m]
+    out: dict = {"population": f"salary >= {MT.DFS_SAL_MIN:.0f} or E[DK] >= "
+                               f"{MT.DFS_PROJ_MIN:.0f} (either arm)", "n": int(len(d))}
+    if not len(d):
+        return out
+    out["dk_crps_dfs"] = paired(d, "dk_crps")
+    v = d[np.isfinite(d["salary"].to_numpy(float))]
+    if len(v) >= 3:
+        day = v["day"].astype(str).to_numpy()
+        vr = MT.value_ranking({"arm": v["dk_a"].to_numpy(float),
+                               "champion": v["dk_c"].to_numpy(float)}, v["y"].to_numpy(float),
+                              v["salary"].to_numpy(float), day, day, base="champion")
+        f = lambda x: None if x is None or not np.isfinite(x) else float(x)  # noqa: E731
+        vb = vr["vs_base"].get("arm") or {}
+        out["value"] = {"n": vr["n"], "nights": vr["n_clusters"],
+                        "r_arm": f(vb.get("r_a")), "r_champion": f(vb.get("r_b")),
+                        "diff": f(vb.get("diff")), "se": f(vb.get("se")),
+                        "z": f(vb.get("z")) if vb.get("z") is not None else None}
+    return out
 
 
 def run_log(out_root: Path, as_of: date, days: int = 7) -> list[dict]:

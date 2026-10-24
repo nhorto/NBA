@@ -16,6 +16,11 @@ No database, no pipeline: arrays in, numbers out, so every function is unit-test
   fit_group_cv / naive_normal_crps     the "naive mean + tier-CV normal" CRPS reference
   percentile_rank(value, reference)    mid-rank percentile of a lineup among reference lineups
   paired_summary(a, b, clusters)       mean diff, SE, z, win and tie rates
+  dfs_population(salary, *proj)        E4: salary >= $4k or projected >= 15 DK (DFS-relevant rows)
+  salary_implied(y, salary, slate)     E4: per-slate OLS line of DK points on salary
+  corr_cluster(x, y, clusters)         Pearson r with a cluster-robust SE (influence function)
+  corr_paired_cluster(xa, xb, y, cl)   r_a - r_b on the same rows, clustered SE of the difference
+  value_ranking(preds, y, salary, ...) E4: corr(pred - salary-implied, actual - salary-implied)
 """
 
 from __future__ import annotations
@@ -275,4 +280,141 @@ def paired_cluster2(d: Sequence[float] | np.ndarray, c1: Sequence | np.ndarray,
            "n_c1": int(pd.Series(a1).nunique()), "n_c2": int(pd.Series(a2).nunique())}
     if by is not None:
         out["by_mean"] = {k: float(m) for k, m in pd.Series(d).groupby(np.asarray(by)).mean().items()}
+    return out
+
+
+# ================================================================== DFS-relevant rows and value ranking (E4)
+
+DFS_SAL_MIN = 4000.0       # E4: salary >= $4k ...
+DFS_PROJ_MIN = 15.0        # ... or projected >= 15 DK points (all-row CRPS is diluted by bench zeros)
+
+
+def dfs_population(salary, *proj, sal_min: float = DFS_SAL_MIN,
+                   proj_min: float = DFS_PROJ_MIN) -> np.ndarray:
+    """E4's DFS-relevant rows: salary >= `sal_min` (where a salary is known) OR any of the given
+    projections >= `proj_min`. Pass every forecast being compared (ours, DK FPPG, an arm and the
+    champion) so a paired comparison is not selected on one side's own numbers."""
+    sal = np.asarray(salary, float) if salary is not None else None
+    out = None
+    if sal is not None:
+        out = np.isfinite(sal) & (sal >= sal_min)
+    for p in proj:
+        p = np.asarray(p, float)
+        hit = np.isfinite(p) & (p >= proj_min)
+        out = hit if out is None else (out | hit)
+    if out is None:
+        raise ValueError("dfs_population needs a salary or a projection")
+    return out
+
+
+def salary_implied(y, salary, groups, *, min_rows: int = 5) -> np.ndarray:
+    """Per group (slate): the OLS line of DK points `y` on `salary`, evaluated at each row's
+    salary. NaN where the salary or y is missing, or the group has fewer than `min_rows` usable
+    rows / no salary spread. It is fit on the actual points of the slate (hindsight), so it is the
+    same line for every forecast being compared."""
+    y = np.asarray(y, float)
+    sal = np.asarray(salary, float)
+    g = np.asarray(groups)
+    out = np.full(len(y), np.nan)
+    ok = np.isfinite(y) & np.isfinite(sal)
+    for key in pd.unique(g[ok]):
+        m = ok & (g == key)
+        if m.sum() < min_rows:
+            continue
+        x = sal[m]
+        if np.ptp(x) <= 0:
+            continue
+        b, a = np.polyfit(x, y[m], 1)
+        out[m] = a + b * x
+    return out
+
+
+def _corr_if(x: np.ndarray, y: np.ndarray) -> tuple[float, np.ndarray]:
+    """Pearson r and its per-row influence function u v - r (u^2 + v^2) / 2 (u, v standardised
+    with the sample means and population sds); mean(IF) = 0, var(r) ~ var(sum IF) / n^2."""
+    u = (x - x.mean()) / x.std()
+    v = (y - y.mean()) / y.std()
+    r = float((u * v).mean())
+    return r, u * v - 0.5 * r * (u * u + v * v)
+
+
+def corr_cluster(x, y, clusters) -> dict:
+    """Pearson correlation of x and y with the cluster-robust SE (influence-function / delta
+    method, clusters e.g. dates). NaN SE with fewer than 2 clusters."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    cl = np.asarray(clusters)
+    ok = np.isfinite(x) & np.isfinite(y)
+    x, y, cl = x[ok], y[ok], cl[ok]
+    nan = float("nan")
+    if len(x) < 3 or x.std() == 0 or y.std() == 0:
+        return {"r": nan, "se": nan, "n": int(len(x)),
+                "n_clusters": int(pd.Series(cl).nunique()) if len(cl) else 0}
+    r, inf = _corr_if(x, y)
+    pc = paired_cluster(inf, cl)
+    return {"r": r, "se": pc["se"], "n": pc["n"], "n_clusters": pc["n_clusters"]}
+
+
+def corr_paired_cluster(xa, xb, y, clusters) -> dict:
+    """corr(xa, y) - corr(xb, y) on the rows where all three are finite, with the clustered SE of
+    the difference (the two influence functions differenced row by row, so the shared y and
+    the shared clusters are accounted for). Also each r and its own SE, and z."""
+    xa, xb, y = (np.asarray(v, float) for v in (xa, xb, y))
+    cl = np.asarray(clusters)
+    ok = np.isfinite(xa) & np.isfinite(xb) & np.isfinite(y)
+    xa, xb, y, cl = xa[ok], xb[ok], y[ok], cl[ok]
+    nan = float("nan")
+    out = {"r_a": nan, "r_b": nan, "se_a": nan, "se_b": nan, "diff": nan, "se": nan, "z": None,
+           "n": int(len(y)), "n_clusters": int(pd.Series(cl).nunique()) if len(cl) else 0}
+    if len(y) < 3 or xa.std() == 0 or xb.std() == 0 or y.std() == 0:
+        return out
+    ra, ia = _corr_if(xa, y)
+    rb, ib = _corr_if(xb, y)
+    pa, pb, pd_ = paired_cluster(ia, cl), paired_cluster(ib, cl), paired_cluster(ia - ib, cl)
+    se = pd_["se"]
+    out.update({"r_a": ra, "r_b": rb, "se_a": pa["se"], "se_b": pb["se"], "diff": ra - rb,
+                "se": se, "z": (ra - rb) / se if np.isfinite(se) and se > 0 else None})
+    return out
+
+
+def value_ranking(preds: dict, y, salary, slate, clusters, *, base: str | None = None,
+                  min_rows: int = 5) -> dict:
+    """E4 value-ranking metric. Per slate the salary-implied DK points s (`salary_implied`, OLS
+    of actual DK on salary over the given rows); for each forecast p in `preds`
+    ({name: array}) r = corr(p - s, y - s) pooled over every slate with the clustered SE
+    (`corr_cluster`, clusters e.g. dates: players of a night share games), plus the mean of the
+    per-slate correlations. With `base`, every other forecast minus `base` (paired, same rows:
+    `corr_paired_cluster`). Rows with any forecast, y, salary or s missing are dropped, so all
+    forecasts are scored on identical rows."""
+    y = np.asarray(y, float)
+    sal = np.asarray(salary, float)
+    slate = np.asarray(slate)
+    cl = np.asarray(clusters)
+    P = {k: np.asarray(v, float) for k, v in preds.items()}
+    ok = np.isfinite(y) & np.isfinite(sal)
+    for v in P.values():
+        ok &= np.isfinite(v)
+    s = np.full(len(y), np.nan)
+    s[ok] = salary_implied(y[ok], sal[ok], slate[ok], min_rows=min_rows)
+    ok &= np.isfinite(s)
+    ry = y[ok] - s[ok]
+    out: dict = {"n": int(ok.sum()), "n_slates": int(pd.Series(slate[ok]).nunique()),
+                 "n_clusters": int(pd.Series(cl[ok]).nunique()), "forecasts": {}, "vs_base": {}}
+    for k, v in P.items():
+        rv = v[ok] - s[ok]
+        c = corr_cluster(rv, ry, cl[ok])
+        per = []
+        for key in pd.unique(slate[ok]):
+            m = slate[ok] == key
+            if m.sum() >= 3 and rv[m].std() > 0 and ry[m].std() > 0:
+                per.append(float(np.corrcoef(rv[m], ry[m])[0, 1]))
+        out["forecasts"][k] = {**c, "slate_mean_r": float(np.mean(per)) if per else float("nan"),
+                               "slate_mean_se": (float(np.std(per, ddof=1) / np.sqrt(len(per)))
+                                                 if len(per) > 1 else float("nan")),
+                               "n_slates_r": len(per)}
+    if base is not None and base in P:
+        for k, v in P.items():
+            if k == base:
+                continue
+            out["vs_base"][k] = {"base": base, **corr_paired_cluster(
+                v[ok] - s[ok], P[base][ok] - s[ok], ry, cl[ok])}
     return out

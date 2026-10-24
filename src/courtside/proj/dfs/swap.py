@@ -242,19 +242,21 @@ def guess_slate(conn: sqlite3.Connection, ids: Iterable[str]) -> tuple[str | Non
     return hits.most_common(1)[0][0], dict(hits)
 
 
-def load_projections(conn: sqlite3.Connection, slate_id, pool) -> tuple[dict, dict]:
+def load_projections(conn: sqlite3.Connection, slate_id, pool, run_id: str | None = None
+                     ) -> tuple[dict, dict]:
     """({dk id: Projection(mean, p25, p10, p50, p90)}, info) from the newest stored projection
     run of the slate (else the newest run that covers its games), DK 'dk' stat, cond 'all' (the
     P(play)-weighted mixture the runner optimises). Without any: DK FPPG ('fppg-fallback').
-    info: run_id, model_version, created_at, source, p_play {dk id: p}."""
+    info: run_id, model_version, created_at, source, p_play {dk id: p}. `run_id` pins the run.
+    """
     sid = str(slate_id)
-    run_id = None
     try:
-        r = conn.execute(
-            "SELECT r.run_id FROM dfs_runs r WHERE r.slate_id=? AND r.ok=1 AND EXISTS (SELECT 1 "
-            "FROM player_projections p WHERE p.run_id=r.run_id) ORDER BY r.created_at DESC, "
-            "r.rowid DESC LIMIT 1", (sid,)).fetchone()
-        run_id = r[0] if r else None
+        if run_id is None:
+            r = conn.execute(
+                "SELECT r.run_id FROM dfs_runs r WHERE r.slate_id=? AND r.ok=1 AND EXISTS (SELECT "
+                "1 FROM player_projections p WHERE p.run_id=r.run_id) ORDER BY r.created_at DESC, "
+                "r.rowid DESC LIMIT 1", (sid,)).fetchone()
+            run_id = r[0] if r else None
         if run_id is None:
             games = sorted({p.game_id for p in pool.players if p.game_id})
             if games:
@@ -608,6 +610,7 @@ class SwapPlan:
     formats: Counter = field(default_factory=Counter)
     dk_ids: dict[str, str] = field(default_factory=dict)
     by_id: dict = field(default_factory=dict)
+    contest: dict | None = None      # D8 contest-aware run info (switch ON only)
 
     @property
     def n_swapped(self) -> int:
@@ -657,7 +660,8 @@ class SwapPlan:
                 "status": dict(Counter(r.status for r in self.results)),
                 "projection": {k: v for k, v in self.projection.items() if k != "p_play"},
                 "ruled_out": len(self.ruled_out), "warnings": self.warnings,
-                "portfolio": self.portfolio}
+                "portfolio": self.portfolio,
+                **({"contest": self.contest} if self.contest is not None else {})}
 
 
 # ============================================================================== checks
@@ -897,8 +901,9 @@ def plan(conn: sqlite3.Connection, slate_id, *, now: datetime | None = None,
          scope: str = "all", objective: str = "auto", min_diff: int = 1,
          max_overlap: int | None = None, max_exposure: float | None = None,
          min_gain: float = MIN_GAIN, time_limit_s: float = TOTAL_LIMIT_S,
-         projections: Mapping | None = None, extra_out: Mapping[str, str] | None = None
-         ) -> SwapPlan:
+         projections: Mapping | None = None, extra_out: Mapping[str, str] | None = None,
+         contest_aware: bool | None = None, locked_points: Mapping[str, float] | None = None,
+         run_id: str | None = None, sim_rows=None, seed: int = 0) -> SwapPlan:
     """Late-swap proposals for a slate's entries at `now` (see the module docstring).
 
     `entries` (default: our saved lineups) or `csv_data` (DK's entries CSV). `scope` 'all'
@@ -906,8 +911,15 @@ def plan(conn: sqlite3.Connection, slate_id, *, now: datetime | None = None,
     slot. `objective` 'auto' (cash for our cash lineup and cash-style contests, else mean).
     `projections` ({dk id: Projection | float}) replaces the stored ones and `extra_out`
     ({dk id: reason}) rules more players out (tests, what-ifs).
+    `contest_aware` (None: the COURTSIDE_SWAP_CONTEST switch, `swap_contest`, default OFF):
+    choose each entry's open slots by its contest (D8). ON only: `locked_points` {dk id: points}
+    of started players (default none: their sims), `sim_rows` the stored sim rows it may use
+    (replays), `seed`. `run_id` pins the projection run (default the newest).
     Read-only: nothing is written to the database."""
+    import numpy as np
+
     from . import runner
+    from . import swap_contest as SC
     t0 = time.perf_counter()
     now = _utc(now)
     sid = str(slate_id)
@@ -945,7 +957,7 @@ def plan(conn: sqlite3.Connection, slate_id, *, now: datetime | None = None,
         pinfo = {"run_id": None, "model_version": "given", "created_at": None,
                  "source": "given", "p_play": {}}
     else:
-        projs, pinfo = load_projections(conn, sid, pool)
+        projs, pinfo = load_projections(conn, sid, pool, run_id=run_id)
     projs = dict(projs)
     news = slate_news(conn, sid, now)
     out_reason = ruled_out(conn, slate, pool, tips, now, news, pinfo["p_play"])
@@ -1065,6 +1077,72 @@ def plan(conn: sqlite3.Connection, slate_id, *, now: datetime | None = None,
         return c
 
     deadline = t0 + time_limit_s
+    ca, pending = None, []                    # D8 contest-aware swap (swap_contest; ON only)
+    if (SC.contest_swap() if contest_aware is None else contest_aware) and targets:
+        ca, why = SC.prepare(conn, sid, run_id or pinfo.get("run_id"), news=news,
+                             pool_players=pool.players, locked_points=locked_points,
+                             rows=sim_rows, seed=seed)
+        if ca is None:
+            warnings.append(f"Contest-aware swap is on but {why}: entries were re-solved by "
+                            f"their mean.")
+        else:
+            deadline = max(deadline, ca.deadline)
+
+    def make_model(sc_scores, mns, locks, free_bans, others, gk, es, use_cuts, use_caps, limit):
+        model = O.LineupModel(plist, rules, sc_scores, mns, locks=locks, bans=free_bans,
+                              now=now, time_limit_s=limit)
+        if use_cuts:
+            for _, pairs in others:
+                _no_good(model, pairs, min_diff)
+        if use_caps:
+            if max_overlap is not None:
+                for _, pairs in others:
+                    ys = [model.y[p] for _, p in pairs if p in model.y]
+                    if ys:
+                        model.model.Add(sum(ys) <= max_overlap)
+            if limit_n is not None:
+                for pid, used in committed(gk).items():
+                    if used + len(es) > limit_n and pid not in locks:
+                        model.ban(pid)
+        return model
+
+    def finish(gk, lu, notes, *, mean_gain: bool = True):
+        """Seat, gain check (mean objective), safety check and settle one target."""
+        e = groups[gk][0]
+        fx = fixed_of[e.key]
+        before = list(e.pairs)
+        scores = score_tab[gk[2]][0]
+        mns = score_tab[gk[2]][1]
+        others = [(g2, finals[g2]) for g2 in finals if g2[3] == gk[3] and g2 != gk]
+        locks = {pid: before[k][0] for k, pid in fx.items()}
+        chosen = before if lu is None else _keep_slots(rules, by_id, fx, before,
+                                                       _seat(before, fx, lu))
+        must = needs(e)
+        if mean_gain and not must and _legal(rules, by_id, before) and _ok_vs_others(
+                before, others, rules.n_slots, min_diff, max_overlap):
+            gain = _objective(rules, scores, chosen) - _objective(rules, scores, before)
+            if {p for _, p in chosen} == {p for _, p in before}:
+                chosen = before
+            elif gain < min_gain:
+                notes.append(f"Kept: the best change gains {gain:.1f} points, under "
+                             f"{min_gain:g}.")
+                chosen = before
+        if not mean_gain and not must and {p for _, p in chosen} == {p for _, p in before}:
+            chosen = before
+        if chosen == before:
+            settle(gk, "unchanged", before, notes)
+            return
+        try:
+            check_entry(rules, by_id, before, fx, chosen, started=started - set(locks),
+                        bans=set(out_reason) - set(locks))
+        except SwapError as err:        # never hand out a lineup that breaks a locked slot
+            log.error("swap result for %s failed its check: %s", e.label, err)
+            warnings.append(f"{e.label}: the proposed swap failed a safety check ({err}); "
+                            f"left unchanged.")
+            settle(gk, "no_legal", None, [f"Safety check failed: {err}."])
+            return
+        settle(gk, "swapped", chosen, notes, O.build_lineup(rules, by_id, chosen, mns, mns))
+
     for gk in targets:
         es = groups[gk]
         e = es[0]
@@ -1081,30 +1159,18 @@ def plan(conn: sqlite3.Connection, slate_id, *, now: datetime | None = None,
         caps = max_overlap is not None or limit_n is not None
         levels = ([("caps", True, True)] if caps else []) + [("cuts", True, False),
                                                               ("none", False, False)]
-        lu, dropped = None, []
+        lu, dropped, level = None, [], None
         for name, use_cuts, use_caps in levels:
             left = max(1.0, deadline - time.perf_counter())
             try:
-                model = O.LineupModel(plist, rules, scores, mns, locks=locks, bans=free_bans,
-                                      now=now, time_limit_s=min(SOLVE_LIMIT_S, left))
+                model = make_model(scores, mns, locks, free_bans, others, gk, es, use_cuts,
+                                   use_caps, min(SOLVE_LIMIT_S, left))
             except ValueError as err:
                 log.warning("swap model for %s: %s", e.label, err)
                 break
-            if use_cuts:
-                for _, pairs in others:
-                    _no_good(model, pairs, min_diff)
-            if use_caps:
-                if max_overlap is not None:
-                    for _, pairs in others:
-                        ys = [model.y[p] for _, p in pairs if p in model.y]
-                        if ys:
-                            model.model.Add(sum(ys) <= max_overlap)
-                if limit_n is not None:
-                    for pid, used in committed(gk).items():
-                        if used + len(es) > limit_n and pid not in locks:
-                            model.ban(pid)
             lu = model.solve()
             if lu is not None:
+                level = (use_cuts, use_caps)
                 break
             dropped.append({"caps": "the overlap and exposure caps",
                             "cuts": "the different-lineup rule"}.get(name, ""))
@@ -1116,30 +1182,65 @@ def plan(conn: sqlite3.Connection, slate_id, *, now: datetime | None = None,
         if dropped:
             notes.append("Relaxed " + " and ".join(d for d in dropped if d) +
                          ": the locked players leave no other choice.")
-        chosen = _keep_slots(rules, by_id, fx, before, _seat(before, fx, lu))
-        must = needs(e)
-        if not must and _legal(rules, by_id, before) and _ok_vs_others(
-                before, others, rules.n_slots, min_diff, max_overlap):
-            gain = _objective(rules, scores, chosen) - _objective(rules, scores, before)
-            if {p for _, p in chosen} == {p for _, p in before}:
-                chosen = before
-            elif gain < min_gain:
-                notes.append(f"Kept: the best change gains {gain:.1f} points, under "
-                             f"{min_gain:g}.")
-                chosen = before
-        if chosen == before:
-            settle(gk, "unchanged", before, notes)
+        if ca is None:
+            finish(gk, lu, notes)
             continue
+        # ---- D8 ON: scenario candidates under the same constraints; the choice comes later
+        cands, seen = [lu], {frozenset(lu.player_ids)}
         try:
-            check_entry(rules, by_id, before, fx, chosen, started=started - set(locks),
-                        bans=set(out_reason) - set(locks))
-        except SwapError as err:        # never hand out a lineup that breaks a locked slot
-            log.error("swap result for %s failed its check: %s", e.label, err)
-            warnings.append(f"{e.label}: the proposed swap failed a safety check ({err}); "
-                            f"left unchanged.")
-            settle(gk, "no_legal", None, [f"Safety check failed: {err}."])
+            contest = ca.contest_for(e.contest_id, mode)
+            rng = np.random.default_rng(seed + len(pending))
+            for sc_scores in SC.scenario_scores(ca, ca.get(contest), scores, SC.N_SCEN, rng):
+                if time.perf_counter() > deadline:
+                    break
+                try:
+                    m2 = make_model(sc_scores, mns, locks, free_bans, others, gk, es, *level,
+                                    min(SOLVE_LIMIT_S, max(1.0, deadline - time.perf_counter())))
+                except ValueError:
+                    break
+                l2 = m2.solve()
+                if l2 is not None and frozenset(l2.player_ids) not in seen:
+                    seen.add(frozenset(l2.player_ids))
+                    cands.append(l2)
+        except Exception as err:  # noqa: BLE001 - a field / sims failure: today's answer
+            log.exception("contest-aware candidates failed for %s", e.label)
+            warnings.append(f"{e.label}: contest-aware swap failed ({type(err).__name__}); "
+                            f"re-solved by its mean.")
+            finish(gk, lu, notes)
             continue
-        settle(gk, "swapped", chosen, notes, O.build_lineup(rules, by_id, chosen, mns, mns))
+        # provisional: later entries are cut against this one's mean solve, as OFF cuts them
+        # against its final (the choice below replaces it)
+        finals[gk] = _seat(before, fx, lu)
+        stay = not any(k not in fx and (pid is None or pid in out_reason or pid not in by_id
+                                        or pid in started) for k, (_, pid) in enumerate(before))
+        pending.append((SC.Pending(gk=gk, mode="cash" if mode == "cash" else "mean",
+                                   contest=contest, copies=len(es), before=before,
+                                   keep_ok=stay and _legal(rules, by_id, before),
+                                   cands=cands, group=gk[3]), notes))
+
+    if ca is not None and pending:
+        pend_gk = {it.gk for it, _ in pending}
+        fixed_groups: dict[str, list] = defaultdict(list)
+        for g2, es2 in groups.items():
+            if g2 not in pend_gk:
+                fixed_groups[g2[3]].append((finals.get(g2, list(g2[0])), len(es2)))
+        try:
+            dec = SC.decide(ca, [it for it, _ in pending], fixed_groups, n_slots=rules.n_slots,
+                            min_diff=min_diff, max_overlap=max_overlap)
+        except Exception as err:  # noqa: BLE001 - fall back to today's answer, never fail
+            log.exception("contest-aware swap failed; mean re-solve used")
+            warnings.append(f"Contest-aware swap failed ({type(err).__name__}); entries were "
+                            f"re-solved by their mean.")
+            dec = None
+        for it, notes in pending:
+            if dec is None:
+                finish(it.gk, it.cands[0], notes)
+                continue
+            d = dec[it.gk]
+            finish(it.gk, d["lineup"], notes + [SC.note(d)], mean_gain=False)
+        ca.info["decisions"] = {str(groups[gk][0].key): {k: v for k, v in d.items()
+                                                         if k != "lineup"}
+                                for gk, d in (dec or {}).items()}
 
     res_list = [results[e.key] for e in entries]
     port = portfolio_report(entries, res_list, limit_n, max_overlap)
@@ -1155,7 +1256,11 @@ def plan(conn: sqlite3.Connection, slate_id, *, now: datetime | None = None,
     return SwapPlan(slate_id=sid, now=now, rules=rules, results=res_list, games=games,
                     projection=pinfo, ruled_out=out_reason, news=news, portfolio=port,
                     warnings=warnings, seconds=time.perf_counter() - t0, source=source,
-                    formats=formats, dk_ids=dk_ids, by_id=by_id)
+                    formats=formats, dk_ids=dk_ids, by_id=by_id,
+                    contest=None if ca is None else {
+                        "version": SC.VERSION, "run_id": ca.run_id, "rows": ca.rows_info,
+                        "outs_known": sorted(ca.outs), "locked_points": len(ca.locked_points),
+                        **ca.info})
 
 
 # ============================================================================== CLI
@@ -1178,6 +1283,9 @@ def add_commands(sub) -> dict:
     p.add_argument("--fmt", choices=X.STYLES, default="name_id", help="new cells: Name (ID) or id")
     p.add_argument("--out", default=None, help="CSV path (default var/exports/...)")
     p.add_argument("--json", action="store_true", help="print the summary as JSON")
+    p.add_argument("--contest-aware", action="store_true", default=None,
+                   help="choose open slots by each entry's contest (D8; default: the "
+                        "COURTSIDE_SWAP_CONTEST switch, off)")
     return {"swap": _swap_cmd}
 
 
@@ -1193,7 +1301,8 @@ def _swap_cmd(args) -> int:
     try:
         sp = plan(conn, args.slate, now=now, csv_data=data, scope=args.scope,
                   objective=args.objective, min_diff=args.min_diff, max_overlap=args.max_overlap,
-                  max_exposure=args.max_exposure, min_gain=args.min_gain)
+                  max_exposure=args.max_exposure, min_gain=args.min_gain,
+                  contest_aware=getattr(args, "contest_aware", None))
     except SwapError as e:
         print(f"error: {e}")
         return 1

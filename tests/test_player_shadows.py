@@ -295,7 +295,7 @@ def test_budget_interrupts_a_running_arm(world, tmp_path, cached_projection):
 
 
 def test_budget_and_sims_defaults(monkeypatch):
-    assert SH.budget_s() == SH.BUDGET_S == 90.0
+    assert SH.budget_s() == SH.BUDGET_S == 240.0
     monkeypatch.setenv(SH.BUDGET_ENV, "45")
     assert SH.budget_s() == 45.0
     monkeypatch.setenv(SH.SIMS_ENV, "5000")
@@ -328,6 +328,32 @@ def test_grade_end_to_end(world, shadow_run, tmp_path):
     r = rows[rows["arm"] == "+lf"].set_index("player_id")["crps_c"]
     exact = pd.Series(full, index=pid.astype(np.int64))[r.index]
     assert np.allclose(r.to_numpy(), exact.to_numpy(), rtol=0.03, atol=0.02)
+
+
+def test_old_cache_gains_the_e4_columns_only(world, shadow_run, tmp_path):
+    """A night cached before EXTRA_COLS existed: the new columns are merged in, every cached
+    number stays as it was, and the reported-only block appears."""
+    import os
+    root = shadow_run["root"]
+    SH.grade(world["conn"], world["day"], out_root=root, data_dir=tmp_path)
+    cache = root / world["day"].isoformat() / "graded.csv.gz"
+    new = pd.read_csv(cache, dtype={"game_id": str, "run": str})
+    assert set(SH.EXTRA_COLS) <= set(new.columns)
+    sal = new["salary"].dropna()
+    assert len(sal) > 0.5 * len(new) and (sal == 5000).all()
+    old = new.drop(columns=list(SH.EXTRA_COLS))
+    old.to_csv(cache, index=False, compression="gzip")
+    t = time.time() + 5
+    os.utime(cache, (t, t))
+    rows = SH.season_rows(world["conn"], world["day"], out_root=root)
+    pd.testing.assert_frame_equal(rows[old.columns].reset_index(drop=True),
+                                  old.reset_index(drop=True))
+    assert np.allclose(rows["dk_c"], new["dk_c"]) and np.allclose(rows["dk_a"], new["dk_a"])
+    again = pd.read_csv(cache, dtype={"game_id": str, "run": str})
+    assert set(SH.EXTRA_COLS) <= set(again.columns)        # the cache was rewritten
+    rep = SH.grade(world["conn"], world["day"], out_root=root, data_dir=tmp_path)
+    lf = {a["arm"]: a for a in rep["arms"]}["+lf"]
+    assert lf["reported_only"]["n"] > 0 and "dk_crps_dfs" in lf["reported_only"]
 
 
 def _rows(n_nights, n_players, d, *, tier_shift=None, seed=0):

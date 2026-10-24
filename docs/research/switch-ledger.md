@@ -387,3 +387,119 @@ one-way-by-date SEs are too small (IMPROVEMENTS E2).
 - **Player side (measure only):** the DFS star-out bump realises 1.01× (0.04) for top-6
   teammates in the 2023-25 harness and 0.84× (0.07) on the 2025-26 live slice
   (`research/as_star_out_bump.py`): not 0.5×; at most a 15–20 % trim of top-6 minutes later.
+
+## +cs (contest-aware late swap, D8) -- SHIPPED 2026-10-24 (owner OK)
+
+- **Switch:** `COURTSIDE_SWAP_CONTEST` (default OFF; `swap_contest.set_contest_swap`,
+  `swap.plan(contest_aware=...)`, CLI `courtside dfs swap --contest-aware`). Version
+  `swap-contest-1` in the plan summary (`contest`). `docs/research/d8-d9.md` §3.
+- **Metric:** held-out simulated E[payout] of our entries in the contest (GPP, joint) / P(cash)
+  (cash), contest-aware minus mean re-solve, same held-out sim rows, same conditioning (locked
+  players at their realised points, known Outs via P10 scenario rows). SE across held-out rows
+  (and across 3 seeds per night).
+- **Sets:** 7 stored late-swap nights (154575, 154827, 155078 x2, 155482, 155547, 155553);
+  entries = a 20-entry builder set for the main GPP + the site's saved cash / Top N as of T.
+
+| group | nights + | ca - mean (pooled) | % of mean arm | median night |
+|---|---|---|---|---|
+| builder (20, main GPP) | 6 / 7 (7th all locked) | +2,947 ± 88 | +9.8 % | +10 % |
+| saved Top N (10) | 5 / 7 (others ~0) | +1,215 ± 73 | +11 % | +13 % |
+| saved cash (1) | 0 / 7 | 0 | 0 | 0 |
+
+- **OFF:** bit-identical to the pre-change swap.py on 7 synthetic plans (random entries, Outs,
+  caps, overlap, scope news, identical entries): `tests/test_swap_contest.py` golden from HEAD
+  881877e's swap.py loaded in place (Linux-only), plus the 27 existing swap tests.
+- **Decision:** owner to decide. Recommend ship for the owner-facing swap after two changes:
+  run the page's plan off the request (ON takes up to 45 s on an 11-game slate vs the 30 s
+  budget) and record live real results of swapped entries. Live has no in-game points, so live
+  ON conditions on known Outs only (the replay used final box scores for locked players).
+
+## +obj-flat / +obj-blend (builder selection objective, D9) -- blend SHIPPED 2026-10-24 (owner OK); flat OFF
+
+- **Switch:** `COURTSIDE_PORTFOLIO_OBJ` = `off` (default) | `flat` | `blend`
+  (`portfolio.set_objective`, `build_portfolio(objective=...)`); tags `+obj-flat` /
+  `+obj-blend` on `info.version`. `docs/research/d8-d9.md` §2.
+- **Metric:** (1) stability: lineup overlap of the picks on two disjoint sim halves from one
+  candidate pool; (2) quality: joint E[payout] of the picks on held-out rows (real ladder),
+  paired vs OFF. SE across replicates (and across contests for pooled %).
+- **Sets:** 6 stored GPPs (M 7,843-44,117), N = 20 (10 reps) and N = 150 (5 reps).
+
+| N | overlap off | flat | blend | ΔE flat (pooled) | ΔE blend (pooled) | contests up flat / blend |
+|---|---|---|---|---|---|---|
+| 20 (10 reps) | 0.447 ± 0.019 | 0.527 ± 0.020 | 0.508 ± 0.018 | -0.1 % ± 0.6 | +0.5 % ± 0.2 | 3 / 5 of 6 |
+| 150 (5 reps) | 0.527 ± 0.016 | 0.672 ± 0.018 | 0.606 ± 0.018 | +2.3 % ± 1.0 | +1.2 % ± 0.3 | 6 / 6 of 6 |
+
+- Paired overlap gain: flat +0.081 ± 0.028 / +0.145 ± 0.020, blend +0.062 ± 0.012 / +0.080 ±
+  0.008 (N = 20 / 150). `flat` costs 1-2 % at N = 20 on the 7.8k-14k fields, gains +2.5 % / +7 %
+  on the 44k field.
+- **Decision:** owner to decide. Recommend `blend` (stability up, E[payout] never down beyond
+  noise); keep `flat` OFF.
+
+- **OFF:** the greedy gets the real ladder object (`selection_ladder(lad, "off") is lad`); the
+  builder goldens (`test_portfolio_split.py`, `test_xfactor_v2.py`) still match exactly, with
+  only the new display key `se` dropped from the curve points.
+
+## +ms (player-specific minutes spread, P6) -- SHIPPED 2026-10-24 (owner OK)
+
+- **What:** `COURTSIDE_MIN_SPREAD` (`pipeline.MIN_SPREAD_DEFAULT = False`). Each player's
+  log-minutes noise gets its own lower / upper scale (two-piece normal, re-centred to the tier's
+  mean multiplier) from LightGBM quantile models (q10 / q50 / q90) on the minutes GBM's features
+  plus the plan, fit on the 5 seasons < S on out-of-fold plans; mu / sigma per tier
+  recalibrated by simulation. Bundle `<arm>_ms`, version `<arm>+ms` (after `+ep`), same seeds.
+  Write-up `docs/research/p4-p6.md`; `research/p4_p6_eval.py`.
+- **Metric:** DK CRPS (and minutes CRPS), paired `+ms` minus OFF, E[min] >= 10 in either arm,
+  DNP = 0, SE two-way date x player (`metrics.paired_cluster2`).
+- **Arm:** `pathA-v0.3+mf+ep+p2+rx+rb+tr` (live), 4,000 sims. Rows: Mac
+  `~/Developer/courtside-compute/p46/out/rows_*`.
+
+| set | n | diff | SE 1-way | SE 2-way | z 2-way | MAE z | min CRPS diff | min CRPS z |
+|---|---|---|---|---|---|---|---|---|
+| 2023-24 | 21963 | -0.0128 | 0.0012 | 0.0016 | -8.23 | -3.20 | -0.0288 | -10.97 |
+| 2024-25 | 22122 | -0.0095 | 0.0012 | 0.0015 | -6.20 | +0.37 | -0.0258 | -9.89 |
+| live | 15142 | -0.0090 | 0.0013 | 0.0017 | -5.29 | -1.08 | -0.0244 | -8.84 |
+| live10 | 15021 | -0.0089 | 0.0012 | 0.0017 | -5.28 | -0.63 | -0.0239 | -8.13 |
+| RG 2019-20 | 18889 | -0.0122 | 0.0015 | 0.0018 | -6.83 | -3.10 | -0.0302 | -10.38 |
+| RG 2020-21 | 19282 | -0.0141 | 0.0011 | 0.0014 | -10.45 | -4.22 | -0.0248 | -10.23 |
+
+- **Per-set sign:** negative (better) on every set, DK and minutes.
+- **Tiers:** no tier worse by 2 SE; the only positive DK z is live bench +0.05. Minutes CRPS is
+  better for every tier on every set. Star minutes 80 % coverage moves toward nominal
+  (0.81-0.85 -> 0.79-0.83); the bench top-decile PIT share falls (0.104-0.117 -> 0.081-0.091).
+- **Ablation:** the recalibrated mu / sigma with unit player spreads gives z -0.6 / -1.3 / -3.3
+  (2023-24 / live / RG 2020-21); the per-player shape is 96-99 % of the gain.
+- **OFF:** bit-identical (HEAD 881877e vs HEAD + the change, live stack: 2 `project_historical`
+  days and `project_slate` 154575, players / stats / sims / meta identical; Linux golden of
+  `sample_minutes`; empty `spread` key left out of the JSON).
+- **Decision:** recommend ship (owner decision). Copy the pre-fit
+  `p46/data_ship/proj/minutes_params_2026-27_v1_mf_ms.json` and
+  `bundle_2026-27_v1_cx_mf_ep_ms.json` to prod `var/proj/`, set
+  `pipeline.MIN_SPREAD_DEFAULT = True`; roll back with `COURTSIDE_MIN_SPREAD=0`.
+
+## +rw (weighted reconciliation, P4) -- do not ship, 2026-10-24; committed OFF (owner agreed)
+
+- **What:** `COURTSIDE_RECON_WEIGHTED` (`reconcile.RECON_WEIGHTED_DEFAULT = False`). The team gap
+  to the implied total is split by Gaussian conditioning on the team sum: weights
+  theta e_i e + V_i, V_i = e_i^2 / (r_i (n_i + kappa)) (EB evidence minutes). theta per season
+  fit on captures of seasons < S (`recon_weighted_params.json`). A |gap| > GAP_CHECK is logged
+  as a projection error with its three biggest absorbers. Version `<arm>+rw` (after `+rs`), same
+  bundle and seeds. Write-up `docs/research/p4-p6.md`.
+- **Fit:** the squared error of the reconciled means falls toward the uniform split on all six
+  captures; theta = 0.01 (2019-20..2023-24), uniform (1e6) from 2024-25. Splitting by e_i^beta,
+  the best beta is 1.0-1.5 everywhere.
+- **Metric / arm:** as `+ms` above.
+
+| set | n | fitted theta: diff (SE 2-way) | z | worst tier | theta = 0: diff (SE 2-way) | z | worst tier |
+|---|---|---|---|---|---|---|---|
+| 2023-24 | 21886 | +0.00010 (0.00006) | +1.64 | starter +1.55 | +0.0044 (0.0014) | +3.09 | starter +3.00 |
+| 2024-25 | 22045 | -0.00057 (0.00035) | -1.61 | bench -0.20 | +0.0051 (0.0019) | +2.74 | star +2.52 |
+| live | 15108 | +0.00002 (0.00003) | +0.68 | star +1.32 | +0.0065 (0.0034) | +1.90 | rotation +1.45 |
+| live10 | 14988 | +0.00003 (0.00003) | +0.99 | star +1.40 | +0.0057 (0.0034) | +1.68 | starter +1.33 |
+| RG 2019-20 | 18858 | +0.00057 (0.00061) | +0.93 | star +1.60 | +0.0035 (0.0017) | +2.01 | rotation +1.99 |
+| RG 2020-21 | 19266 | +0.00006 (0.00015) | +0.39 | star +1.82 | +0.0067 (0.0018) | +3.62 | star +3.03 |
+
+- **GAP_CHECK:** |gap| > 6 in 30-36 % of harness team-games (gap sd 6.2-6.9), so the new log
+  fires 630-880 times per season. As an alarm, ~15 (2.5 sd) would fit better (owner choice).
+- **OFF:** bit-identical (same identity runs as `+ms`; Linux golden of `run_games`;
+  `reconcile_team` without `rw` equals a frozen HEAD copy).
+- **Decision:** keep OFF. The fitted version is the uniform factor; the version P4 describes is
+  worse on every set and fails the tier check on three.

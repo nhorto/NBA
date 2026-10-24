@@ -369,6 +369,85 @@ def _shadows(conn) -> dict:
             "last": last_txt}
 
 
+def _line_txt(c: dict | None) -> str:
+    if not c:
+        return fmt.EM
+    if c.get("value") is not None:
+        return fmt.num(c["value"], 2)
+    lo, hi = c.get("lo"), c.get("hi")
+    if lo is None and hi is None:
+        return fmt.EM
+    return (f"{fmt.num(lo, 1) if lo is not None else '?'} to "
+            f"{fmt.num(hi, 1) if hi is not None else '?'}")
+
+
+def _ms_txt(s: dict | None, nd: int = 2, signed: bool = False) -> str:
+    if not s or s.get("mean") is None:
+        return fmt.EM
+    v = fmt.signed(s["mean"], nd) if signed else fmt.num(s["mean"], nd)
+    se = f" \u00b1 {fmt.num(s['se'], nd)}" if s.get("se") is not None else ""
+    return f"{v}{se} ({s['n']} slate{'' if s['n'] == 1 else 's'})"
+
+
+def _real_calib(conn) -> dict:
+    """E5 real-standings calibration per slate (`proj/dfs/real_calib.py`), from the report
+    ``courtside dfs real-calib`` writes. Display only."""
+    from ..proj.dfs import real_calib as RC
+    try:
+        rep = RC.load_report(conn)
+    except Exception:  # noqa: BLE001 - a display row must never break the page
+        return {}
+    if not rep or not rep.get("slates"):
+        return {}
+    rows = []
+    for b in rep["slates"]:
+        cs = b.get("contests") or []
+        if not cs:
+            continue
+        ents = [e for c in cs for e in c.get("entries") or []]
+        cashed = [e["cashed"] for e in ents if e.get("cashed") is not None]
+        beat = [e["beat"] for e in ents if e.get("beat") is not None]
+        pits = []
+        for c in cs:
+            for d in ((c.get("sim") or {}).get("lineups") or {}).values():
+                if d.get("pit_rank") is not None:
+                    pits.append(d["pit_rank"])
+        def _rank(c):               # an exact line first, then a two-sided bracket, then size
+            ln = c.get("cash_line") or {}
+            return (ln.get("value") is not None,
+                    ln.get("lo") is not None and ln.get("hi") is not None, c.get("field") or 0)
+        big = max(cs, key=_rank)
+        own = [o["mae_pp"] for o in b.get("ownership") or [] if o.get("mae_pp") is not None]
+        n = b.get("nightly") or {}
+        vs = (n["cash"]["actual"] - n["fppg"]["actual"]
+              if "cash" in n and "fppg" in n and n["fppg"].get("actual") is not None
+              and n["cash"].get("actual") is not None else None)
+        rows.append({
+            "day": fmt.short_date(b.get("day")), "slate": b.get("slate_id"),
+            "games": b.get("n_games"), "contests": len(cs),
+            "standings": sum(1 for c in cs if c.get("standings")),
+            "entries": len(ents),
+            "money": f"{sum(cashed)} of {len(cashed)}" if cashed else fmt.EM,
+            "beat": fmt.pct(sum(beat) / len(beat), 0) if beat else fmt.EM,
+            "pit": fmt.num(sum(pits) / len(pits), 2) if pits else fmt.EM,
+            "line": _line_txt(big.get("cash_line")),
+            "line_name": f"{big.get('name') or ''} ({(big.get('field') or 0):,})",
+            "own": fmt.num(sum(own) / len(own), 1) if own else fmt.EM,
+            "vs_fppg": fmt.signed(vs, 1)})
+    s = rep.get("summary") or {}
+    nt = s.get("nightly") or {}
+    return {"rows": rows, "to": rep.get("to"), "sims": rep.get("sims"),
+            "generated": fmt.stamp(rep.get("generated_at")) or rep.get("generated_at"),
+            "du_pit": _ms_txt(s.get("du_pit_line")), "gpp_pit": _ms_txt(s.get("gpp_pit_rank")),
+            "du_rate": _ms_txt(s.get("du_cash_rate")), "du_sim": _ms_txt(s.get("du_sim_p_cash")),
+            "gpp_rate": _ms_txt(s.get("gpp_cash_rate")),
+            "gpp_sim": _ms_txt(s.get("gpp_sim_p_cash")),
+            "cash_vs_fppg": _ms_txt(nt.get("cash_vs_fppg"), 1, True),
+            "topn_vs_fppg": _ms_txt(nt.get("topn_vs_fppg"), 1, True),
+            "topn_ratio": _ms_txt(nt.get("topn_ratio"), 2),
+            "needs": (rep.get("needs") or [])[:3]}
+
+
 def _alerts(conn) -> list[dict]:
     rows = _q(conn, "SELECT key, severity, kind, message, created_at, updated_at FROM alerts "
                     "WHERE status='open'")
@@ -471,6 +550,7 @@ def build(conn: sqlite3.Connection | None, today: date | None = None) -> dict:
         "slates": _slate_rows(conn, today) if conn else [],
         "latency": _latency(conn) if conn else {},
         "shadows": _shadows(conn) if conn else {},
+        "real_calib": _real_calib(conn) if conn else {},
         "alerts": _alerts(conn) if conn else [],
         "versions": _versions(conn) if conn else [],
         "real": _real_block(conn, today),

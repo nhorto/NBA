@@ -173,18 +173,23 @@ def curve_view(cv: Mapping | None, calibrated: bool, cal_slates: int = 0) -> dic
     for r in cv["points"]:
         n_sims = r.get("n_sims")
         ch = lambda k: PF.chance_text(r.get(k), calibrated, n_sims)  # noqa: E731
+        se = r.get("se") or PF.curve_se(r)          # D9; older builds: binomial from p and n
+        sx = lambda k: PF.se_text(r.get(k), se.get(k))  # noqa: E731
         rows.append({"entries": r["entries"], "requested": r.get("requested", r["entries"]),
                      "short": r["entries"] < r.get("requested", r["entries"]),
                      "this_set": r.get("source") == "build",
                      "extended": r.get("source") == "extended",
                      "cost": _money(r.get("cost"), cents=float(r.get("cost") or 0) % 1 != 0),
                      "cash": ch("p_any_cash"), "top1": ch("p_any_top1"),
-                     "top01": ch("p_any_top01"), "first": ch("p_first")})
+                     "top01": ch("p_any_top01"), "first": ch("p_first"),
+                     "cash_se": sx("p_any_cash"), "top1_se": sx("p_any_top1"),
+                     "top01_se": sx("p_any_top01"), "first_se": sx("p_first")})
     return {"rows": rows, "calibrated": calibrated, "cal_slates": cal_slates,
             "cal_needed": PF.MIN_CAL_SLATES, "n_build": cv.get("n_build"),
             "has_extended": any(r["extended"] for r in rows),
             "has_subset": any(not r["this_set"] and not r["extended"] for r in rows),
             "short": next((r for r in rows if r["short"]), None),
+            "n_sims": next((r.get("n_sims") for r in cv["points"] if r.get("n_sims")), None),
             "incomplete": not cv.get("complete", True)}
 
 

@@ -4,6 +4,7 @@
 {% block description %}Re-solve the open slots of DraftKings lineups after some games have started, and download the edit file to upload yourself.{% endblock %}
 
 {% block content %}
+{% if v.refresh %}<meta http-equiv="refresh" content="{{ v.refresh }};url={{ v.refresh_url }}">{% endif %}
 <section class="wrap dfs-hero" aria-labelledby="sw-title">
   <div class="mast-kicker">
     <span class="kicker">DFS</span>
@@ -21,6 +22,11 @@
   <div class="rs-flash is-error" role="alert"><p class="rs-flash-title">Could not build a late swap</p><p>{{ v.error }}</p></div>
 {% elif v.is_showdown %}
   {{ m.empty("Showdown has no late swap", "DraftKings locks every Showdown lineup at the first tip, so nothing can be swapped.") }}
+{% elif v.pending %}
+  <div class="card dfc-building sw-pending" role="status" aria-live="polite">
+    <p class="dfc-spin"><span class="hm-banner-dot" aria-hidden="true"></span><strong>Working out the swap&hellip;</strong> (usually under a minute{% if v.elapsed %}; {{ v.elapsed }}s so far{% endif %})</p>
+    <p class="muted">{% if v.filename %}Your file {{ v.filename }} is read in memory and not saved. {% endif %}This page refreshes itself; <a href="{{ v.refresh_url }}">refresh now</a>.</p>
+  </div>
 {% else %}
 
   <section class="card dfs-head" aria-label="Where the slate stands">

@@ -1015,6 +1015,52 @@ def player_report(df: pd.DataFrame) -> dict:
     lv = u.assign(level=pd.cut(u["mean"], [-1, 10, 20, 30, 40, 200],
                                labels=["<10", "10-20", "20-30", "30-40", "40+"]))
     out["by_level"] = MT.tier_table(lv, "level", base="b_fppg").to_dict("records")
+    out["dfs_pop"] = dfs_pop_report(df)
+    return out
+
+
+VALUE_FORECASTS = {"ours": "mean", "fppg_proxy": "b_fppg", "season_avg": "b_season_avg"}
+
+
+def dfs_pop_report(df: pd.DataFrame) -> dict:
+    """E4 (report only): the DFS-relevant population (salary >= $4k where known, or projected
+    >= 15 DK by us or by the FPPG proxy; `metrics.dfs_population`) of the projected rows: MAE,
+    gain over the FPPG proxy, CRPS (vs the naive normal when present), and on rows with a
+    salary the value-ranking metric corr(forecast - salary-implied, actual - salary-implied)
+    per date (`metrics.value_ranking`, SE clustered by date), each forecast vs the FPPG proxy."""
+    d = df[df["has_proj"].astype(bool)] if len(df) else df
+    if d.empty:
+        return {}
+    fp = d["b_fppg"].to_numpy(float) if "b_fppg" in d else np.full(len(d), np.nan)
+    m = MT.dfs_population(d["salary"].to_numpy(float), d["mean"].to_numpy(float), fp)
+    v = d[m]
+    if v.empty:
+        return {"n": 0}
+    y = v["y"].to_numpy(float)
+    day = v["date"].to_numpy()
+    e_m = np.abs(v["mean"].to_numpy(float) - y)
+    out: dict = {"definition": f"salary >= {MT.DFS_SAL_MIN:.0f} or projected (ours or FPPG "
+                               f"proxy) >= {MT.DFS_PROJ_MIN:.0f} DK",
+                 "n": int(len(v)), "n_dates": int(v["date"].nunique()), "mae": float(e_m.mean()),
+                 "bias": float((v["mean"] - v["y"]).mean())}
+    if "b_fppg" in v and v["b_fppg"].notna().any():
+        k = v["b_fppg"].notna().to_numpy()
+        out["vs_fppg_proxy"] = MT.gain_pct(np.abs(v["b_fppg"].to_numpy(float)[k] - y[k]), e_m[k],
+                                           day[k])
+    c = v["crps"].to_numpy(float)
+    if np.isfinite(c).any():
+        out["crps"] = float(np.nanmean(c))
+        if "crps_naive" in v and v["crps_naive"].notna().any():
+            k = (v["crps_naive"].notna() & v["crps"].notna()).to_numpy()
+            g = MT.gain_pct(v["crps_naive"].to_numpy(float)[k], c[k], day[k])
+            out["crps_vs_naive_normal"] = {"gain_pct": g["gain_pct"], "se_pct": g["se_pct"],
+                                           "n": g["n"]}
+    if v["salary"].notna().any():
+        preds = {k: v[c_].to_numpy(float) for k, c_ in VALUE_FORECASTS.items()
+                 if c_ in v and v[c_].notna().any()}
+        if "ours" in preds and "fppg_proxy" in preds:
+            out["value"] = MT.value_ranking(preds, y, v["salary"].to_numpy(float), day, day,
+                                            base="fppg_proxy")
     return out
 
 
@@ -1255,6 +1301,9 @@ def slice_rows(players: pd.DataFrame) -> pd.DataFrame:
     pa = d["p_avail"].to_numpy(float) if "p_avail" in d else np.full(len(d), np.nan)
     d["played"] = played.astype(float)
     d["U"] = d["exp_min"].to_numpy(float) >= 10
+    # E4: DFS-relevant rows (salary >= $4k where known, else projected >= 15 DK); report only
+    d["V"] = MT.dfs_population(d["salary"].to_numpy(float) if "salary" in d
+                               else np.full(len(d), np.nan), d["mean"].to_numpy(float))
     d["M"] = played & (mp >= 15)
     d["S"] = played & (mp >= 26)
     d["Q"] = (pa > UNCERTAIN_PAVAIL[0]) & (pa < UNCERTAIN_PAVAIL[1])
@@ -1268,6 +1317,9 @@ def slice_rows(players: pd.DataFrame) -> pd.DataFrame:
     d["min_bias_played15"] = mp - mins
     d["min_bias_starters"] = mp - mins
     d["pplay_cal_err"] = d["p_play"].to_numpy(float) - played
+    d["dk_mae_dfs"] = d["dk_mae"]
+    d["dk_crps_dfs"] = d["dk_crps"]
+    d["cov80_dfs"] = d["cov80"]
     if "status" in d:
         d["status"] = d["status"].fillna("").astype(str)
     else:
@@ -1277,7 +1329,9 @@ def slice_rows(players: pd.DataFrame) -> pd.DataFrame:
 
 METRIC_POP = {"dk_mae": "U", "dk_crps": "U", "cov80": "U", "cov50": "U", "dk_bias": "U",
               "min_mae": "U", "min_mae_played15": "M", "min_bias_played15": "M",
-              "min_bias_starters": "S", "pplay_cal_err": "Q"}
+              "min_bias_starters": "S", "pplay_cal_err": "Q",
+              "dk_mae_dfs": "V", "dk_crps_dfs": "V", "cov80_dfs": "V"}
+DFS_SLICE_METRICS = ("dk_mae_dfs", "dk_crps_dfs", "cov80_dfs")   # E4, reported in rep["dfs_pop"]
 
 
 def _cl_var(z: np.ndarray, cl: np.ndarray) -> float:
@@ -1427,11 +1481,16 @@ def slice_report(frames: dict, *, reference: str = "avail", primary: str = "live
     rep: dict = {"dates": sorted(common), "n_dates": len(common), "arms": arms,
                  "protocols": sorted({p for _, p in rows}), "base_arm": base_arm,
                  "reference": reference, "primary": primary, "cells": {}, "vs_reference": {},
-                 "vs_base_arm": {}, "tiers": {}, "pplay_status": {}, "daily": {}, "window": {}}
+                 "vs_base_arm": {}, "tiers": {}, "pplay_status": {}, "daily": {}, "window": {},
+                 "dfs_pop": {}, "dfs_pop_vs_base_arm": {}}
     for (arm, proto), d in rows.items():
         k = f"{arm}|{proto}"
         rep["cells"][k] = {m: metric_se(d, m) for m in SLICE_METRICS}
         rep["tiers"][k] = tier_bias(d)
+        rep["dfs_pop"][k] = {m: metric_se(d, m) for m in DFS_SLICE_METRICS}
+        if arm != base_arm and (base_arm, proto) in rows:
+            rep["dfs_pop_vs_base_arm"][k] = {m: metric_diff(d, rows[(base_arm, proto)], m)
+                                             for m in DFS_SLICE_METRICS}
         if d["status"].ne("").any():
             rep["pplay_status"][k] = pplay_by_status(d)
         dv = daily_values(d)
@@ -1520,6 +1579,15 @@ def format_slice_report(rep: dict) -> str:
             L.append(f"  {k:<26}" + "".join(f"{g(c[m]):>18}" for m in
                                             ("min_mae_played15", "dk_mae", "dk_crps", "cov80",
                                              "dk_bias", "min_mae")))
+    if rep.get("dfs_pop"):
+        L.append("")
+        L.append("  E4 DFS-relevant rows (salary >= $4k where known, else projected >= 15 DK):"
+                 " DK MAE / CRPS / cov80 (SE)")
+        for k, c in rep["dfs_pop"].items():
+            L.append(f"  {k:<26}" + "".join(f"{f(c[m]):>18}" for m in DFS_SLICE_METRICS))
+        for k, c in (rep.get("dfs_pop_vs_base_arm") or {}).items():
+            L.append(f"  {k + ' - base':<26}" + "".join(f"{g(c[m]):>18}"
+                                                         for m in DFS_SLICE_METRICS))
     for k, t in rep["tiers"].items():
         L.append("")
         L.append(f"  bias by tier, {k}: DK bias / DK MAE / cov80 (U); minutes bias / MAE (M)")
@@ -1651,6 +1719,27 @@ def _fmt_player(p: dict) -> list[str]:
                  f"{r['actual']:6.2f} bias {r['bias']:+.2f} MAE {r['mae']:.2f}"
                  + (f" (fppg {r['mae_base']:.2f})" if "mae_base" in r else "")
                  + f" cov80 {r.get('cov80', float('nan')):.3f} cov50 {r.get('cov50', float('nan')):.3f}")
+    L += _fmt_dfs_pop(p.get("dfs_pop") or {})
+    return L
+
+
+def _fmt_dfs_pop(d: dict) -> list[str]:
+    """E4 lines of `dfs_pop_report` (empty when absent)."""
+    if not d.get("n"):
+        return []
+    L = [f"    E4 DFS rows ({d['definition']}): n={d['n']}  MAE {d['mae']:.3f}  bias "
+         f"{d['bias']:+.3f}" + (f"  CRPS {d['crps']:.3f}" if "crps" in d else "")]
+    g = d.get("vs_fppg_proxy")
+    if g:
+        L.append(f"      vs fppg_proxy MAE {g['mae_base']:.3f} -> ours {g['gain_pct']:+.2f}% "
+                 f"(SE {g['se_pct']:.2f})")
+    v = d.get("value")
+    if v:
+        fc = v["forecasts"]
+        L.append("      value corr (forecast - salary-implied vs actual - salary-implied), SE by "
+                 "date: " + "  ".join(f"{k} {x['r']:.3f} ({x['se']:.3f})" for k, x in fc.items()))
+        for k, x in v["vs_base"].items():
+            L.append(f"      {k} - {x['base']}: {x['diff']:+.3f} (SE {x['se']:.3f}), n={x['n']}")
     return L
 
 

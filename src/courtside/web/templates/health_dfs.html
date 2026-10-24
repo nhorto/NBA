@@ -195,6 +195,24 @@
     <p class="card-sub">At each pregame run every candidate switch projects the main slate next to the live model, with the same simulation seeds, and is never shown or used for lineups. After the games, each switch is scored against the live model on the same players (negative is better). The metric, the run and the bar were fixed before the first night (<code>mlops/shadow_registry.json</code>). The SE counts each night and each player as a cluster, and is shown from the fifth night on. A switch passes once it clears its bar after the minimum number of nights with no tier worse than +2 SE.</p>
   </div>
   {% endif %}
+  {% if h.real_calib and h.real_calib.rows %}
+  <div class="card" id="real-calib">
+    <div class="card-head-row"><h3 class="card-title">Real contests vs our chances</h3><span class="muted card-note">slates to {{ h.real_calib.to }}{% if h.real_calib.generated %} &middot; report {{ h.real_calib.generated }}{% endif %}{% if not h.real_calib.sims %} &middot; no field simulation in this report{% endif %}</span></div>
+    <div class="table-scroll">
+    <table class="table dh-table">
+      <caption class="sr">Per slate the owner's real entries, the real cash line, where the entries finished against our simulated chances, ownership error and our lineups against the DK FPPG optimizer</caption>
+      <thead><tr><th scope="col">Slate</th><th scope="col" class="num">Contests</th><th scope="col" class="num">Entries</th><th scope="col" class="num">In the money</th><th scope="col" class="num">Field beaten</th><th scope="col" class="num">Place PIT</th><th scope="col" class="num">Real cash line</th><th scope="col" class="num">Ownership MAE (pp)</th><th scope="col" class="num">Cash lineup vs FPPG</th></tr></thead>
+      <tbody>
+      {% for r in h.real_calib.rows %}
+      <tr><th scope="row">{{ r.day }}<span class="psub">slate {{ r.slate }}, {{ r.games }} games</span></th><td class="num">{{ r.contests }}<span class="psub">{{ r.standings }} with standings</span></td><td class="num">{{ r.entries }}</td><td class="num">{{ r.money }}</td><td class="num">{{ r.beat }}</td><td class="num">{{ r.pit }}</td><td class="num">{{ r.line }}<span class="psub">{{ r.line_name }}</span></td><td class="num">{{ r.own }}</td><td class="num">{{ r.vs_fppg }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="card-sub">Each slate counts once, because every lineup of a night shares the same games. Place PIT is where the real finish fell among our simulated finishes for that lineup and contest: 0.5 on average means our chances are right; below 0.5 means they read high. Double-up PIT (score minus the real cash line): {{ h.real_calib.du_pit }}; in the money {{ h.real_calib.du_rate }} vs simulated {{ h.real_calib.du_sim }}. GPP place PIT: {{ h.real_calib.gpp_pit }}; in the money {{ h.real_calib.gpp_rate }} vs simulated {{ h.real_calib.gpp_sim }}. About 33 slates are needed to see a 0.10 shift. A cash line written "a to b" is bracketed by the owner's own entries (an uploaded standings file gives the exact line). Every night, no upload needed: our cash lineup minus the DK FPPG optimizer {{ h.real_calib.cash_vs_fppg }}, Top N {{ h.real_calib.topn_vs_fppg }} points; Top N share of the best possible lineup {{ h.real_calib.topn_ratio }}.</p>
+    {% for t in h.real_calib.needs %}<p class="card-sub muted">{{ t }}</p>{% endfor %}
+  </div>
+  {% endif %}
 </section>
 
 {# ================================================================ ALERTS #}

@@ -856,7 +856,8 @@ def calibration_report(conn: sqlite3.Connection) -> dict:
             pred = None
             if cache[sid] is not None:
                 try:
-                    pred = ownership_proxy(*cache[sid], archetype=c.archetype).as_dict()
+                    pool_, inp_ = cache[sid]          # slate_inputs order: (pool, inputs)
+                    pred = ownership_proxy(inp_, pool_, archetype=c.archetype).as_dict()
                 except (ValueError, KeyError) as e:
                     log.warning("calibration report: no proxy for slate %s (%s)", sid, e)
             if pred is not None:

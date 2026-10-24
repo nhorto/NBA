@@ -150,11 +150,18 @@ else
   rc="${PIPESTATUS[0]}"
   if [ "$job" = "pregame" ]; then
     # Player-side live shadows (IMPROVEMENTS E1, proj/shadows.py): its own low-priority process
-    # after the pregame job, never in the DFS tick; skips itself near a lock build window, 90 s
+    # after the pregame job, never in the DFS tick; skips itself near a lock build window, 240 s
     # budget, COURTSIDE_SHADOWS=0 turns it off. A failure is logged but never fails the job.
     nice -n 10 "$uv_bin" run --frozen courtside proj shadows run 2>&1 | log_lines
     r="${PIPESTATUS[0]}"
     [ "$r" -ne 0 ] && echo "[run-job] shadows failed (exit $r), not fatal" | log_lines
+  fi
+  if [ "$job" = "postgame" ]; then
+    # Real contests vs our chances (IMPROVEMENTS E5, proj/dfs/real_calib.py): report only,
+    # feeds the /health/dfs card. A failure is logged but never fails the job.
+    nice -n 10 "$uv_bin" run --frozen courtside dfs real-calib --sims 2000 2>&1 | log_lines
+    r="${PIPESTATUS[0]}"
+    [ "$r" -ne 0 ] && echo "[run-job] real-calib failed (exit $r), not fatal" | log_lines
   fi
 fi
 

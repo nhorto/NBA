@@ -53,6 +53,10 @@ Pipeline (`build_portfolio`):
 run on disjoint rows of the scoring truth (generation G / selection S / report R), so the
 reported chances are not scored on the sims that generated and picked the lineups.
 
+**Selection objective** (`COURTSIDE_PORTFOLIO_OBJ`, OFF by default; see OBJ_ENV, D9): the greedy
+picks on a ladder with the top prizes smoothed ('flat' / 'blend'); the report uses the real one.
+The entries curve's points carry simulation SEs (`curve_se`, display only).
+
 Storage (migration 13): `dfs_portfolios` (one row per build, status building | ok | error,
 settings and summary JSON) and the lineups in `dfs_lineups` with ``run_id`` = the portfolio id
 (``pf-...``), ``mode='gpp'`` and the contest id. They are kept out of `dfs_runs` on purpose: the
@@ -158,6 +162,48 @@ def split_mode(v: Any, default: str = "off") -> str:
 
 
 PORTFOLIO_SPLIT = split_mode(os.environ.get(SPLIT_ENV), SPLIT_DEFAULT)
+
+# Selection objective (IMPROVEMENTS.md D9, docs/research/d8-d9.md). OFF by default (env
+# COURTSIDE_PORTFOLIO_OBJ, read at import; `set_objective` or `build_portfolio(objective=...)`).
+# In a big GPP P(1st) per lineup is ~1e-4, so 25k sims hold a handful of 1st places and the
+# greedy's marginal E[payout] is driven by them: picks move with the sim seed. ON, the greedy
+# (and the entries curve's picks) score a SMOOTHED ladder; everything reported still uses the
+# real one. Both keep the ladder's total money:
+#   "flat"  : the top 0.1 % of ranks (max(1, ceil(0.001 M)), the curve's top-0.1 % rank) all pay
+#             the mean of their prizes (E[payout] with the top prizes flattened);
+#   "blend" : ranks in the top 1 % pay (1 - OBJ_BLEND_W) x prize + OBJ_BLEND_W x the mean top-1 %
+#             prize (E[payout] blended with P(top 1 %) priced at the mean top-1 % prize).
+# Version tag `+obj-flat` / `+obj-blend` on info.version. OFF: the greedy gets the real ladder
+# object itself (bit-identical).
+OBJ_ENV = "COURTSIDE_PORTFOLIO_OBJ"
+OBJ_DEFAULT = "blend"                  # shipped 2026-10-24 (owner OK; env still overrides)
+OBJ_MODES = ("off", "flat", "blend")
+OBJ_TAG = "+obj-"
+OBJ_BLEND_W = 0.5
+
+
+def objective_mode(v: Any, default: str = OBJ_DEFAULT) -> str:
+    """'off' | 'flat' | 'blend' from an env string (0 / false / no / off / '' -> 'off'; 1 / on ->
+    'flat'); anything else -> `default`."""
+    if v is None:
+        return default
+    x = str(v).strip().lower()
+    if x in OBJ_MODES:
+        return x
+    if x in ("1", "true", "yes", "on"):
+        return "flat"
+    if x in ("0", "false", "no", ""):
+        return "off"
+    return default
+
+
+PORTFOLIO_OBJ = objective_mode(os.environ.get(OBJ_ENV), OBJ_DEFAULT)
+
+
+def set_objective(mode: Any) -> None:
+    """Set the selection objective for later builds (the env is read once at import)."""
+    global PORTFOLIO_OBJ
+    PORTFOLIO_OBJ = objective_mode(mode)
 
 
 def set_split(on: bool | str) -> None:
@@ -432,6 +478,31 @@ class Ladder:
         hi = np.minimum(lo + t, self.top)
         return (self.cum[hi] - self.cum[lo - 1]) / (t + 1)
 
+    def pay(self) -> np.ndarray:
+        """Payout by rank 1..M + 1 (index 0 = rank 1; the last rank pays 0)."""
+        return np.diff(self.cum)
+
+
+def selection_ladder(lad: Ladder, mode: str) -> Ladder:
+    """The ladder the greedy scores under the D9 selection objective (OBJ_ENV): `lad` itself
+    when 'off', else a copy whose top ranks are smoothed (total money unchanged)."""
+    if mode == "off":
+        return lad
+    pay = lad.pay()
+    if mode == "flat":
+        k = min(max(1, int(math.ceil(0.001 * lad.M))), lad.paid)
+        pay[:k] = pay[:k].mean()
+    elif mode == "blend":
+        k = min(lad.top1, lad.paid)
+        pay[:k] = (1 - OBJ_BLEND_W) * pay[:k] + OBJ_BLEND_W * pay[:k].mean()
+    else:
+        raise PortfolioError(f"unknown selection objective {mode!r}")
+    out = Ladder.__new__(Ladder)
+    out.__dict__.update(lad.__dict__)
+    out.cum = np.concatenate([[0.0], np.cumsum(pay)])
+    out.mode = mode
+    return out
+
 
 def joint_ranks(score: np.ndarray, above: np.ndarray) -> np.ndarray:
     """(S x k) finishing rank of each of our k entries: other entries above + our entries above +
@@ -641,6 +712,17 @@ def one_in(p: float, sig: int = 1) -> str:
     return f"~1 in {x:,}"
 
 
+def se_text(p: float | None, se: float | None) -> str:
+    """A chance's simulation SE for display (D9): '± 0.4 pt' (percentage points) from 1 % up,
+    '± 35%' (relative to the chance) below; '' when there is none (or the chance is 0)."""
+    if p is None or se is None or not np.isfinite(p) or not np.isfinite(se) or p <= 0:
+        return ""
+    if p >= 0.01:
+        pts = se * 100
+        return f"± {pts:.1f} pt" if pts >= 0.05 else "± <0.1 pt"
+    return f"± {min(se / p, 9.99):.0%}"
+
+
 def chance_text(p: float | None, calibrated: bool = False, n_sims: int | None = None) -> str:
     """A chance for display: from 1 % up, `prob_band` until payouts are calibrated (a plain
     percentage after); below 1 %, odds ('~1 in 3,000', 1 significant figure until calibrated,
@@ -726,7 +808,8 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
                     run_id: str | None = None, baselines: bool = False,
                     progress: Callable[[str], None] | None = None,
                     split: bool | str | None = None, blended: bool | None = None,
-                    own_unc: Mapping[str, float] | None = None) -> Portfolio:
+                    own_unc: Mapping[str, float] | None = None,
+                    objective: str | None = None) -> Portfolio:
     """The portfolio for one contest. `inputs` is the field.py ownership input table (live:
     `field.slate_inputs`; history: `field.hist_inputs`), `sims` a stored-sims dict (``fp`` S x n,
     ``dk_id``), `mu` our mean projections by DK id (default: ``inputs.proj``). `baselines=True`
@@ -734,8 +817,11 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     `split` (None: PORTFOLIO_SPLIT; True / 'split' / 'gs' / False / 'off') = generate / select /
     report on disjoint sims (SPLIT_ENV). `blended`: the sims carry the role blend (+rb; None =
     the process switch), see `truth_sims`. `own_unc`: late-news ownership-uncertainty
-    multipliers {DK id: x} for the K-field mode (COURTSIDE_FIELD_K, `field.build_fields`)."""
+    multipliers {DK id: x} for the K-field mode (COURTSIDE_FIELD_K, `field.build_fields`).
+    `objective` (None: PORTFOLIO_OBJ; 'off' | 'flat' | 'blend'): the greedy's selection ladder
+    (D9, OBJ_ENV)."""
     t0 = time.perf_counter()
+    obj = PORTFOLIO_OBJ if objective is None else objective_mode(objective)
     mode = PORTFOLIO_SPLIT if split is None else split_mode(split)
     split = mode != "off"
     say = progress or (lambda m: None)
@@ -827,30 +913,16 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
     say("scoring")
     t = time.perf_counter()
     lad = Ladder(contest)
+    lad_sel = selection_ladder(lad, obj)             # = lad with the D9 objective OFF
     m_o = max(1, contest.field_size - n)
 
     def score(lineups: list, fp=fp) -> tuple[_Pool, list[dict], F.FieldEval]:
         ev = F.evaluate(fld, fp, contest, [lu.slot_pairs() for lu in lineups], seed=s.seed,
                         tiers=True, own_entries=n, per_sim=True)
-        ps = ev.per_sim
         if isinstance(fld, F.FieldSet):
             return _score_k(fld, ev, lineups, contest, m_o, rng), ev.lineups, ev
-        _, rows, _ = F._cand_matrix(fld, [lu.slot_pairs() for lu in lineups], fld.slots)
-        cpt_first = fld.slots[0] == "CPT"
-        cnt = {tuple(int(x) for x in r): int(c)
-               for r, c in zip(F._canon(fld.lineups, cpt_first), fld.counts)}
-        F_n = max(1, fld.n)
-        extra = []
-        for i, row in enumerate(rows):
-            d = float(ev.lineups[i]["dupes"]) * m_o / max(1, contest.field_size - 1)
-            in_sample = cnt.get(tuple(int(x) for x in F._key(row, cpt_first)), 0) * m_o / F_n \
-                if (row >= 0).all() else 0.0
-            extra.append(max(0.0, d - in_sample))
-        extra = np.array(extra)
-        tied = np.rint(ps["tied"]).astype(np.int32)
-        if (extra > 1e-4).any():
-            tied += rng.poisson(extra[None, :], size=tied.shape).astype(np.int32)
-        return _Pool(ps["score"], np.rint(ps["above"]).astype(np.int32), tied), ev.lineups, ev
+        return (dupe_pool(fld, ev, [lu.slot_pairs() for lu in lineups], contest, m_o, rng),
+                ev.lineups, ev)
 
     if split:                     # select on S, report on R (`single` / ev0: R); see SPLIT_ENV
         P, single_sel, _ = score(cands, fp_sel)
@@ -926,7 +998,7 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         cset.P = _cat(cset.P, P2)
         return True
 
-    chosen, ginfo = greedy(lad, cset, n, gamma=gamma, cap=cap, low=low,
+    chosen, ginfo = greedy(lad_sel, cset, n, gamma=gamma, cap=cap, low=low,
                            on_empty=refiller(n, cap, low, "refills", s.refills))
     timing["selection"] = time.perf_counter() - t
     cands, single, inc, P = state["cands"], state["single"], cset.inc, cset.P
@@ -981,7 +1053,8 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         summ["curve"] = entries_curve(lad, cset, chosen, s, pids, contest, m_o=m_o, gamma=gamma,
                                       built_stopped=ginfo["stopped"],
                                       refill=lambda k, c, lo: refiller(k, c, lo, "curve_refills",
-                                                                       s.curve_refills))
+                                                                       s.curve_refills),
+                                      **({"sel_lad": lad_sel} if obj != "off" else {}))
         timing["curve"] = time.perf_counter() - t
     info = {"version": VERSION + {"off": "", "split": SPLIT_TAG, "gs": SPLIT_GS_TAG}[mode],
             "label": LABEL,
@@ -994,6 +1067,8 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
             "missing_sim_players": len(missing), "truth": tinfo,
             "timing": {k: round(v, 2) for k, v in timing.items()},
             "seconds": round(time.perf_counter() - t0, 2)}
+    if obj != "off":
+        info["version"] += OBJ_TAG + obj
     if xf2 is not None:
         info["version"] += "+xf2"
         xf2["selected_levtilt"] = sum(1 for j in chosen if sources[j] == "levtilt")
@@ -1009,6 +1084,30 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         info["greedy_pairs"] = [cands[j].slot_pairs() for j in chosen]
     return Portfolio(slate_id, contest, s, lineups, summ, exposure, info, run_id, field=fld,
                      fp=fp, fp_raw=fp_raw, sources=[sources[j] for j in chosen])
+
+
+def dupe_pool(fld: F.Field, ev: F.FieldEval, pairs: Sequence, contest: F.Contest, m_o: int,
+              rng: np.random.Generator) -> _Pool:
+    """The per-sim pool of an `F.evaluate(..., per_sim=True)` on one field: the expected dupes
+    the field sample does not already contain are added to the ties as a Poisson count per sim
+    (so dupes split the prize). `pairs`: the evaluated lineups' (slot, id) pairs, in order."""
+    ps = ev.per_sim
+    _, rows, _ = F._cand_matrix(fld, list(pairs), fld.slots)
+    cpt_first = fld.slots[0] == "CPT"
+    cnt = {tuple(int(x) for x in r): int(c)
+           for r, c in zip(F._canon(fld.lineups, cpt_first), fld.counts)}
+    F_n = max(1, fld.n)
+    extra = []
+    for i, row in enumerate(rows):
+        d = float(ev.lineups[i]["dupes"]) * m_o / max(1, contest.field_size - 1)
+        in_sample = cnt.get(tuple(int(x) for x in F._key(row, cpt_first)), 0) * m_o / F_n \
+            if (row >= 0).all() else 0.0
+        extra.append(max(0.0, d - in_sample))
+    extra = np.array(extra)
+    tied = np.rint(ps["tied"]).astype(np.int32)
+    if (extra > 1e-4).any():
+        tied += rng.poisson(extra[None, :], size=tied.shape).astype(np.int32)
+    return _Pool(ps["score"], np.rint(ps["above"]).astype(np.int32), tied)
 
 
 def _score_k(fld: "F.FieldSet", ev: F.FieldEval, lineups: list, contest: F.Contest, m_o: int,
@@ -1151,13 +1250,39 @@ def curve_stats(lad: Ladder, P: _Pool, idx: Sequence[int], contest: F.Contest, *
     alone = ab + 1                                     # each entry's rank if it were our only one
     indep = {name: float(1 - np.prod(1 - (alone <= r).mean(0)))
              for name, r in (("p_any_cash", lad.paid), ("p_any_top1", lad.top1))}
-    return {"entries": k, "cost": fee * k,
-            "p_any_cash": float((best <= lad.paid).mean()),
-            "p_any_top1": float((best <= lad.top1).mean()),
-            "p_any_top01": float((best <= top01).mean()),
-            "p_first": float((best <= 1).mean()),
-            "e_payout": e, "e_payout_per_dollar": (e / (fee * k)) if fee else None,
-            "if_independent": indep, "top01_rank": top01, "n_sims": int(sc.shape[0])}
+    out = {"entries": k, "cost": fee * k,
+           "p_any_cash": float((best <= lad.paid).mean()),
+           "p_any_top1": float((best <= lad.top1).mean()),
+           "p_any_top01": float((best <= top01).mean()),
+           "p_first": float((best <= 1).mean()),
+           "e_payout": e, "e_payout_per_dollar": (e / (fee * k)) if fee else None,
+           "if_independent": indep, "top01_rank": top01, "n_sims": int(sc.shape[0])}
+    out["se"] = curve_se(out, pay.sum(1))
+    return out
+
+
+def binom_se(p: float | None, n: int | None) -> float | None:
+    """Simulation SE of a chance estimated as a share of `n` independent sims (binomial):
+    sqrt(p (1 - p) / n). The sims of a build are iid rows, so this is the exact MC error of the
+    curve's chances (not of the model, the field proxy or the picking)."""
+    if p is None or not n or not np.isfinite(p):
+        return None
+    return float(math.sqrt(max(0.0, p * (1.0 - p)) / int(n)))
+
+
+def curve_se(point: Mapping, tot: np.ndarray | None = None) -> dict:
+    """D9: SEs of a curve point's numbers (display only; the numbers are unchanged). Chances:
+    binomial over the point's sims; E[payout]: sd of the per-sim total payout / sqrt(S) (the sims
+    are iid rows), per dollar by the same factor."""
+    n = point.get("n_sims")
+    out = {k: binom_se(point.get(k), n) for k in ("p_any_cash", "p_any_top1", "p_any_top01",
+                                                   "p_first")}
+    if tot is not None and len(tot) > 1:
+        se = float(np.std(tot) / math.sqrt(len(tot)))
+        out["e_payout"] = se
+        cost = float(point.get("cost") or 0.0)
+        out["e_payout_per_dollar"] = se / cost if cost else None
+    return out
 
 
 def _cap_subset(parent: Sequence[int], first: Sequence[int], k: int, inc: np.ndarray,
@@ -1203,7 +1328,8 @@ def _fill_least_over(pick: list[int], parent: Sequence[int], k: int, inc: np.nda
 def entries_curve(lad: Ladder, cs: CandSet, chosen: Sequence[int], s: Settings,
                   pids: Sequence[str], contest: F.Contest, *, m_o: int, gamma: int,
                   built_stopped: str | None = None,
-                  refill: Callable[[int, np.ndarray, np.ndarray], Callable] | None = None) -> dict:
+                  refill: Callable[[int, np.ndarray, np.ndarray], Callable] | None = None,
+                  sel_lad: Ladder | None = None) -> dict:
     """The "how many entries" curve: chances of at least one entry in the money / top 1 % /
     top 0.1 % / 1st and the entry cost for N = 1, 3, 5, 10, 20, 50, 150 (up to `s.curve_to`)
     and the build's own N, all on the SAME simulated nights as the build.
@@ -1225,8 +1351,10 @@ def entries_curve(lad: Ladder, cs: CandSet, chosen: Sequence[int], s: Settings,
     added above one of ours takes a rank no worse than the one it pushes down (the best rank
     of a set is 1 + the fewest other entries above any of its lineups). If the greedy gets
     stuck on a subset's caps, a CP-SAT subset meets them keeping the earliest picks; if no
-    subset can, the least-overage fill is used (`caps_relaxed`)."""
+    subset can, the least-overage fill is used (`caps_relaxed`). `sel_lad` (D9 selection
+    objective ON): the ladder the picks are made under; the chances use `lad`."""
     t0 = time.perf_counter()
+    pick_lad = lad if sel_lad is None else sel_lad
     chosen = [int(j) for j in chosen]
     N = len(chosen)
     if not N:
@@ -1244,7 +1372,7 @@ def entries_curve(lad: Ladder, cs: CandSet, chosen: Sequence[int], s: Settings,
             cap, low = np.full(len(pids), k), np.zeros(len(pids), int)
         sub = CandSet(_Pool(cs.P.score[:, parent], cs.P.above[:, parent], cs.P.tied[:, parent]),
                       cs.inc[parent])
-        got, _ = greedy(lad, sub, k, gamma=gamma, cap=cap, low=low)
+        got, _ = greedy(pick_lad, sub, k, gamma=gamma, cap=cap, low=low)
         pick = [parent[i] for i in got]
         relaxed = False
         if len(pick) < k:                  # greedy painted itself into a corner: exact subset
@@ -1280,7 +1408,7 @@ def entries_curve(lad: Ladder, cs: CandSet, chosen: Sequence[int], s: Settings,
             cap, low = _caps_for(s, k, pids)
         except PortfolioError:
             break
-        got, gi = greedy(lad, sel, k, gamma=gamma, cap=cap, low=low, start=cur,
+        got, gi = greedy(pick_lad, sel, k, gamma=gamma, cap=cap, low=low, start=cur,
                          on_empty=on_empty_for(k, cap, low))
         sets[k] = list(got)
         meta[k] = {"source": "extended", "caps_relaxed": False, "stopped": gi["stopped"]}
@@ -1762,15 +1890,21 @@ def _print(pf: Portfolio) -> None:
     if cv and cv.get("points"):
         print("\n  CHANCES BY NUMBER OF ENTRIES (same simulated nights, nested sets; simulated, "
               "uncalibrated)")
-        print(f"  {'N':>4} {'fees':>9} {'in the money':>13} {'top 1%':>10} {'top 0.1%':>12} "
-              f"{'1st':>13}  set")
+        print(f"  {'N':>4} {'fees':>9} {'in the money':>24} {'top 1%':>22} {'top 0.1%':>22} "
+              f"{'1st':>24}  set")
         for r in cv["points"]:
             n_txt = (f"{r['entries']}" if r["entries"] == r["requested"]
                      else f"{r['entries']}/{r['requested']}")
+            se = r.get("se") or curve_se(r)
+
+            def cell(k, w):
+                t = se_text(r[k], se.get(k))
+                return format(chance_text(r[k]) + (f" ({t})" if t else ""), f">{w}")
             print(f"  {n_txt:>4} {'$' + format(r['cost'], ',.0f'):>9} "
-                  f"{chance_text(r['p_any_cash']):>13} {chance_text(r['p_any_top1']):>10} "
-                  f"{chance_text(r['p_any_top01']):>12} {chance_text(r['p_first']):>13}  "
+                  f"{cell('p_any_cash', 24)} {cell('p_any_top1', 22)} "
+                  f"{cell('p_any_top01', 22)} {cell('p_first', 24)}  "
                   f"{r['source']}{' (caps relaxed)' if r.get('caps_relaxed') else ''}")
+        print("  (\u00b1 = simulation noise, one standard error across the simulated nights)")
         print(f"  curve built in {cv['seconds']:.1f}s; first k of the build = the k-entry set: "
               f"{'yes' if cv['nested_prefix'] else 'no (exposure caps differ by N)'}")
     print(f"\n  {'#':>3} {'mean':>6} {'cash':>10} {'top 1%':>10} {'dupes':>6}  players")

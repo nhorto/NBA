@@ -47,9 +47,10 @@ def _load_module(path: str, name: str):
     return mod
 
 
+# "se": the entries curve's simulation SEs (D9, display only), added after these goldens
 def _strip(x):
     if isinstance(x, dict):
-        return {str(k): _strip(v) for k, v in x.items() if k not in ("seconds", "timing")}
+        return {str(k): _strip(v) for k, v in x.items() if k not in ("seconds", "timing", "se")}
     if isinstance(x, (list, tuple)):
         return [_strip(v) for v in x]
     if isinstance(x, (np.floating, float)):

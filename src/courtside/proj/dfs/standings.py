@@ -804,15 +804,80 @@ HISTORY_COLS = ("Sport", "Game_Type", "Entry_Key", "Entry", "Contest_Key", "Cont
                 "Entry_Fee", "Prize_Pool", "Places_Paid")
 
 
-def import_history(conn, text: str, *, filename: str = "", sha: str | None = None,
-                   raw_path=None, now: str | None = None) -> dict:
-    """DraftKings "Contest History" CSV (columns Sport, Game_Type, Entry_Key, Entry,
-    Contest_Key, Contest_Date_EST, Place, Points, Winnings_Non_Ticket, Winnings_Ticket,
-    Contest_Entries, Entry_Fee, Prize_Pool, Places_Paid). All rows are the owner's own entries;
-    only NBA rows are kept. The history's winnings are authoritative and replace a payout
-    computed from a payout table. (Column names are from DK's export as we know it; unverified
-    against a live file, hence the tolerant header handling.)"""
-    now = now or _now()
+HISTORY_GAME_TYPES = {"classic": 70, "showdown captain mode": 81, "showdown": 81}
+EASTERN = "America/New_York"
+
+
+def history_lock_utc(date_est: str | None) -> tuple[str | None, str | None]:
+    """(nba_day, lock in UTC 'YYYY-MM-DDTHH:MM:SSZ') of DK's Contest_Date_EST, which is
+    Eastern WALL time (EDT or EST as of that date): "2026-10-23 19:00:00" -> ("2026-10-23",
+    "2026-10-23T23:00:00Z"). (None, None) when it does not parse."""
+    from zoneinfo import ZoneInfo
+    txt = (date_est or "").strip()
+    if not txt:
+        return None, None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M",
+                "%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %I:%M %p", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            wall = datetime.strptime(txt, fmt)
+            break
+        except ValueError:
+            continue
+    else:
+        return None, None
+    utc = wall.replace(tzinfo=ZoneInfo(EASTERN)).astimezone(timezone.utc)
+    return wall.date().isoformat(), utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def infer_history_slate(conn, date_est: str | None, game_type: str | None
+                        ) -> tuple[str | None, str]:
+    """(slate_id, how) of a contest-history row: the ONE slate of the row's game type (Classic
+    -> dfs_slates.game_type_id 70, Showdown Captain Mode -> 81) whose nba_day and lock_utc are
+    the row's Contest_Date_EST (Eastern wall time). None when there is no such slate or more
+    than one (e.g. a showdown and another showdown at the same tip): nothing is guessed."""
+    gt = HISTORY_GAME_TYPES.get((game_type or "").strip().casefold())
+    day, lock = history_lock_utc(date_est)
+    if gt is None or lock is None:
+        return None, "no game type or date"
+    try:
+        rows = conn.execute("SELECT slate_id, lock_utc FROM dfs_slates WHERE nba_day=? AND "
+                            "game_type_id=?", (day, gt)).fetchall()
+    except sqlite3.Error:
+        return None, "no slates table"
+
+    def norm(t):
+        t = str(t or "").strip().replace(" ", "T")
+        t = re.sub(r"\.\d+", "", t).replace("+00:00", "Z")
+        return t if t.endswith("Z") else (t + "Z" if t else t)
+    hits = [str(r[0]) for r in rows if norm(r[1]) == lock]
+    if len(hits) == 1:
+        return hits[0], f"history date {lock}"
+    return None, ("no slate at " if not hits else f"{len(hits)} slates at ") + lock
+
+
+def history_contests(conn) -> dict[str, dict]:
+    """{contest id: {places_paid, prize_pool, entries, entry_fee, date_est, game_type, name}} from
+    every uploaded contest-history file: the upload's ``detail.contests`` (imports since
+    2026-10-24), else the archived file itself (older imports). Report-only."""
+    out: dict[str, dict] = {}
+    if not _has_table(conn, "dfs_uploads"):
+        return out
+    for r in conn.execute("SELECT raw_path, detail FROM dfs_uploads WHERE kind='history' "
+                          "ORDER BY upload_id"):
+        det = _loads(r[1], {}) or {}
+        got = det.get("contests")
+        if not got and r[0] and Path(r[0]).exists():
+            try:
+                got = parse_history_meta(Path(r[0]).read_text(encoding="utf-8-sig",
+                                                               errors="replace"))
+            except (OSError, StandingsError):
+                got = None
+        for cid, m in (got or {}).items():
+            out.setdefault(str(cid), {}).update({k: v for k, v in m.items() if v is not None})
+    return out
+
+
+def _history_rows(text: str):
     rows = list(csv.reader(io.StringIO(text, newline="")))
     hi = next((i for i, r in enumerate(rows[:10])
                if {"entry_key", "contest_key"} <= {re.sub(r"[\s]", "_", c.strip().casefold())
@@ -820,13 +885,54 @@ def import_history(conn, text: str, *, filename: str = "", sha: str | None = Non
     if hi is None:
         raise StandingsError("This does not look like a DraftKings contest history file.")
     hdr = {re.sub(r"[\s]", "_", c.strip().casefold()): i for i, c in enumerate(rows[hi])}
+    return rows[hi + 1:], hdr
+
+
+def parse_history_meta(text: str) -> dict[str, dict]:
+    """Per NBA contest of a history file: places paid, prize pool, entries, fee, Contest_Date_EST,
+    game type and name (the entry label without the "(1/3)" suffix)."""
+    rows, hdr = _history_rows(text)
+
+    def g(r, k):
+        i = hdr.get(k.casefold())
+        return r[i].strip() if i is not None and i < len(r) else ""
+    out: dict[str, dict] = {}
+    for r in rows:
+        if not any(c.strip() for c in r):
+            continue
+        if g(r, "Sport") and g(r, "Sport").upper() != "NBA":
+            continue
+        cid = g(r, "Contest_Key")
+        if not cid:
+            continue
+        out[cid] = {"places_paid": _int(g(r, "Places_Paid")), "prize_pool": _num(g(r, "Prize_Pool")),
+                    "entries": _int(g(r, "Contest_Entries")), "entry_fee": _num(g(r, "Entry_Fee")),
+                    "date_est": g(r, "Contest_Date_EST") or None,
+                    "game_type": g(r, "Game_Type") or None,
+                    "name": _MULTI.sub("", g(r, "Entry")).strip() or None}
+    return out
+
+
+def import_history(conn, text: str, *, filename: str = "", sha: str | None = None,
+                   raw_path=None, now: str | None = None) -> dict:
+    """DraftKings "Contest History" CSV (columns Sport, Game_Type, Entry_Key, Entry,
+    Contest_Key, Contest_Date_EST, Place, Points, Winnings_Non_Ticket, Winnings_Ticket,
+    Contest_Entries, Entry_Fee, Prize_Pool, Places_Paid). All rows are the owner's own entries;
+    only NBA rows are kept. The history's winnings are authoritative and replace a payout
+    computed from a payout table. (Column names are from DK's export as we know it; unverified
+    against a live file, hence the tolerant header handling.)
+    Slate: the contest's captured slate; else `infer_history_slate` (the one slate of the row's
+    game type locking at its Contest_Date_EST, Eastern wall time); else none. The per-contest
+    places paid / prize pool / date go to the upload's ``detail.contests``."""
+    now = now or _now()
+    body, hdr = _history_rows(text)
 
     def g(r, k):
         i = hdr.get(k.casefold())
         return r[i].strip() if i is not None and i < len(r) else ""
 
     entries, skipped = [], 0
-    for r in rows[hi + 1:]:
+    for r in body:
         if not any(c.strip() for c in r):
             continue
         sport = g(r, "Sport")
@@ -853,14 +959,21 @@ def import_history(conn, text: str, *, filename: str = "", sha: str | None = Non
         return {"status": "duplicate", "kind": "history", "upload_id": dup["upload_id"],
                 "filename": filename}
     n_new = 0
+    inferred: dict[str, str] = {}
+    meta = parse_history_meta(text)
     with conn:
         for e in entries:
             c = conn.execute("SELECT slate_id FROM dfs_contests WHERE contest_id=?",
                              (e["contest_id"],)).fetchone()
+            sid = c[0] if c and c[0] else None
+            if sid is None:
+                sid, _how = infer_history_slate(conn, e["date"], e["game_type"])
+                if sid is not None:
+                    inferred[e["contest_id"]] = sid
             before = conn.execute("SELECT entry_id FROM dfs_entries WHERE contest_id=? AND "
                                   "dk_entry_id=?", (e["contest_id"], e["dk_entry_id"])).fetchone()
             eid = _upsert_entry(
-                conn, contest_id=e["contest_id"], slate_id=c[0] if c else None,
+                conn, contest_id=e["contest_id"], slate_id=sid,
                 dk_entry_id=e["dk_entry_id"], lineup_id=None, slots_json=None,
                 entry_fee=e["fee"], points=e["points"], rank=e["rank"], field_size=e["field"],
                 payout=None, source="upload", note=f"history: {e['label']}"[:200], now=now)
@@ -872,9 +985,11 @@ def import_history(conn, text: str, *, filename: str = "", sha: str | None = Non
             "INSERT INTO dfs_uploads (kind, contest_id, filename, sha256, raw_path, rows, "
             "uploaded_at, detail) VALUES ('history', NULL, ?, ?, ?, ?, ?, ?)",
             (filename, sha, str(path), len(entries), now,
-             json.dumps({"entries": len(entries), "new": n_new, "skipped": skipped})))
+             json.dumps({"entries": len(entries), "new": n_new, "skipped": skipped,
+                         "slates_inferred": inferred, "contests": meta})))
     return {"status": "ok", "kind": "history", "upload_id": cur.lastrowid, "filename": filename,
-            "entries": len(entries), "new_entries": n_new, "skipped": skipped}
+            "entries": len(entries), "new_entries": n_new, "skipped": skipped,
+            "slates_inferred": inferred}
 
 
 # ============================================================================== manual entries
