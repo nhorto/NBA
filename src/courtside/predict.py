@@ -11,6 +11,17 @@ per game, appended, never rewritten):
   The Brief's "our number vs market" edge is this model minus the market, so the comparison
   means something.
 
+News since the line (IMPROVEMENTS G1, `model.line_news`, COURTSIDE_NEWS_SINCE_LINE, default
+OFF): `gbm_market` was fit on closing lines, which already price the day's injury news. ON, a
+snapshot line is moved by beta x (gbm_opinion's margin with the lineups priced now minus with
+the reports as they stood at the line's `captured_at`) before the headline model sees it; the
+market rows' model_version gets `+nsl` and `inputs.news_since_line` records the line capture
+time, the deltas and the shift. Closing lines are never moved. OFF never enters that code.
+
+Absence scale (IMPROVEMENTS G4, `model.absence_scale`, COURTSIDE_ABSENCE_SCALE, default OFF):
+ON, the injury-report lineup strengths are pulled toward the full roster by a scale s (both
+models' rows get `+as`). OFF never enters that code.
+
 Injuries are priced: the newest usable report (official over ESPN when it is the newer one;
 `injuries.availability`) becomes an expected lineup per team, and the lineup strength replaces
 the engine's availability (`production.apply_overrides`). Days without a report keep the
@@ -57,7 +68,7 @@ import numpy as np
 import pandas as pd
 
 from . import config, injuries, odds_history, production, teams
-from .model import dataset, elo as elo_mod, gbm, schedule, sites
+from .model import absence_scale, dataset, elo as elo_mod, gbm, line_news, schedule, sites
 
 log = logging.getLogger("courtside.predict")
 
@@ -618,6 +629,59 @@ def feature_vector(G: pd.DataFrame, i: int, row: pd.Series, mk: dict | None,
     return f
 
 
+def _news_since_line(conn, day: date, test: pd.DataFrame, F: pd.DataFrame, mm, mt,
+                     lines: list[dict | None], cover: dict, inj_of: dict, state, lh, la,
+                     opinion) -> dict:
+    """IMPROVEMENTS G1 (`model.line_news`, ON only): per game, the opinion model's value of the
+    injury news published since the market line was captured, and the line shift beta * that.
+    Lines without a capture time (closing lines) and games without a usable report now get 0;
+    a side counts only if the newest batch lists its team both now and at capture."""
+    n = len(test)
+    line_at = [line_news.capture_time(l) for l in lines]
+    inj_at: list = [None] * n
+    lh_c = None if lh is None else lh.copy()
+    la_c = None if la is None else la.copy()
+    side_ok = [[False, False] for _ in range(n)]
+    if cover and lh is not None:
+        groups: dict[str, list[int]] = {}
+        for i in range(n):
+            cap, at = line_at[i], inj_of[i]["at"]
+            if cap is not None and _iso_utc(cap) < _iso_utc(at):
+                groups.setdefault(_iso_utc(cap), []).append(i)
+        for cap, idx in sorted(groups.items()):
+            sub = test.iloc[idx]
+            cov0 = injuries.availability(conn, cap, day,
+                                         set(sub["home_raw"]) | set(sub["away_raw"]))
+            if not cov0:
+                continue
+            h0, a0 = production.lineup_strengths(state, sub, {t: c["avail"]
+                                                              for t, c in cov0.items()})
+            for j, (k, (_, r)) in enumerate(zip(idx, sub.iterrows())):
+                inj_at[k] = cap
+                for s, (now, arr, v0) in enumerate((("home_raw", lh_c, h0),
+                                                    ("away_raw", la_c, a0))):
+                    lst_now = (cover.get(r[now]) or {}).get("source") is not None
+                    lst_cap = (cov0.get(r[now]) or {}).get("source") is not None
+                    arr[k] = line_news.guarded(arr[k], v0[j], lst_now, lst_cap)
+                    side_ok[k][s] = bool(lst_now and lst_cap)
+    G_now = production.apply_overrides(F, mm, mt, lh, la)
+    G_cap = G_now if lh_c is None else production.apply_overrides(F, mm, mt, lh_c, la_c)
+    out = line_news.shift(opinion, G_now, G_cap)
+    out["line_at"] = line_at
+    out["injuries_at_line"] = inj_at
+    out["sides"] = [{"home": a, "away": b} for a, b in side_ok]
+    return out
+
+
+def _nsl_record(nsl: dict, i: int) -> dict:
+    """The stored `inputs.news_since_line` of game i (market rows, switch ON only)."""
+    return {"line_at": nsl["line_at"][i], "injuries_at_line": nsl["injuries_at_line"][i],
+            "sides": nsl["sides"][i],
+            **{k: _py(nsl[k][i]) for k in ("delta_margin", "delta_total", "shift_margin",
+                                            "shift_total")},
+            "beta_margin": nsl["beta_margin"], "beta_total": nsl["beta_total"]}
+
+
 def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
               bundle: "production.Bundle", created_at: str, elo_pre: pd.DataFrame) -> list[dict]:
     """Score the day's games with the fitted pair: live lines and injury lineups applied to the
@@ -648,20 +712,29 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
     state = None
     if cover:
         state = production.ensure_state(conn, bundle, train)
+        if absence_scale.ON:                   # G4, COURTSIDE_ABSENCE_SCALE (default OFF)
+            state = absence_scale.wrap(state, F, test)
         lh, la = production.lineup_strengths(state, test, {t: c["avail"]
                                                            for t, c in cover.items()})
     G = production.apply_overrides(F, mm, mt, lh, la)
     post = (test["season_type"].to_numpy() != "Regular Season").astype(float)
     scorers = bundle.scorers
-    for sc in scorers.values():
-        sc.set_features(G, post)
+    G_of = {n: G for n in scorers}             # the features each scorer prices
+    nsl = None
+    if line_news.ON:                           # G1, COURTSIDE_NEWS_SINCE_LINE (default OFF)
+        nsl = _news_since_line(conn, day, test, F, mm, mt, lines, cover, inj_of, state,
+                               lh, la, scorers[PRODUCTION_OPINION])
+        G_m = line_news.apply_shift(G, nsl)
+        G_of = {n: (G_m if sc.market else G) for n, sc in scorers.items()}
+    for n, sc in scorers.items():
+        sc.set_features(G_of[n], post)
     effects = (production.injury_effects(scorers[PRODUCTION_OPINION], G, state, test, cover)
                if cover else [])
     played = _played_keys(conn, day) if day < config.today_nba_day() else set()
     contrib = {n: sc.contributions(test) for n, sc in scorers.items()}
     pred = {n: (sc.predict_proba(test), sc.predict_margin(test), sc.predict_total(test))
             for n, sc in scorers.items()}
-    absent = {n: production.absence_effects(sc, G) for n, sc in scorers.items()}
+    absent = {n: production.absence_effects(sc, G_of[n]) for n, sc in scorers.items()}
 
     fit_info = {"fitted_at": bundle.fitted_at, "cache": bundle.cache,
                 "fit_seconds": round(bundle.fit_seconds, 1), "timings": bundle.timings}
@@ -721,14 +794,24 @@ def price_day(conn, day: date, train: pd.DataFrame, test: pd.DataFrame,
                 expl, r["home"], r["away"], absentees,
                 {r["home"]: float(absent[name][0][i]), r["away"]: float(absent[name][1][i])})
             ver = versions.get(name, {})
+            vid = ver.get("version_id")
             p, mg, tot = pred[name]
-            inputs = {"model": name, "model_version": ver.get("version_id"),
+            if nsl is not None and sc.market:
+                vid = line_news.tagged(vid)
+            if absence_scale.ON:
+                vid = absence_scale.tagged(vid)
+            inputs = {"model": name, "model_version": vid,
                       **base_inputs, "factors": factors,
                       "explain": [{k: _py(v) for k, v in e.items()} for e in expl[:8]],
-                      "features": feature_vector(G, i, r, mk, team_inj, (p[i], mg[i], tot[i]))}
+                      "features": feature_vector(G_of[name], i, r, mk, team_inj,
+                                                 (p[i], mg[i], tot[i]))}
+            if nsl is not None and sc.market:
+                inputs["news_since_line"] = _nsl_record(nsl, i)
+            if absence_scale.ON:
+                inputs["absence_scale"] = absence_scale.S
             rows[name] = {
                 "game_id": gid, "nba_day": day.isoformat(), "model": name,
-                "model_version": ver.get("version_id"), "role": ver.get("role", "champion"),
+                "model_version": vid, "role": ver.get("role", "champion"),
                 "created_at": created_at, "home": r["home"], "away": r["away"],
                 "season": r["season"], "season_type": r["season_type"],
                 "tipoff_utc": tip, "status": status,

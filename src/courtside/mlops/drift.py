@@ -15,6 +15,14 @@ the usual sum((cur% - ref%) * ln(cur% / ref%)) with a 1e-4 floor on the proporti
 
 A feature is skipped (no row written) when either side has fewer than MIN_N values.
 
+Seasonal features: the rating-based inputs in SEASONAL_FEATURES (`elo_diff`, `strength_diff`,
+`lineup_strength_diff`) start each season compressed (ratings regress to the mean over the
+summer, rotations are still settling) and spread out as the season goes, so their PSI against a
+full-season reference is mostly noise in October-November. They are skipped (no row, hence no
+alert) until SEASONAL_SUPPRESS_WEEKS weeks after SEASON_START_MONTH_DAY of the season. This is
+simpler than same-week-of-season baselines, which would need several prior seasons of
+predictions. Every other feature is unaffected.
+
 Features (what is stored in `inputs_json` today):
   elo_diff              inputs.elo.home - away
   strength_diff         sum of `explain` rows factor=player_strength (home-margin points)
@@ -49,6 +57,9 @@ WINDOW_DAYS = 30
 MIN_N = 100
 BINS = 10
 PSI_EPS = 1e-4
+SEASONAL_FEATURES = ("elo_diff", "strength_diff", "lineup_strength_diff")
+SEASONAL_SUPPRESS_WEEKS = 6
+SEASON_START_MONTH_DAY = (10, 20)       # the NBA opens around Oct 20-25
 FEATURES = ("elo_diff", "strength_diff", "absences", "rest_diff", "b2b_total", "market_spread",
             "market_total", "pred_home_prob", "pred_total", "lineup_strength_diff")
 
@@ -104,6 +115,16 @@ def extract(row: sqlite3.Row | dict) -> dict[str, float | None]:
     if hl is not None and al is not None:
         f["lineup_strength_diff"] = hl - al
     return f
+
+
+def seasonal_suppressed(as_of) -> bool:
+    """True while `as_of` is within SEASONAL_SUPPRESS_WEEKS of the season start (Oct 20), i.e.
+    seasonal features are not yet comparable to a full-season reference. Only Oct 20 -> early
+    Dec of the season containing as_of - 1 day qualifies; the rest of the year is False."""
+    as_of = _as_date(as_of)
+    season_year = int(season_of(as_of - timedelta(days=1))[:4])
+    start = date(season_year, *SEASON_START_MONTH_DAY)
+    return start <= as_of < start + timedelta(weeks=SEASONAL_SUPPRESS_WEEKS)
 
 
 def psi(ref, cur, bins: int = BINS) -> float | None:
@@ -167,7 +188,10 @@ def compute_drift(conn: sqlite3.Connection, as_of, *, model: str | None = None,
         if len(ref) < min_n:
             _, ref = _load(conn, model, f"{season[:4]}-07-01", win_start)
             ref_label = f"{season} before window"
+    suppress = seasonal_suppressed(as_of)
     for feat in FEATURES:
+        if suppress and feat in SEASONAL_FEATURES:
+            continue
         c, r = _column(cur, feat), _column(ref, feat)
         if len(c) < min_n or len(r) < min_n:
             continue

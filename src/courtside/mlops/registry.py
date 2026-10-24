@@ -98,6 +98,59 @@ def spec_hash(model_name: str, params: dict, feature_list, code_sha: str | None)
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
+# ------------------------------------------------------------------ data fingerprint
+
+# (table, date column or None). The version hash covers model, params, features and code, not the
+# data; this is the data side. A backfill (rows added in the past) changes a count with the max
+# date unchanged; a normal daily collect moves both. Recorded on the `register` event
+# (`details.data_fingerprint`), never part of `spec_hash` or the version id.
+FINGERPRINT_TABLES = (
+    ("games", "nba_day"), ("odds_snapshots", "captured_at"), ("closing_lines", None),
+    ("injury_snapshots", "captured_at"), ("team_games", "game_date"),
+    ("player_games", "game_date"), ("player_games_adv", None),
+    ("dfs_hist_salaries", "game_date"), ("dfs_salaries", "captured_at"),
+    ("dfs_slates", "nba_day"), ("dfs_contests", "captured_at"))
+
+
+def data_fingerprint(conn) -> dict:
+    """{"hash": sha256 hex, "tables": {table: [row_count, max_date]}} over FINGERPRINT_TABLES.
+    A missing table is [0, None]. Read-only; cheap (COUNT + MAX on indexed columns)."""
+    tables: dict[str, list] = {}
+    for t, col in FINGERPRINT_TABLES:
+        try:
+            n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            mx = conn.execute(f"SELECT MAX({col}) FROM {t}").fetchone()[0] if col else None
+        except sqlite3.Error:
+            n, mx = 0, None
+        tables[t] = [int(n), mx]
+    blob = json.dumps(tables, sort_keys=True, separators=(",", ":"), default=str)
+    return {"hash": hashlib.sha256(blob.encode()).hexdigest(), "tables": tables}
+
+
+def fingerprint_diff(old: dict | None, new: dict | None) -> list[str]:
+    """Human-readable table changes between two fingerprints ([] = identical data). Flags rows
+    added or removed with the max date unchanged as a backfill."""
+    if not old or not new:
+        return []
+    out = []
+    for t, (n1, d1) in (new.get("tables") or {}).items():
+        n0, d0 = (old.get("tables") or {}).get(t, [0, None])
+        if (n0, d0) == (n1, d1):
+            continue
+        tag = " (backfill-like: max date unchanged)" if d0 == d1 and n0 != n1 else ""
+        out.append(f"{t}: rows {n0}->{n1}, max {d0}->{d1}{tag}")
+    return out
+
+
+def version_fingerprint(conn, version_id: str) -> dict | None:
+    """The data fingerprint recorded when `version_id` was registered (None for versions
+    registered before fingerprints existed)."""
+    for e in events(conn, version_id=version_id):
+        if e["action"] == "register" and e["details"] and e["details"].get("data_fingerprint"):
+            return e["details"]["data_fingerprint"]
+    return None
+
+
 # ------------------------------------------------------------------ production specs
 
 def production_names() -> tuple[str, ...]:
@@ -245,13 +298,16 @@ def production_versions(conn) -> dict:
 
 def register(conn, model_name: str, params: dict, feature_list=None, *, code: str | None = None,
              status: str = "candidate", benchmark: dict | None = None, notes: str | None = None,
-             mlflow_run_id: str | None = None, reason: str | None = None) -> str:
+             mlflow_run_id: str | None = None, reason: str | None = None,
+             data_fp: dict | None = None) -> str:
     """Register a spec and return its version id. An identical spec (same spec_hash for the
     model) is not registered twice: its existing id is returned unchanged. `status`:
-    candidate (default), shadow, retired, or champion (which promotes it atomically)."""
+    candidate (default), shadow, retired, or champion (which promotes it atomically).
+    `data_fp`: data fingerprint to record on the register event (default: computed now)."""
     if status not in STATUSES:
         raise RegistryError(f"unknown status {status!r}")
     code = code if code is not None else code_sha()
+    data_fp = data_fp if data_fp is not None else data_fingerprint(conn)
     sh = spec_hash(model_name, params, feature_list, code)
     with _tx(conn):
         hit = conn.execute("SELECT version_id FROM model_versions WHERE model_name=? AND "
@@ -270,7 +326,8 @@ def register(conn, model_name: str, params: dict, feature_list=None, *, code: st
              json.dumps(benchmark, default=str) if benchmark is not None else None,
              mlflow_run_id, notes))
         _event(conn, vid, "register", reason or notes,
-               {"spec_hash": sh, "code_sha": code, "features": len(feature_list or [])}, ts)
+               {"spec_hash": sh, "code_sha": code, "features": len(feature_list or []),
+                "data_fingerprint": data_fp}, ts)
         if status == "champion":
             _promote(conn, vid, reason or "registered as champion", None)
         elif status != "candidate":

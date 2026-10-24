@@ -512,7 +512,9 @@ def test_late_news_unexpected_starter_and_non_starter():
     prev = {"1": S("1"), "2": S("2"), "3": S("3"), "4": S("4"), "5": S("5")}
     cur = {"1": S("1", starter=1), "2": S("2", starter=1), "3": S("3", starter=0),
            "4": S("4", starter=0), "5": S("5", starter=1)}
-    share = {"1": 0.0, "2": 0.9, "3": 1.0, "4": 0.1, "5": 0.5}
+    for k in ("6", "7"):                                            # BOS's lineup is posted (5)
+        prev[k], cur[k] = S(k), S(k, starter=1)
+    share = {"1": 0.0, "2": 0.9, "3": 1.0, "4": 0.1, "5": 0.5, "6": 0.9, "7": 0.9}
     news = {n["player_id"]: n for n in runner.diff_news(prev, cur, now=NOW, p_start=share)}
     assert news["1"]["reasons"] == ["unexpected_starter"]          # bench player named a starter
     assert news["3"]["reasons"] == ["unexpected_non_starter"]      # regular starter not starting
@@ -522,6 +524,18 @@ def test_late_news_unexpected_starter_and_non_starter():
     assert runner.diff_news(prev2, {"1": S("1", starter=1)}, now=NOW, p_start={"1": 0.0}) == []
     # no start history, no expectation
     assert runner.diff_news(prev, cur, now=NOW, p_start={}) == []
+
+
+def test_late_news_no_non_starter_flag_before_lineup_is_posted():
+    # 2026-10-23: DK had no CHA starters at lock-10 (all 0); every regular starter was flagged
+    prev = {k: S(k) for k in ("1", "2", "3")}
+    cur = {k: S(k, starter=0) for k in ("1", "2", "3")}
+    share = {"1": 0.9, "2": 1.0, "3": 0.8}
+    assert runner.diff_news(prev, cur, now=NOW, p_start=share) == []
+    # four flagged is still not a posted lineup; a surprise starter is news either way
+    cur = {"1": S("1", starter=0), "2": S("2", starter=1), "3": S("3", starter=1)}
+    news = runner.diff_news(prev, cur, now=NOW, p_start={"1": 0.9, "2": 0.0, "3": 0.9})
+    assert [(n["player_id"], n["reasons"]) for n in news] == [("2", ["unexpected_starter"])]
 
 
 def test_late_news_minutes_move():

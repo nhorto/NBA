@@ -6,7 +6,8 @@ the rung-2 engine (players.REGULAR_MIN on the rung-2 EWMA): regulars who did not
 everyone else on the recent roster is available (DNP-CDs are the model's problem). Two modes:
 lock-45 (no starters) and lock-10 (actual starters as a proxy for confirmed ones, §7.1 L5).
 
-Projection = `expected_minutes` (g integrated over margin ~ N(closing spread, 12.4^2)).
+Projection = `expected_minutes` (g integrated over margin ~ N(closing spread, sd^2), sd = the
+per-season fitted margin sd of seasons < S, `margin_sd`; was a hard-coded 12.4, B7).
 Population for the conditional metrics: projected >= 15 and played (never filtered on actual).
 Baseline: rung-2 EWMA (`players` avail mode: 0.5/0.5 blend of alpha 0.2/0.02 EWMAs from 12,
 floor 6, >= 8 players, water-fill to 240 with cap 42) on the same rows.
@@ -77,15 +78,35 @@ def baseline(panel: pd.DataFrame) -> np.ndarray:
     return out
 
 
+_SD: dict = {"v": None}
+
+
+def margin_sd(conn: sqlite3.Connection, season: str) -> float:
+    """sd of (margin + closing spread) on the 3 regular seasons before `season`: the value the
+    sims use (`copula.fit_env`), so the minutes eval integrates the same margin law."""
+    from . import copula as C
+    return float(C.fit_env(conn, season)["sd_margin"])
+
+
+def set_margin_sd(sd: float | None) -> None:
+    """Set the sd `integrate` / `coverage` use (None -> the legacy `minutes.MARGIN_SD`).
+    `prepare_season` and `live_like` set it to `margin_sd(conn, season)`."""
+    _SD["v"] = None if sd is None else float(sd)
+
+
+def _sd() -> float:
+    return M.MARGIN_SD if _SD["v"] is None else _SD["v"]
+
+
 def integrate(r: pd.DataFrame, prm: M.MinutesParams, spread: pd.Series, col="mean0"
               ) -> np.ndarray:
-    """expected_minutes per team-game (spread indexed by key; NaN -> 0)."""
+    """expected_minutes per team-game (spread indexed by key; NaN -> 0), margin sd `_sd()`."""
     out = np.zeros(len(r))
     sub = r[["p_play", "pf36", "reserve"]].copy()
     sub["mean"] = r[col].to_numpy()
     for key, idx in r.groupby("key", sort=False).indices.items():
         s = spread.get(key, 0.0)
-        out[idx] = M.expected_minutes(sub.iloc[idx], prm, spread=s)
+        out[idx] = M.expected_minutes(sub.iloc[idx], prm, spread=s, sd=_sd())
     return out
 
 
@@ -270,7 +291,7 @@ def coverage(r: pd.DataFrame, prm, spread, n_games: int = 400, sims: int = 400,
         proj = d[["p_play", "pf36", "reserve"]].assign(mean=d["mean0"].to_numpy())
         s = spread.get(key, 0.0)
         s = 0.0 if not np.isfinite(s) else s
-        margins = rng.normal(s, M.MARGIN_SD, sims)
+        margins = rng.normal(s, _sd(), sims)
         x = M.sample_minutes(proj, prm, margins, rng)
         pl = d["played"].to_numpy() & (d["proj"].to_numpy() >= 15)
         for i in np.flatnonzero(pl):
@@ -325,6 +346,7 @@ def prepare_season(conn, h: M.History, season: str, window: int = 5,
         panel["share_map"] = M.share_maps(shares, panel)
     sp = spreads(conn)
     sp["key"] = sp["game_id"] + "|" + sp["team"]
+    set_margin_sd(margin_sd(conn, season))
     return {"season": season, "train_seasons": tr_seasons, "ptr": ptr, "ev_tr": ev_tr,
             "panel": panel, "shares": shares, "spread": sp.set_index("key")["spread"],
             "base_rung2": baseline(panel)}
@@ -502,6 +524,7 @@ def live_like(conn, h: M.History, prms: dict, lo: str = LIVE_LO, hi: str = LIVE_
     sp = spreads(conn)
     sp["key"] = sp["game_id"] + "|" + sp["team"]
     spread = sp.set_index("key")["spread"]
+    set_margin_sd(margin_sd(conn, season))
     rows, panels, scen = [], [], {}
     for dd in days:
         day = (pd.Timestamp(int(dd), unit="D")).date()

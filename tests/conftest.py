@@ -16,6 +16,12 @@ os.environ.setdefault("COURTSIDE_RESERVE_EXTRAS", "0")
 os.environ.setdefault("COURTSIDE_PORTFOLIO_SPLIT", "off")
 # The role blend (`+rb`, role_blend.ROLE_BLEND_DEFAULT) shipped 2026-10-23 as well.
 os.environ.setdefault("COURTSIDE_ROLE_BLEND", "0")
+# Shipped 2026-10-24, pinned off for the same reason: the tail remap (`+tr`, tests/test_tail_remap.py),
+# the early-season prior (`+ep`, tests/test_early_prior.py) and X factor v2 (`xf-v2`,
+# tests/test_xfactor_v2.py).
+os.environ.setdefault("COURTSIDE_TAIL_REMAP", "0")
+os.environ.setdefault("COURTSIDE_EARLY_PRIOR", "0")
+os.environ.setdefault("COURTSIDE_XF_V2", "0")
 
 
 @pytest.fixture(autouse=True)

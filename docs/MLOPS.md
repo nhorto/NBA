@@ -14,6 +14,7 @@ Everything runs locally and free. SQLite is the source of truth for production l
 ### Implementation (`mlops/registry.py`, `production.py`, `predict.py`)
 
 - **Ids** are human-readable: `gbm_opinion@v2-1a2b3c4d` (per-model sequence number, then the first 8 hex digits of the spec hash). Registering an identical spec again returns the existing id.
+- **Data fingerprint.** The version hash does not cover data, so every `register` event also records `details.data_fingerprint`: `{hash, tables: {name: [row_count, max_date]}}` over games, odds_snapshots, closing_lines, injury_snapshots, team_games, player_games, player_games_adv, dfs_hist_salaries, dfs_salaries, dfs_slates and dfs_contests (`registry.data_fingerprint`). It is never part of `spec_hash` or the version id. `registry.fingerprint_diff` compares two fingerprints; a row-count change with the max date unchanged reads as a backfill. `retrain` logs the changes since the champion was registered.
 - **`spec_hash`** is the sha256 of canonical JSON of `{model_name, params, features, code_sha}`.
   - `params` is `{"market", "fixed": {"margin": [GBMConfig, n_trees], "total": [...]}, "search_grid": [...]}`. `fixed` is the `gbm.FROZEN` format, which the daily fit uses.
   - `features` is the LightGBM feature list.
@@ -67,25 +68,27 @@ Initial rules (to be tuned once the season has data):
 | Kind | Fires when |
 |---|---|
 | performance | Last-300 log-loss is worse than the market by more than 2 SE, or worse than the backtest expectation band |
-| calibration | Spiegelhalter z-test on the last 300 games (n ≥ 200): \|z\| > 2.5 warns, > 3.5 is critical. The season window is tested too, and the alert fires if either is significant, reporting both. |
+| calibration | **Model minus market** on the same games (n ≥ 200, last 300 or season): \|z\| > 2 in the same direction on 3 consecutive daily snapshots (within 7 days); critical if \|z\| > 3.5 on all 3. Falls back to the model-only Spiegelhalter test (\|z\| > 2.5 warn, > 3.5 critical, no persistence) when fewer than 200 games have a market line. |
 | bias | Last-300 home, margin or total bias is beyond 2 SE ("over-predicting totals by 2.1 pts") |
 | data | Any check fails; repeated warnings escalate |
-| drift | Any key feature has PSI > 0.25 (warn) or > 0.5 (critical) |
+| drift | Any key feature has PSI > 0.25 (warn) or > 0.5 (critical). Seasonal features (`elo_diff`, `strength_diff`, `lineup_strength_diff`) are skipped for 6 weeks from Oct 20, because early-season ratings are compressed. |
 
-**Calibration test.** `z = Σ(y−p)(1−2p) / √(Σ(1−2p)² p(1−p))` is approximately N(0,1) when the probabilities are calibrated, so the threshold has a known false-alarm rate (about 1% at 2.5). z > 0 means overconfident: favorites win less often than predicted. `details_json` also stores the logistic recalibration of y on logit(p): slope < 1 is overconfident and slope > 1 is underconfident (a calibrated model has intercept 0, slope 1). The alert message states the direction and the slope. ECE (10 bins) is still stored and shown, but it is not an alert: at n=300 even the market scores about 0.065, so any fixed ECE threshold fires on noise.
+**Calibration vs the market.** The market also goes overconfident in Dec/Jan, so a model-only test false-alarms with it. Per game, `t = (y−p)(1−2p)` is the Spiegelhalter score term (its sum is the numerator of the z below; t > 0 is overconfident). The alert uses `d = t_model − t_market` on the same games and `z = mean(d) / date-clustered SE` (`monitor.calibration_vs_market`, stored as `details.cal_vs_mkt` with the slope difference). z > 0 means more overconfident than the market. Three consecutive daily snapshots are required instead of a CUSUM. The rolling windows overlap, so persistence only suppresses one-day blips; the market subtraction is what removes league-wide noise. A CUSUM would need a reference value tuned to ~0.1 sd per game and could not be recomputed from stored snapshots.
+
+**Model-only calibration test (fallback).** `z = Σ(y−p)(1−2p) / √(Σ(1−2p)² p(1−p))` is approximately N(0,1) when the probabilities are calibrated, so the threshold has a known false-alarm rate (about 1% at 2.5). z > 0 means overconfident: favorites win less often than predicted. `details_json` also stores the logistic recalibration of y on logit(p): slope < 1 is overconfident and slope > 1 is underconfident (a calibrated model has intercept 0, slope 1). The alert message states the direction and the slope. ECE (10 bins) is still stored and shown, but it is not an alert: at n=300 even the market scores about 0.065, so any fixed ECE threshold fires on noise.
 
 Early in the season, windows hold few games. Rules require a minimum *n* and use standard errors, so a bad first week doesn't page anyone.
 
 ## 4. Retraining and promotion
 
 - **Daily:** the champion refits on new data. This already happens via the production cache.
-- **Weekly:** a challenger job (`courtside mlops retrain`) runs these steps:
+- **Monthly, or on an alert:** the weekly job calls `courtside mlops retrain --if-due`. The retrain step runs only on the first weekly run of a month (day 1-7) or while a calibration or drift alert is open (`retrain.retrain_due`). Re-running the same grid on the same procedure gives diff = 0 and cannot pass its own gate, so a weekly retrain is wasted compute. `shadows` and `card` still run every week. The challenger job (`courtside mlops retrain`) runs these steps:
   1. Re-tunes hyperparameters on the latest data and/or builds any new spec, then registers the result as a `candidate` with an MLflow run.
-  2. **Offline gate:** the candidate must beat the champion on the frozen walk-forward benchmark (2012-13 → last season) by a significant paired log-loss margin. It must also not be worse on the most recent season or on calibration.
+  2. **Offline gate:** the candidate must beat the champion on the frozen walk-forward benchmark (2012-13 → last season, regular season only) by a significant paired log-loss margin (date-clustered SE). It must also not be worse on the most recent season or on calibration.
   3. **Shadow:** passing candidates predict live, logged but not shown, for at least 100 games.
-  4. **Online gate:** the shadow's paired log-loss vs the champion on the same live games must be ≤ 0 with no new alerts.
+  4. **Online gate:** the shadow must be "not clearly worse" than the champion on the same live games (paired log-loss diff ≤ 2 date-clustered SE) with no open critical alert.
   5. **Promote:** the old champion is retired, the event is logged, and `courtside mlops rollback` restores it in one command.
-- **Triggered:** a performance or drift alert queues an early challenger run.
+- **Triggered:** an open calibration or drift alert makes the next weekly run retrain (see above).
 
 ### Implementation (`mlops/retrain.py`)
 
@@ -101,12 +104,12 @@ Early in the season, windows hold few games. Rules require a minimum *n* and use
   - The FROZEN format (`{"margin": [{"num_leaves": 31}, 60]}`; cfg keys override the champion's) is benchmarked with those values fixed in every fold, against the champion with its own fixed values in every fold.
   - `{"search_grid": [...]}` is benchmarked as a search procedure.
 - **Scope.** Only the margin head is benchmarked, because the win probability (and so log-loss) is the calibrated margin. The total head is carried over from the champion unless it is given explicitly.
-- **Limitation.** Re-running the *same* grid on newer data gives new `fixed` values but an identical benchmark procedure (diff = 0), so it cannot pass the gate. A once-a-season FROZEN refresh is a manual `register` + `promote` (or a `--params` challenger).
+- **Limitation.** Re-running the *same* grid on newer data gives new `fixed` values but an identical benchmark procedure (diff = 0), so it cannot pass the gate. That is why the weekly job only retrains monthly or on an alert. A once-a-season FROZEN refresh is a manual `register` + `promote` (or a `--params` challenger).
 
-**Offline gate.** All test games count, regular season and playoffs, matched on identical game ids. For each game, `d = LL(challenger) − LL(champion)`, and SE = sd(d)/√n. The challenger must meet all three rules:
+**Offline gate.** Regular-season test games only (no playoffs), matched on identical game ids. For each game, `d = LL(challenger) − LL(champion)`, and SE is the date-clustered SE of mean(d) (`proj.metrics.paired_cluster`; per-game SE if the frame has no `game_date`). The challenger must meet all three rules:
 1. **Overall:** mean(d) < −2·SE.
-2. **Most recent test season:** mean(d) ≤ 2·SE of that season. It may not be worse beyond noise.
-3. **Calibration:** ECE(challenger) − ECE(champion) ≤ 0.005, using 10 equal-width bins over all test games.
+2. **Most recent test season:** mean(d) ≤ 2·SE of that season (also clustered). It may not be worse beyond noise.
+3. **Calibration:** ECE(challenger) − ECE(champion) ≤ 0.005, using 10 equal-width bins over the same games.
 
 A pass is registered as `candidate`, then moves to `shadow` (event `shadow`). A fail is registered as `candidate`, then moves to `retired` (event `reject`, with the reasons). If the spec is identical to the champion's, nothing is registered. Each run logs params, gate and summaries to MLflow, with per-game predictions as an artifact.
 
@@ -115,13 +118,15 @@ A pass is registered as `candidate`, then moves to `shadow` (event `shadow`). A 
 - 14-fold benchmark of champion and challenger: 335 s
 - final search fit: 15 s
 
-That is cheap enough to run weekly for both models. The first result was a rejection: +0.00026 ± 0.00019, 18,109 games.
+That is cheap enough to run monthly for both models. The first result was a rejection: +0.00026 ± 0.00019, 18,109 games.
 
 **Online gate** (`courtside mlops shadows [--dry-run]`). For each shadow, take the resolved live games where both the shadow (`latest_pretip_predictions_all`) and its model's reader-visible champion row have a pre-tip prediction, and compute `d = LL(shadow) − LL(champion)` per game:
+The offline gate already demanded a proven improvement, so this gate only guards against a live regression ("not clearly worse"). SE is the SE of mean(d) clustered by `nba_day`. At n = 100 the SE is about 0.003, against true effects of about 0.0005, so a plain "mean(d) ≤ 0" was a coin flip.
 - n < 100: wait.
-- n ≥ 100, mean(d) ≤ 0 and no open `critical` alert: **promote**. The old champion is retired; `rollback` undoes it.
-- n ≥ 300 and mean(d) > 0: **reject** (event `reject`).
-- Otherwise (better but a critical alert is open, or worse with n < 300): wait.
+- n ≥ 100 and mean(d) > 2·SE: **reject** (event `reject`).
+- n ≥ 100, otherwise, and no open `critical` alert: **promote**. The old champion is retired; `rollback` undoes it.
+- n ≥ 100, not clearly worse, but a critical alert is open: wait.
+- If there is no usable SE (for example, one night of games), the old rule applies: mean(d) ≤ 0 promotes, and n ≥ 300 with mean(d) > 0 rejects.
 
 **Registry operations** (`mlops/registry.py`).
 - `promote` and `rollback` run in one write transaction (`BEGIN IMMEDIATE`, or a SAVEPOINT inside a caller's transaction). They retire the old champion, set the new one, log both events, and re-check the one-champion invariant before committing.
@@ -133,7 +138,7 @@ That is cheap enough to run weekly for both models. The first result was a rejec
 - Browse runs with `mlflow ui --backend-store-uri sqlite:///<data_dir>/mlflow.db`.
 
 **Commands:**
-- `courtside mlops bootstrap | versions [--model] [--events N] | promote <version> --reason | rollback <model> --reason | retrain [--model gbm_market|gbm_opinion|all] [--params JSON|@file] [--search] | shadows [--dry-run] | card`
+- `courtside mlops bootstrap | versions [--model] [--events N] | promote <version> --reason | rollback <model> --reason | retrain [--model gbm_market|gbm_opinion|all] [--params JSON|@file] [--search] [--if-due] | shadows [--dry-run] | card`
 - `courtside mlops card` regenerates `docs/MODEL_CARD.md`.
 
 ## 5. Surfaces
@@ -141,3 +146,28 @@ That is cheap enough to run weekly for both models. The first result was a rejec
 - **Website `/health`:** status tiles, rolling log-loss/Brier vs the market over the season, a calibration plot, bias trends, the model version timeline, open alerts, and data-check results.
 - **MLflow UI:** experiment history and comparisons, served locally on the Mac.
 - **`docs/MODEL_CARD.md`:** generated from the registry. It covers the champion's intended use, training data, metrics, known limitations and caveats.
+
+## 6. Player-side shadows (IMPROVEMENTS E1)
+
+The 2026-27 live season is the confirmatory set for player-side switches. Candidate switches run as live shadows next to the champion; a switch is flipped only after its pre-registered primary metric passes. Code: `proj/shadows.py`; registry: `mlops/shadow_registry.json`; tests: `tests/test_player_shadows.py`.
+
+- **Where they run:** `deploy/run-job.sh` runs `courtside proj shadows run` after every pregame job (10:00, 13:30, 17:00, 18:30, 20:00, 22:00 ET), in its own process at `nice -n 10`. They never run in the DFS tick. A failure is logged and never fails the pregame job.
+- **What runs:** the day's Classic slate with the most games still to tip. The champion runs once, then each active arm: the champion with one switch on, set through its `pipeline.set_*` setter. All of them use the same seed (`stable_seed(slate, "pregame", SEED_VERSION)`) and the same sim count (10,000; `COURTSIDE_SHADOW_SIMS`), so the pairs share random numbers. The arm order rotates by run. After each arm the switches, the bundle suffix and MODEL_VERSION are restored and checked.
+- **Never served:** the database connection is read-only. Output goes to `<data>/proj/shadows/<day>/<HHMM>_<arm>.npz` plus a `<HHMM>.json` manifest, and never to `player_projections` or `dfs_runs`. Those tables feed the site, the props and the DFS monitor's champion registry. Each npz keeps the games not yet tipped: p_play, E[min], E[min | plays], E[DK] and 100 mid-point quantiles of the DK distribution (DNP = 0), about 120 KB for 11 games.
+- **Guards:**
+  - **Lock windows:** the run skips itself when any lock-45, lock-10 or swap window (the tick's own `runner.due_runs`) falls within [now − 10 min, now + budget + 2 min].
+  - **Time budget:** 90 s for the whole run (`COURTSIDE_SHADOW_BUDGET_S`). An arm that would not fit is skipped, and a running arm is stopped by SIGALRM at the deadline.
+  - **Bundles:** an arm whose bundle file is missing is skipped. A shadow never fits a bundle.
+  - **Off switch:** `COURTSIDE_SHADOWS=0`, or `shadows.SHADOWS_DEFAULT = False`.
+  - **Arm list:** `COURTSIDE_SHADOW_ARMS=+tr,+ep` overrides the registry's active list.
+- **Grading:** the postgame step `shadow_grade` runs after `dfs_grade` and never fails the job.
+  - **Pairs:** each arm is paired with the champion of the same run, on identical (game, player) rows. Actuals come from `player_games` (DNP = 0). Complete nights are cached as `<day>/graded.csv.gz`.
+  - **Primary metric:** the arm's registered metric at its registered run, accumulated over the season. Metrics: DK CRPS (from the quantiles), DK MAE, minutes MAE on played rows, or P(play) log loss. The run is a slot ("13:30") or "last" (the latest run before each game).
+  - **SE:** mean(arm − champion) with the two-way night × player clustered SE (`metrics.paired_cluster2`). The tier breakdown uses the champion's tiers.
+  - **Report:** `<data>/reports/shadows/shadow_grades.json`, plus a dated copy. It is shown on `/health/dfs` under **Shadows**. `courtside proj shadows grade --date D` re-grades.
+- **Decision rule (`shadows.decide`):** nothing is decided before `min_nights` (default 14) or `min_rows`.
+  - **`lower` arms:** pass when z ≤ the bar (−2), no tier z is above +2 and every guard metric holds. Fail when z ≥ +2, or when `max_nights` (60) pass without a pass. Otherwise pending.
+  - **`not_worse` arms:** pass when z ≤ +2 with the same tier rule; otherwise fail.
+  - **Caveat:** the rule is checked every night from `min_nights` on. Those repeated looks make a −2 SE pass somewhat easier than a single test would. Treat a pass as the condition for asking the owner to flip the switch, not as the flip itself.
+- **Registered arms (2026-10-23):** `+tr`, `+ep` (first 30 days only, needs `bundle_2026-27_v1_cx_mf_ep.json` in prod `var/proj/`), `+gd` (P(play) log loss at 10:00, not worse), `+lf` (latest run), `+tm` (not worse), `+rs` (minutes MAE on changed rows, ≥ 100 rows), `+pq` (latest run). Hypotheses and bars come from each arm's ledger or IMPROVEMENTS entry. Change a bar only before an arm's first graded night; after that, register a new arm.
+- **Cost (11-game slate, geekom1):** about 48–57 s per run. Context and the champion take 12–14 s; most arms take 4–7 s, and `+ep` 8–11 s with its bundle load. A 2-game slate takes about 25 s.

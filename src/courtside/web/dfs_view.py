@@ -458,9 +458,10 @@ def _attach_xfactor(conn: sqlite3.Connection, rows: list[dict], proj: dict,
     for r in rows:
         x = table.get(r["id"]) if r.get("src") == "model" else None
         if x is None or r["status"] in ("OUT", "O"):
-            r.update(big_p=None, big_text="", xf=False)
+            r.update(big_p=None, big_text="", xf=False, xf_title="")
             continue
-        r.update(big_p=x["chance"], big_text=x["text"], xf=bool(x["x"]))
+        r.update(big_p=x["chance"], big_text=x["text"], xf=bool(x["x"]),
+                 xf_title=x.get("title") or "")       # xf-v2 (COURTSIDE_XF_V2): per-player text
         n += r["xf"]
     return n
 
@@ -771,7 +772,11 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
         else "", "less_url": url(all="") if show_all and total > POOL_DEFAULT_ROWS else "",
         "heads": heads, "sort": sort, "dir": direction, "pos": pos, "q": q, "hide_out": hide_out,
         "has_range": has_model_range, "has_pplay": has_pplay, "has_starter": has_starter,
-        "has_big": has_big, "xf_count": xf_n, "xf_label": dfs_xfactor.LABEL,
+        "has_big": has_big, "xf_count": xf_n,
+        "xf_v2": dfs_xfactor.xf_v2(),
+        "xf_label": dfs_xfactor.LABEL_V2 if dfs_xfactor.xf_v2() else dfs_xfactor.LABEL,
+        "xf_lev_min": f"{dfs_xfactor.LEV_MIN:g}",
+        "xf_share_min": f"{dfs_xfactor.SHARE_MIN * 100:g} %",
         "ln_count": ln_n, "ln_window": int(dfs_late.LATE_NEWS_WINDOW.total_seconds() // 60),
         "big_k": f"{dfs_xfactor.BIG_K:g}", "big_eg": f"{dfs_xfactor.big_mark(4500):g}", "xf_min": dfs_xfactor.chance_text(dfs_xfactor.P_MIN),
         "source": "model" if proj["by_nba_id"] else "fppg",

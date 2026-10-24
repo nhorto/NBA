@@ -79,6 +79,7 @@ P_PLAY_MIN = 0.85
 NEWS_WINDOW = timedelta(minutes=90)
 MINUTES_MOVE = 3.0
 START_UNEXPECTED_HI = 0.65     # expected starter DK says is not starting
+LINEUP_POSTED = 5                # a team's lineup counts as posted at this many DK starter flags
 START_UNEXPECTED_LO = 0.35     # expected non-starter DK names a starter
 SOLVE_LIMIT_S = 20.0           # per CP-SAT solve
 TOPN_LIMIT_S = 90.0            # whole Top N
@@ -365,6 +366,13 @@ def diff_news(prev: dict[str, PState], cur: dict[str, PState], *, now: datetime,
     A player missing from `prev` has no previous status / starter flag / minutes to compare."""
     from ... import injuries
     p_start = p_start or {}
+    # DK marks every player 0 before a team's lineup is posted, so "not starting" only means
+    # something once the team has its five starters flagged (2026-10-23: CHA/DET/MIA were not
+    # posted at lock-10 and their regular starters were all flagged as unexpected non-starters)
+    posted: dict = {}
+    for c in cur.values():
+        if c.starter == 1:
+            posted[c.team] = posted.get(c.team, 0) + 1
     out = []
     for dk, c in cur.items():
         gs = _parse_ts(c.game_start)
@@ -389,7 +397,8 @@ def diff_news(prev: dict[str, PState], cur: dict[str, PState], *, now: datetime,
             if share is not None:
                 if c.starter == 1 and share <= START_UNEXPECTED_LO:
                     kind = "unexpected_starter"
-                elif c.starter == 0 and share >= START_UNEXPECTED_HI:
+                elif (c.starter == 0 and share >= START_UNEXPECTED_HI
+                      and posted.get(c.team, 0) >= LINEUP_POSTED):
                     kind = "unexpected_non_starter"
             if kind:
                 reasons.append(kind)
@@ -419,7 +428,8 @@ def late_news(conn: sqlite3.Connection, slate_id, now: datetime, prev_run: dict 
       matched by name) changed -> ``status``;
     * DK now flags him a starter (``unexpected_starter``) although he started <= 35% of his last
       10 games, or confirms him a non-starter (``unexpected_non_starter``) although he started
-      >= 65% -- only when that DK flag is new since the baseline;
+      >= 65% -- only when that DK flag is new since the baseline (and, for a non-starter, only
+      once his team's five starters are posted);
     * his projected minutes (`minutes` for run `run_id`, else read from ``player_projection_stats``;
       against the previous run's) moved by >= 3 -> ``minutes``.
 
@@ -948,6 +958,8 @@ def _execute(conn, slate, tips, kind, now, run_id, detail, n, min_diff, refresh,
             detail["field"] = FLD.score_run_safe(conn, run_id, slate_id=sid, commit=False)
         from . import late_news_tag as LNT   # D4 tag + D5 hook: metadata only, never fails
         detail[LNT.DETAIL_KEY] = LNT.compute_safe(conn, sid, run_id, now, model_version)
+        from . import xfactor as XF   # D3 xf-v2 table for the page (switch ON only; never fails)
+        XF.store_safe(detail, conn, sid, run_id, iso(now), detail[LNT.DETAIL_KEY])
     _save_run(conn, run_id, sid, kind, now, model_version, t0, detail, news)
     return {"status": "ok", "model_version": model_version, "lineups": counts,
             "late_news": len(news), "excluded": len(excluded)}

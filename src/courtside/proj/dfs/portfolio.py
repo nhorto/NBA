@@ -317,10 +317,18 @@ def candidates(pool_players: Sequence[PoolPlayer], rules: Rules, mu: Mapping[str
                fp: np.ndarray, fp_col: Mapping[str, int], own: Mapping[str, float],
                s: Settings, *, now: datetime | None = None, bans: Iterable[str] = (),
                rng: np.random.Generator, tags: list | None = None,
-               draw: Callable[[], int] | None = None) -> tuple[list, dict]:
+               draw: Callable[[], int] | None = None, lev: Mapping[str, float] | None = None,
+               lev_rng: np.random.Generator | None = None) -> tuple[list, dict]:
     """Unique candidate lineups (`optimizer.Lineup`) and per-source counts (§5.5.1). `tags`
     (a list) receives each returned lineup's source, in order; `draw()` gives the sim row of
-    each scenario objective (default: uniform over `fp`'s rows from `rng`)."""
+    each scenario objective (default: uniform over `fp`'s rows from `rng`). `lev` (xf-v2 ON
+    only, {DK id: shrunk top-1 % leverage}, `xfactor.builder_leverage`): also
+    round(xfactor.LEV_N_SOLVES x scale) leverage-tilted SCENARIO solves
+    w mu_i + (1 - w) FP_{i,s} + lambda clip(log lev_i), s a uniform row of `fp`, lambda ~
+    U(LEV_TILT_MIN, LEV_TILT_MAX) sd(mu), both from `lev_rng`, appended after every other job (so
+    the other candidates and their order are unchanged). A tilt of mu alone moves every solve
+    along one direction and collapses to a few lineups (like the ownpen solves, which add ~0
+    unique candidates on real slates); the scenario row makes each solve different."""
     from . import topn as T
     t0 = time.perf_counter()
     bans = set(bans)
@@ -352,6 +360,15 @@ def candidates(pool_players: Sequence[PoolPlayer], rules: Rules, mu: Mapping[str
                 x = np.where(cols >= 0, fp[r, np.maximum(cols, 0)].astype(float), base)
                 jobs.append(("min_locked", dict(zip(ids, s.scen_w * base + (1 - s.scen_w) * x)),
                              (p,)))
+    if lev:
+        from . import xfactor as XF
+        lr = lev_rng if lev_rng is not None else np.random.default_rng(s.seed + XF.LEV_SEED)
+        for _ in range(int(round(XF.LEV_N_SOLVES * s.scale))):
+            r = int(lr.integers(0, S))
+            x = np.where(cols >= 0, fp[r, np.maximum(cols, 0)].astype(float), base)
+            lam = float(lr.uniform(XF.LEV_TILT_MIN, XF.LEV_TILT_MAX) * sd_mu)
+            jobs.append(("levtilt", XF.tilt_scores(ids, s.scen_w * base + (1 - s.scen_w) * x,
+                                                   lev, lam), ()))
     players = [p for p in pool_players if p.dk_player_id in mu and p.dk_player_id not in bans]
     solve = _solver(players, rules, locks=s.locks, bans=bans, now=now, limit=s.solve_limit_s)
 
@@ -780,12 +797,28 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
         log.info("portfolio: %d projected players have no sims column",
                  sum(p in missing for p in mu))
 
+    # ---- xf-v2 (COURTSIDE_XF_V2 ON only): top-1 % leverage on the generation rows
+    from . import xfactor as XF
+    lev, xf2 = None, None
+    if XF.xf_v2():
+        say("leverage")
+        t = time.perf_counter()
+        try:
+            lev, xf2 = XF.builder_leverage(fld, players, inputs, contest, rules, fp_gen,
+                                           own_unc=own_unc, seed=s.seed, threads=s.threads)
+        except Exception as e:  # noqa: BLE001 - the extra solves must not fail a build
+            log.exception("portfolio: xf-v2 leverage failed")
+            lev, xf2 = None, {"version": XF.VERSION_V2, "error": f"{type(e).__name__}: {e}"}
+        timing["leverage"] = time.perf_counter() - t
+
     # ---- candidates
     say("candidates")
     t = time.perf_counter()
     sources: list[str] = []
     cands, cinfo = candidates(players, rules, mu, fp_gen, fcol, op.as_dict(), s, now=now,
-                              bans=bans, rng=rng, tags=sources, draw=draw)
+                              bans=bans, rng=rng, tags=sources, draw=draw,
+                              **({"lev": lev, "lev_rng": np.random.default_rng(
+                                  s.seed + XF.LEV_SEED)} if lev else {}))
     timing["candidates"] = time.perf_counter() - t
     if not cands:
         raise PortfolioError("no legal lineup under the locks and excludes")
@@ -961,6 +994,10 @@ def build_portfolio(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame
             "missing_sim_players": len(missing), "truth": tinfo,
             "timing": {k: round(v, 2) for k, v in timing.items()},
             "seconds": round(time.perf_counter() - t0, 2)}
+    if xf2 is not None:
+        info["version"] += "+xf2"
+        xf2["selected_levtilt"] = sum(1 for j in chosen if sources[j] == "levtilt")
+        info["xfactor_v2"] = xf2
     if split:
         info["split"] = {k: int(len(v)) for k, v in rows.items()}
         if mode == "gs":

@@ -879,6 +879,14 @@ def _dfs_grade_step(conn: sqlite3.Connection, day: date) -> dict:
             "seconds": res.get("seconds")}
 
 
+def _shadow_grade_step(conn: sqlite3.Connection, day: date) -> dict:
+    """Player-side shadows vs the champion (proj/shadows.py, IMPROVEMENTS E1): the season's
+    paired metrics and pass / fail / pending per pre-registered arm. Reads only; never raises
+    (a failure is the step's status, not the job's)."""
+    from .proj import shadows
+    return shadows.postgame_step(conn, day)
+
+
 def _brief_step(conn: sqlite3.Connection, brief_day: date) -> dict:
     from .brief import assemble
     b = assemble.build_brief(conn, brief_day)
@@ -928,6 +936,7 @@ def run_postgame(day: date) -> dict:
         run.step("game_facts", _facts_step, conn, run, day)
         run.step("refresh_gamelogs", _refresh_gamelogs_step, conn, day)
         run.step("dfs_grade", _dfs_grade_step, conn, day)
+        run.step("shadow_grade", _shadow_grade_step, conn, day)
         run.step("prop_grade", _prop_grade_step, conn, day)
         run.step("rate_state", _rate_state_step, conn, day + timedelta(days=1))
         run.step("player_why", _player_why_step, conn, day)

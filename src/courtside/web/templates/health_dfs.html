@@ -148,6 +148,53 @@
   {% else %}
   {{ m.empty("No slates in the last 7 days", "Slates appear once the daily capture has found them.") }}
   {% endif %}
+  {% if h.latency and h.latency.rows %}
+  <div class="card" id="news-latency">
+    <div class="card-head-row"><h3 class="card-title">News to re-run</h3><span class="muted card-note">injury news this season{% if h.latency.pending %} &middot; {{ h.latency.pending }} for games not played yet{% endif %}</span></div>
+    <div class="table-scroll">
+    <table class="table dh-table">
+      <caption class="sr">Minutes from injury news to our next projection re-run of the game, and to tip</caption>
+      <thead><tr><th scope="col">News</th><th scope="col" class="num">Events</th><th scope="col" class="num">To re-run, median</th><th scope="col" class="num">75%</th><th scope="col" class="num">90%</th><th scope="col" class="num">Re-run within 1 h</th><th scope="col" class="num">To tip, median</th><th scope="col" class="num">No re-run before tip</th></tr></thead>
+      <tbody>
+      {% for r in h.latency.rows %}
+      <tr><th scope="row">{{ r.label }}</th><td class="num">{{ r.n }}</td><td class="num">{{ r.p50 }}</td><td class="num">{{ r.p75 }}</td><td class="num">{{ r.p90 }}</td><td class="num">{{ r.w60 }}</td><td class="num">{{ r.lock }}</td><td class="num">{{ r.missed }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if h.latency.recent %}
+    <div class="table-scroll">
+    <table class="table dh-table">
+      <caption class="sr">News in the last hour before tip</caption>
+      <thead><tr><th scope="col">Late news (last hour before tip)</th><th scope="col">Change</th><th scope="col">Source</th><th scope="col" class="num">Before tip</th><th scope="col">Our re-run</th></tr></thead>
+      <tbody>
+      {% for e in h.latency.recent %}
+      <tr><th scope="row">{{ e.player }}<span class="psub">{{ e.team }} &middot; {{ e.news }}</span></th><td>{{ e.change }}</td><td>{{ e.src }}</td><td class="num">{{ e.to_lock }}</td><td>{{ e.rerun }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+    <p class="card-sub">A news event is a player's status changing between two official reports, or between two ESPN captures (the time we saw it). The re-run is the first lock-45, lock-10, swap or manual build of a slate with that game that started after the news was out (official reports count from 5 minutes after their time, when the PDF is posted); the time is to its finish. ESPN changes mostly arrive the day before, so they wait for the next lock run.</p>
+  </div>
+  {% endif %}
+  {% if h.shadows and h.shadows.rows %}
+  <div class="card" id="shadows">
+    <div class="card-head-row"><h3 class="card-title">Shadows</h3><span class="muted card-note">candidate switches vs the live model, {{ h.shadows.nights }} graded night{{ '' if h.shadows.nights == 1 else 's' }}{% if h.shadows.last %} &middot; {{ h.shadows.last }}{% endif %}</span></div>
+    <div class="table-scroll">
+    <table class="table dh-table">
+      <caption class="sr">Each pre-registered switch run as a shadow next to the live model, its primary metric, and pass, fail or pending</caption>
+      <thead><tr><th scope="col">Switch</th><th scope="col">Primary metric</th><th scope="col" class="num">Nights</th><th scope="col" class="num">Shadow minus live</th><th scope="col" class="num">SE</th><th scope="col" class="num">z</th><th scope="col" class="num">Worst tier z</th><th scope="col" class="num">Bar</th><th scope="col">Status</th></tr></thead>
+      <tbody>
+      {% for r in h.shadows.rows %}
+      <tr><th scope="row">{{ r.arm }}<span class="psub">{{ r.switch }}{% if r.paused %} &middot; paused{% endif %}</span></th><td>{{ r.metric }}<span class="psub">{{ r.where }}</span></td><td class="num">{{ r.nights }}</td><td class="num">{{ r.diff }}</td><td class="num">{{ r.se }}</td><td class="num">{{ r.z }}</td><td class="num">{{ r.worst }}</td><td class="num">{{ r.bar }}</td><td><span class="pill pill-{{ r.cls }}" title="{{ r.reason }}">{{ r.status }}</span></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="card-sub">At each pregame run every candidate switch projects the main slate next to the live model, with the same simulation seeds, and is never shown or used for lineups. After the games, each switch is scored against the live model on the same players (negative is better). The metric, the run and the bar were fixed before the first night (<code>mlops/shadow_registry.json</code>). The SE counts each night and each player as a cluster, and is shown from the fifth night on. A switch passes once it clears its bar after the minimum number of nights with no tier worse than +2 SE.</p>
+  </div>
+  {% endif %}
 </section>
 
 {# ================================================================ ALERTS #}

@@ -31,6 +31,7 @@ import numpy as np
 
 from .. import config, predict, teams
 from ..model import metrics
+from ..proj.metrics import paired_cluster
 from ..trends.common import season_of
 
 log = logging.getLogger("courtside.mlops.monitor")
@@ -224,6 +225,31 @@ def spiegelhalter_z(y, p) -> float | None:
     return float(np.sum((y - p) * (1 - 2 * p)) / np.sqrt(var))
 
 
+def calibration_vs_market(y, p, mkt, days, min_n: int = 20) -> dict | None:
+    """Calibration of the model MINUS the market on the same games. Per game the Spiegelhalter
+    score term is t = (y - p)(1 - 2p) (its sum is the numerator of `spiegelhalter_z`; t > 0 =
+    overconfident). d = t_model - t_market; z = mean(d) / date-clustered SE. z > 0: the model is
+    more overconfident than the market on these games. When the whole league runs hot or cold
+    (Dec/Jan favorites underperforming) both terms move together and d cancels, which a model-only
+    z-test cannot do. Also reports the logistic-recalibration slope of each side and their
+    difference. None below `min_n` games or with a degenerate SE."""
+    y, p, mkt = np.asarray(y, float), np.asarray(p, float), np.asarray(mkt, float)
+    if len(y) < min_n:
+        return None
+    d = (y - p) * (1 - 2 * p) - (y - mkt) * (1 - 2 * mkt)
+    if np.ptp(d) < 1e-9:                 # model quotes the market: no difference to test
+        return None
+    pc = paired_cluster(d, np.asarray(days))
+    if not np.isfinite(pc["se"]) or pc["se"] <= 0:
+        return None
+    fm, fk = calibration_fit(y, p), calibration_fit(y, mkt)
+    return {"n": int(len(y)), "z": float(pc["mean"] / pc["se"]), "mean": float(pc["mean"]),
+            "se": float(pc["se"]),
+            "slope_model": fm["slope"] if fm else None,
+            "slope_market": fk["slope"] if fk else None,
+            "slope_diff": fm["slope"] - fk["slope"] if fm and fk else None}
+
+
 def calibration_fit(y, p, min_n: int = 20) -> dict | None:
     """Logistic recalibration y ~ intercept + slope * logit(p), by Newton-Raphson.
     slope < 1: overconfident (probabilities too extreme); slope > 1: underconfident; a perfectly
@@ -298,6 +324,11 @@ def window_metrics(s: Series, lo: int, hi: int) -> dict | None:
         cal_intercept=_round(fit["intercept"], 4) if fit else None,
         cal_slope=_round(fit["slope"], 4) if fit else None,
         cal_slope_se=_round(fit["slope_se"], 4) if fit else None)
+    if have.any() and s.label != MARKET:
+        cvm = calibration_vs_market(y[have], p[have], mk[have], s.days[lo:hi][have])
+        if cvm:
+            out["details"]["cal_vs_mkt"] = {k: _round(v, 4) if isinstance(v, float) else v
+                                            for k, v in cvm.items()}
     versions = sorted({v for v in s.versions[lo:hi] if v})
     if versions:
         out["details"]["versions"] = versions

@@ -301,6 +301,10 @@ seasons 2014-15 → 2025-26, 14,439 games. Changes are new minus current (negati
   nothing measurable (§6.1).
 - **The replays use closing lines as the market input.** Production prices with the newest
   pre-tip snapshot, so live calibration can differ; the MLOps monitor measures that directly.
+  IMPROVEMENTS G1 measured the gap (`line-timing.md`): fed the ESPN open instead of the close,
+  `gbm_market` loses 0.008 LL on 879 2025-26 games. A "news since the line" shift
+  (`COURTSIDE_NEWS_SINCE_LINE`, default OFF) recovers little of that, and live lines are a
+  median of 1 min old at capture.
 - **Slopes over ~200-game windows are noisy** (SE 0.15–0.20); monthly 2025-26 rows are
   descriptive only.
 - **Clustering by date** treats games on different days as independent. Season-level shocks

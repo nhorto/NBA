@@ -14,12 +14,23 @@ perf_band     key band:<model>    last300 log_loss > benchmark + 2 * sqrt(ll_se^
                                    docs/MODEL.md last-3-season walk-forward constants. The 0.015
                                    is the season-to-season spread of log-loss, so the tolerance
                                    widens for a short window and is never tighter than a season.
-calibration   key calib:<model>   Spiegelhalter z-test, |z| > 2.5 with n >= 200 on last300 OR on
-                                   season (critical if either |z| > 3.5); the message reports
-                                   both z values plus the logistic calibration slope. z > 0 =
-                                   overconfident. ECE is displayed but is NOT an alert: at
-                                   n=300 the market itself scores ~0.065, so any ECE threshold
-                                   is noise; the z-test has a known null distribution.
+calibration   key calib:<model>   model MINUS market: z of the paired Spiegelhalter score
+                                   difference vs the closing line on the same games
+                                   (`monitor.calibration_vs_market`, date-clustered SE). Fires when
+                                   |z| > 2 (SE_K) with n >= 200 on last300 OR season, in the same
+                                   direction on 3 consecutive daily snapshots (CALIB_PERSIST);
+                                   critical if |z| > 3.5 on all 3. Why vs the market: it also goes
+                                   overconfident in Dec/Jan, and a model-only test false-alarms
+                                   with it. Why persistence rather than CUSUM: the rolling windows
+                                   overlap almost entirely, so 3 consecutive days add no
+                                   independent evidence; they only suppress one-day blips (a late
+                                   result fix, a line backfill). The protection against league-wide
+                                   noise is the market subtraction; a CUSUM would need a reference
+                                   value tuned to effects of ~0.1 sd per game and could not be
+                                   recomputed from the stored snapshots. Fallback: when no window
+                                   has >= 200 market-priced games, the old model-only Spiegelhalter
+                                   test (|z| > 2.5 / 3.5, no persistence) is used. ECE is displayed
+                                   but is NOT an alert: at n=300 the market itself scores ~0.065.
 bias          key bias:<model>:home|margin|total
                                    last300 |bias| > 2 SE, n >= 100 (home: predicted win rate vs
                                    actual; margin / total: predicted - actual, in points)
@@ -48,7 +59,10 @@ log = logging.getLogger("courtside.mlops.alerts")
 
 MIN_N = 100
 CALIB_MIN_N = 200
-CALIB_Z_WARN, CALIB_Z_CRIT = 2.5, 3.5
+CALIB_Z_WARN, CALIB_Z_CRIT = 2.5, 3.5      # model-only fallback thresholds
+CALIB_VS_MKT_Z_CRIT = 3.5
+CALIB_PERSIST = 3             # consecutive daily snapshots the vs-market breach must hold
+CALIB_PERSIST_SPAN_DAYS = 7   # ...and they must fall within this many days of each other
 SE_K = 2.0
 PSI_WARN, PSI_CRIT = 0.25, 0.5
 DATA_WARN_RUNS, DATA_CRIT_RUNS = 2, 3
@@ -125,6 +139,105 @@ def _a(key, severity, kind, message, details=None) -> dict:
             "details": details or {}}
 
 
+def _cvm(row) -> dict | None:
+    c = (row["details"] if row else {}).get("cal_vs_mkt")
+    return c if c and (c.get("n") or 0) >= CALIB_MIN_N and c.get("z") is not None else None
+
+
+def _has_market_cal(*rows) -> bool:
+    return any(_cvm(r) for r in rows)
+
+
+def _cvm_history(conn: sqlite3.Connection, model: str, window: str, newest: str) -> list[dict]:
+    """The last CALIB_PERSIST `cal_vs_mkt` blocks (newest first, as_of attached) of a model's
+    window at or before the `newest` snapshot day."""
+    out = []
+    for r in conn.execute("SELECT as_of, details_json FROM metric_snapshots WHERE model=? AND "
+                          "window=? AND as_of<=? ORDER BY as_of DESC LIMIT ?",
+                          (model, window, newest, CALIB_PERSIST)):
+        try:
+            c = (json.loads(r["details_json"] or "{}")).get("cal_vs_mkt")
+        except ValueError:
+            c = None
+        out.append({**(c or {}), "as_of": r["as_of"]})
+    return out
+
+
+def persistent_breach(hist: list[dict]) -> bool:
+    """True when all CALIB_PERSIST latest snapshots have n >= CALIB_MIN_N and |z| > SE_K with
+    the same sign, within CALIB_PERSIST_SPAN_DAYS days of each other."""
+    if len(hist) < CALIB_PERSIST or any((h.get("n") or 0) < CALIB_MIN_N or h.get("z") is None
+                                        for h in hist):
+        return False
+    zs = [h["z"] for h in hist]
+    if not (all(z > SE_K for z in zs) or all(z < -SE_K for z in zs)):
+        return False
+    return (date.fromisoformat(hist[0]["as_of"])
+            - date.fromisoformat(hist[-1]["as_of"])).days <= CALIB_PERSIST_SPAN_DAYS
+
+
+def _calibration_vs_market_alert(conn, model, r300, rseason, as_of) -> dict | None:
+    newest = monitor.latest_snapshot_day(conn, as_of)
+    sig = []
+    for w, row, label in (("last300", r300, "last 300 games"), ("season", rseason, "the season")):
+        if not _cvm(row):
+            continue
+        hist = _cvm_history(conn, model, w, newest)
+        if persistent_breach(hist):
+            sig.append((label, hist, row))
+    if not sig:
+        return None
+    label, hist, row = sig[0]
+    c = row["details"]["cal_vs_mkt"]
+    over = c["z"] > 0
+    what = ("more overconfident than the betting market on the same games: its favorites win "
+            "less often than predicted, relative to the market" if over else
+            "more underconfident than the betting market on the same games: its favorites win "
+            "more often than predicted, relative to the market")
+    parts = []
+    for lab, rw in (("the last 300 games", r300), ("the season", rseason)):
+        cc = (rw["details"] if rw else {}).get("cal_vs_mkt")
+        if cc:
+            parts.append(f"z={cc['z']:+.1f} over {lab} (n={cc['n']})")
+    sd = c.get("slope_diff")
+    sl = f"calibration slope {sd:+.2f} versus the market over {label}; " if sd is not None else ""
+    sev = ("critical" if any(all(abs(h["z"]) > CALIB_VS_MKT_Z_CRIT for h in hh)
+                             for _, hh, _ in sig) else "warn")
+    return _a(f"calib:{model}", sev, "calibration",
+              f"{model} is {what} ({sl}{'; '.join(parts)}; alert when |z| > {SE_K:g} on "
+              f"{CALIB_PERSIST} consecutive daily checks)",
+              {"model": model, "vs_market": True, "z_last300": (_cvm(r300) or {}).get("z"),
+               "z_season": (_cvm(rseason) or {}).get("z"), "slope_diff": sd,
+               "history": [{"as_of": h["as_of"], "z": h["z"]} for h in hist], "n": c["n"]})
+
+
+def _calibration_model_only_alert(model, r, sr, n) -> dict | None:
+    det = r["details"]
+    z300 = det.get("spiegelhalter_z") if n >= CALIB_MIN_N else None
+    zs = (sr["details"].get("spiegelhalter_z") if sr and (sr["n"] or 0) >= CALIB_MIN_N
+          else None)
+    sig = [(w, z, row) for w, z, row in (("last 300 games", z300, r), ("the season", zs, sr))
+           if z is not None and abs(z) > CALIB_Z_WARN]
+    if not sig:
+        return None
+    w, z, row = sig[0]
+    slope = row["details"].get("cal_slope")
+    over = (slope < 1) if slope is not None else (z > 0)
+    what = ("overconfident: its favorites win less often than predicted" if over else
+            "underconfident: its favorites win more often than predicted")
+    parts = []
+    if z300 is not None:
+        parts.append(f"z={z300:+.1f} over the last 300 games (n={n})")
+    if zs is not None:
+        parts.append(f"z={zs:+.1f} over the season (n={sr['n']})")
+    sl = f"calibration slope {slope:.2f} over {w}; " if slope is not None else ""
+    sev = "critical" if any(abs(x[1]) > CALIB_Z_CRIT for x in sig) else "warn"
+    return _a(f"calib:{model}", sev, "calibration",
+              f"{model} is {what} ({sl}{'; '.join(parts)}; alert when |z| > {CALIB_Z_WARN})",
+              {"model": model, "z_last300": z300, "z_season": zs, "slope": slope,
+               "intercept": row["details"].get("cal_intercept"), "n": n, "ece": r["ece"]})
+
+
 def _metric_alerts(conn: sqlite3.Connection, as_of: date) -> list[dict]:
     out: list[dict] = []
     snaps = monitor.snapshots(conn, as_of)
@@ -159,32 +272,13 @@ def _metric_alerts(conn: sqlite3.Connection, as_of: date) -> list[dict]:
                               f"allowed {tol:.4f} (benchmark: {src})",
                               {"model": model, "log_loss": r["log_loss"], "benchmark": bench,
                                "tolerance": tol, "n": n}))
-        # calibration: Spiegelhalter z on last300 and on the season
-        z300 = det.get("spiegelhalter_z") if n >= CALIB_MIN_N else None
+        # calibration: model minus market (persistent), else the model-only z-test
         sr = season.get(model)
-        zs = (sr["details"].get("spiegelhalter_z") if sr and (sr["n"] or 0) >= CALIB_MIN_N
-              else None)
-        sig = [(w, z, row) for w, z, row in (("last 300 games", z300, r), ("the season", zs, sr))
-               if z is not None and abs(z) > CALIB_Z_WARN]
-        if sig:
-            w, z, row = sig[0]
-            slope = row["details"].get("cal_slope")
-            over = (slope < 1) if slope is not None else (z > 0)
-            what = ("overconfident: its favorites win less often than predicted" if over else
-                    "underconfident: its favorites win more often than predicted")
-            parts = []
-            if z300 is not None:
-                parts.append(f"z={z300:+.1f} over the last 300 games (n={n})")
-            if zs is not None:
-                parts.append(f"z={zs:+.1f} over the season (n={sr['n']})")
-            sl = f"calibration slope {slope:.2f} over {w}; " if slope is not None else ""
-            sev = "critical" if any(abs(x[1]) > CALIB_Z_CRIT for x in sig) else "warn"
-            out.append(_a(f"calib:{model}", sev, "calibration",
-                          f"{model} is {what} ({sl}{'; '.join(parts)}; alert when |z| > "
-                          f"{CALIB_Z_WARN})",
-                          {"model": model, "z_last300": z300, "z_season": zs, "slope": slope,
-                           "intercept": row["details"].get("cal_intercept"), "n": n,
-                           "ece": r["ece"]}))
+        cal = _calibration_vs_market_alert(conn, model, r, sr, as_of)
+        if cal is None and not _has_market_cal(r, sr):
+            cal = _calibration_model_only_alert(model, r, sr, n)
+        if cal is not None:
+            out.append(cal)
         # biases
         if n >= MIN_N:
             hb = (r["home_pred"] - r["home_actual"]) if r["home_pred"] is not None else None

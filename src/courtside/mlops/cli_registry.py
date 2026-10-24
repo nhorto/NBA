@@ -4,7 +4,7 @@
     versions [--model M]           list registered versions
     promote VERSION --reason R     make VERSION its model's champion (old one retired)
     rollback MODEL --reason R      restore MODEL's most recently retired champion
-    retrain [--model M|all] [--params JSON] [--search small|medium]
+    retrain [--model M|all] [--params JSON] [--search small|medium] [--if-due]
                                    challenger + offline gate; pass -> shadow, fail -> rejected
     shadows [--dry-run]            online gate for shadow versions (promote / reject / wait)
     card [--out PATH]              regenerate docs/MODEL_CARD.md from the registry
@@ -86,6 +86,11 @@ def _retrain(args) -> int:
     from . import retrain
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     conn = _conn()
+    if args.if_due:
+        due, why = retrain.retrain_due(conn)
+        print(f"retrain {'due' if due else 'skipped'}: {why}")
+        if not due:
+            return 0
     names = PRODUCTION if args.model == "all" else (args.model,)
     params = _params_arg(args.params)
     for n in names:
@@ -149,6 +154,9 @@ def add_commands(sub) -> dict:
     p.add_argument("--seasons-to", default=None, help="default: last completed season")
     p.add_argument("--threads", type=int, default=4)
     p.add_argument("--no-register", action="store_true", help="evaluate only")
+    p.add_argument("--if-due", action="store_true",
+                   help="weekly job: run only in the first week of a month or when a "
+                        "calibration/drift alert is open")
     p.add_argument("--json-out", default=None, help="write the full result as JSON")
 
     p = sub.add_parser("shadows", help="online gate: promote / reject / keep shadow versions")

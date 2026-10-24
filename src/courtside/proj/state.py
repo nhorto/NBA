@@ -423,8 +423,12 @@ def _rates(fr: _Frame, params: dict, stats: Iterable[str] = STATS):
     return out
 
 
-def _wide(fr: _Frame, params: dict, n_out: int) -> pd.DataFrame:
-    rates = _rates(fr, params)
+def _wide(fr: _Frame, params: dict, n_out: int, ep=None) -> pd.DataFrame:
+    if ep is None:
+        rates = _rates(fr, params)
+    else:                        # early-season priors (+ep, `early_prior.rates`); ON only
+        from . import early_prior as EP
+        rates = EP.rates(fr, params, ep)
     ri = fr.rep_idx
     cols: dict[str, np.ndarray] = {}
     for s in STATS:
@@ -449,11 +453,12 @@ def _day_to_date(day) -> pd.Series:
 
 
 def rate_frame(conn: sqlite3.Connection, queries: pd.DataFrame, params: dict | None = None,
-               games: pd.DataFrame | None = None, pos=None) -> pd.DataFrame:
+               games: pd.DataFrame | None = None, pos=None, ep=None) -> pd.DataFrame:
     """State before each query (player_id, game_date): wide frame in query order with columns
     player_id, game_date, r_/n_/p_<stat> (+ dk), mpg, g_eff, tier, grp. Players without any
     game get the prior (n = 0). `games` may be a preloaded `load_games` frame (rows on/after a
-    query day are ignored by construction)."""
+    query day are ignored by construction). `ep` (an `early_prior.EPInput`, the `+ep` arm) adds
+    the early-season priors to r_<stat>; None = the base state."""
     params = params or DEFAULT_PARAMS
     queries = queries[["player_id", "game_date"]].reset_index(drop=True)
     qd = _to_day(queries["game_date"])
@@ -465,16 +470,16 @@ def rate_frame(conn: sqlite3.Connection, queries: pd.DataFrame, params: dict | N
     games = games[games["day"] <= qd.max()]
     pos = pos if pos is not None else load_positions(conn)
     fr = _prepare(games, pos, params, queries)
-    w = _wide(fr, params, len(queries))
+    w = _wide(fr, params, len(queries), ep=ep)
     w.insert(1, "game_date", queries["game_date"].to_numpy())
     return w.drop(columns="day")
 
 
 def walk_forward(conn: sqlite3.Connection, season: str, params: dict | None = None,
-                 games: pd.DataFrame | None = None, pos=None) -> pd.DataFrame:
+                 games: pd.DataFrame | None = None, pos=None, ep=None) -> pd.DataFrame:
     """Pre-game state for every player-game (min > 0, all season types) of `season`, using only
     earlier games. Columns: game_id, player_id, team, game_date, season_type, min, the actual
-    stats, then r_/n_/p_<stat> (+ dk), mpg, g_eff, tier, grp."""
+    stats, then r_/n_/p_<stat> (+ dk), mpg, g_eff, tier, grp. `ep`: as in `rate_frame`."""
     params = params or DEFAULT_PARAMS
     if games is None:
         first = season_label(sidx_of(season) - params["history_seasons"])
@@ -483,7 +488,7 @@ def walk_forward(conn: sqlite3.Connection, season: str, params: dict | None = No
     games = games[games["season"] <= season].reset_index(drop=True)
     fr = _prepare(games, pos, params, None)
     # frame rows are all real & reported; keep the requested season
-    w = _wide(fr, params, len(games))
+    w = _wide(fr, params, len(games), ep=ep)
     base = games[["game_id", "player_id", "team", "game_date", "season", "season_type", "min",
                   *STATS]].reset_index(drop=True)
     out = pd.concat([base, w.drop(columns=["player_id", "day"])], axis=1)

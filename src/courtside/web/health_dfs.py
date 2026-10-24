@@ -272,6 +272,103 @@ def _slate_rows(conn, today: date) -> list[dict]:
     return out
 
 
+def _mins(v) -> str:
+    """Minutes as '9 min' / '1.4 h' / '25 h' (dash for None / NaN)."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return fmt.EM
+    if v < 90:
+        return f"{v:.0f} min"
+    return f"{v / 60:.1f} h" if v < 600 else f"{v / 60:.0f} h"
+
+
+def _latency(conn) -> dict:
+    """News latency (P7 part B, display only): injury news -> our next re-run of the game, and
+    -> lock (tip), this season (`proj/news_latency.py`)."""
+    from ..proj import news_latency as NL
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        ev = NL.events(conn, NL.SEASON_START, as_of=now)
+    except Exception:  # noqa: BLE001 - a display row must never break the page
+        return {}
+    if not len(ev):
+        return {}
+    s = NL.summary(ev)
+    rows = []
+    for key, label in (("nba_official", "Official report"), ("espn", "ESPN status"),
+                       ("all", "All news")):
+        v = s.get(key) or {}
+        if not v.get("n"):
+            continue
+        q, lk = v["rerun_q"], v["lock_q"]
+        rows.append({"label": label, "n": v["n"], "missed": v["missed"],
+                     "p50": _mins(q[1]), "p75": _mins(q[2]), "p90": _mins(q[3]),
+                     "lock": _mins(lk[1]), "w60": fmt.pct(v["within_60"], 0)})
+    done = ev[~ev["pending"].astype(bool)]
+    late = done[done["to_lock_min"] <= 60].sort_values("news_at", ascending=False).head(6)
+    recent = [{"player": r.player_name, "team": r.team,
+               "change": f"{r.old if isinstance(r.old, str) and r.old else 'unlisted'} to {r.new}",
+               "src": NL.SOURCE_LABEL.get(r.source, r.source),
+               "news": fmt.tipoff(r.news_at) or r.news_at, "to_lock": _mins(r.to_lock_min),
+               "rerun": (f"{r.rerun_kind} after {_mins(r.to_rerun_min)}" if not r.missed
+                         else "none before tip")}
+              for r in late.itertuples(index=False)]
+    return {"rows": rows, "recent": recent, "pending": s.get("pending", 0)}
+
+
+_METRIC_LABEL = {"dk_crps": "DK CRPS", "dk_mae": "DK error", "min_mae": "Minutes error",
+                 "pplay_ll": "P(play) log loss"}
+_POP_LABEL = {"emin10": "E[min] 10+", "changed": "changed rows", "all": "all rows"}
+_SHADOW_SE_NIGHTS = 5          # fewer nights: a two-way SE is not worth showing
+_DECISION_PILL = {"pass": ("Pass", "healthy"), "fail": ("Fail", "out"),
+                  "pending": ("Pending", "unknown")}
+
+
+def _shadows(conn) -> dict:
+    """Player-side live shadows (IMPROVEMENTS E1, `proj/shadows.py`): each pre-registered arm vs
+    the champion on the same runs, from the nightly report. Display only."""
+    from ..proj import shadows as SH
+    try:
+        rep = SH.load_report(conn)
+    except Exception:  # noqa: BLE001 - a display row must never break the page
+        return {}
+    if not rep or not rep.get("arms"):
+        return {}
+    rows = []
+    for a in rep["arms"]:
+        p = a.get("primary") or {}
+        se_ok = (p.get("nights") or 0) >= _SHADOW_SE_NIGHTS
+        tiers = {t: v.get("z") for t, v in (a.get("tiers") or {}).items()
+                 if v.get("z") is not None and se_ok}
+        worst = max(tiers.items(), key=lambda kv: kv[1]) if tiers else None
+        label, cls = _DECISION_PILL.get(a.get("decision"), ("Pending", "unknown"))
+        run = a.get("run") or ""
+        rows.append({
+            "arm": a.get("arm"), "switch": a.get("switch") or "",
+            "metric": _METRIC_LABEL.get(a.get("metric"), a.get("metric") or ""),
+            "where": f"{_POP_LABEL.get(a.get('population'), a.get('population') or '')}, "
+                     f"{'last run before tip' if run == 'last' else run + ' run'}",
+            "nights": f"{p.get('nights') or 0} of {a.get('min_nights') or 0}",
+            "diff": fmt.signed(p.get("mean"), 4),
+            "se": fmt.num(p.get("se"), 4) if se_ok else fmt.EM,
+            "z": fmt.signed(p.get("z"), 1) if se_ok else fmt.EM,
+            "worst": f"{worst[0]} {fmt.signed(worst[1], 1)}" if worst else fmt.EM,
+            "bar": f"z \u2264 {fmt.signed((a.get('bar') or {}).get('z'), 0)}",
+            "status": label, "cls": cls, "reason": a.get("reason") or "",
+            "paused": a.get("status") != "active"})
+    runs = rep.get("runs") or []
+    last = runs[-1] if runs else None
+    last_txt = ""
+    if last:
+        ok = sum(1 for v in (last.get("arms") or {}).values() if v.get("status") == "ok")
+        when = f"last run {fmt.short_date(last.get('day'))} {last.get('slot') or ''}"
+        last_txt = (f"{when}: skipped ({last.get('reason') or 'no reason'})"
+                    if last.get("status") == "skipped" else
+                    f"{when}: {last.get('status')}, {max(ok - 1, 0)} arms in "
+                    f"{fmt.num(last.get('seconds_total'), 0)} s")
+    return {"rows": rows, "nights": len(rep.get("nights") or []), "as_of": rep.get("as_of"),
+            "last": last_txt}
+
+
 def _alerts(conn) -> list[dict]:
     rows = _q(conn, "SELECT key, severity, kind, message, created_at, updated_at FROM alerts "
                     "WHERE status='open'")
@@ -372,6 +469,8 @@ def build(conn: sqlite3.Connection | None, today: date | None = None) -> dict:
         "players": _player_tables(pl_latest),
         "charts": _trend_charts(conn) if conn else [],
         "slates": _slate_rows(conn, today) if conn else [],
+        "latency": _latency(conn) if conn else {},
+        "shadows": _shadows(conn) if conn else {},
         "alerts": _alerts(conn) if conn else [],
         "versions": _versions(conn) if conn else [],
         "real": _real_block(conn, today),

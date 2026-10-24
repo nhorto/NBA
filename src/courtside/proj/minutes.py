@@ -38,8 +38,9 @@ Pipeline for one team-game (team T, day d, scenario = absent player_ids, optiona
    The conditional mean is expected minutes / p.
 5. **Margin.** minutes(m) = mean + g_tier(|m|, won/lost) - c_tier, then re-normalised. g is the
    mean residual by tier x |margin| bin x result on seasons < S (c_tier centres it on the
-   training margin mix). `expected_minutes` integrates over m ~ N(spread, 12.4^2)
-   (Gauss-Hermite); `sample_minutes` evaluates it per simulated margin.
+   training margin mix). `expected_minutes` integrates over m ~ N(spread, sd^2), sd = 12.4 by
+   default (Gauss-Hermite; the evals pass the fitted per-season sd); `sample_minutes` evaluates
+   it per simulated margin.
 6. **Noise** (simulator): minutes x exp(mu_tier + sigma_tier xi); early exit with probability
    q0 + q1 x PF/36, scaled by U(0.35, 0.85); DNP-CD with probability 1 - p; then the team
    total per sim (proportional water-filling).
@@ -126,7 +127,7 @@ Public API (consumed by T1.4 copula/pipeline)
       one row per candidate: player_id, g1, g2, base, p_play (P plays | available; 0 if
       absent), mean (E[min | plays], regulation, before the margin), exp_min (margin-
       integrated), lift, pstart, promoted, exp_start, pf36, dkpm, reserve ...
-  expected_minutes(proj, params, spread=0.0, sd=12.4, n_ot=None) -> np.ndarray
+  expected_minutes(proj, params, spread=0.0, sd=MARGIN_SD=12.4, n_ot=None) -> np.ndarray
   sample_minutes(proj, params, margins, rng, n_ot=None, noise=True) -> (sims, players) array
 """
 
@@ -151,7 +152,7 @@ BASE_ALPHA_SHORT, BASE_ALPHA_LONG, BASE_M0 = 0.2, 0.02, 12.0   # rung-2 EWMA (pl
 TEAM_MIN = 240.0
 OT_TEAM_MIN = 25.0
 CAP = 40.0
-MARGIN_SD = 12.4
+MARGIN_SD = 12.4        # legacy default; the evals pass the fitted per-season sd (B7)
 ROTATION_MIN = 12.0
 WINDOW_GAMES = 10
 TARGET_ALPHA, TARGET_K = 0.05, 10.0
@@ -1425,6 +1426,10 @@ def base_and_pplay(p: pd.DataFrame, params: MinutesParams, absent=None
         base.res_add = debut_reserve(params, p)
     if RESERVE_EXTRAS:
         base = _attach_rx(p, params, base, base05, absent)
+    if "rs_cap" in p:       # minutes restriction (+rs, proj/min_restrict.py): the plan's cap
+        if not isinstance(base, V1Base):
+            base = base.view(V1Base)
+        base.rs_cap = p["rs_cap"].to_numpy(float)
     return base, pp
 
 
@@ -1913,6 +1918,7 @@ class V1Base(np.ndarray):
     rx_s = None         # per row: the reserve input on the fit's candidate set (RESERVE_EXTRAS)
     rx_n = None         # the count of that set
     rx_pool = None      # the team's reserve when its candidates hold the DK pool (RESERVE_EXTRAS)
+    rs_cap = None       # per row: the minutes-restriction cap, NaN = none (+rs, min_restrict)
 
 
 # --- v1: LightGBM base with scenario features (T2.2) ------------------------------------------
@@ -2303,6 +2309,12 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
                 lift[i] += new - (adj[i] + lift[i])
             pstart[i] = 1.0
     adj = adj + lift
+    rs_lim = getattr(base, "rs_cap", None)
+    if rs_lim is not None and len(rs_lim) == n:     # minutes restriction (+rs): cap the plan
+        rs_lim = np.where(np.isfinite(rs_lim), rs_lim, np.inf)
+        adj = np.minimum(adj, rs_lim)
+    else:
+        rs_lim = None
     rx = getattr(base, "rx_rows", None) if s_reserve is None else None
     rs = getattr(base, "rx_s", None) if rx is not None else None
     rpool = getattr(base, "rx_pool", None) if rx is not None else None
@@ -2329,6 +2341,8 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
         reserve = float(np.clip(reserve + reserve_add, 0.0, 150.0))
     total = TEAM_MIN + OT_TEAM_MIN * n_ot - reserve
     cap = CAP + 5.0 * n_ot
+    if rs_lim is not None:      # +rs: the restricted rows' ceiling in the reconcile too
+        cap = np.minimum(cap, rs_lim)
     if params.recon == "proportional":
         exp_min = allocate_minutes(np.where(avail, adj, 0.0), p, total=total, cap=cap)
     else:
@@ -3018,7 +3032,7 @@ def project_team(h: History, params: MinutesParams, team: str, day, absent=(),
 
     Returns one row per candidate: player_id, g1, g2, base, p_play (P plays | available; 0 if
     absent), mean (E[min | plays], before the margin integration), exp_min (margin-integrated
-    E[min | plays] with spread ~ N(spread, 12.4^2)), lift, promoted, exp_start, pf36, dkpm."""
+    E[min | plays] with spread ~ N(spread, MARGIN_SD^2)), lift, promoted, exp_start, pf36, dkpm."""
     d = int(np.datetime64(pd.Timestamp(day).date(), "D").astype(np.int64))
     if season is None:
         ts = pd.Timestamp(day)

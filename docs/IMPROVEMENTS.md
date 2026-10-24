@@ -189,7 +189,7 @@ projection joins. The upside is in four places:
 
 ### B7. Minor inconsistencies (L / S)
 - **Status 2026-10-23: props φ and fringe parts done, uncommitted** (`docs/research/b7-oos.md`).
-  The minutes-eval sd part is still open.
+  The minutes-eval sd part is now done too (below).
   - **Props φ:** now fit on the 3 seasons < S (`props.phi_for`). Live 2026-27 is unchanged
     (tested). Only `research/copula_v1_eval.py` scored past seasons.
   - **Fringe P(play):** refit leave-one-month-out (reports only start 2025-12-22).
@@ -198,9 +198,19 @@ projection joins. The upside is in four places:
       p2 stands.
     - The packaged `fringe_params.json` is unchanged.
     - Side finding: the stored p2 and v1 frames used different minutes bundles.
-- The minutes eval integrates margins at a hard-coded sd 12.4 (`minutes.py:~136`,
-  `minutes_eval.py:~273`). The sims use the per-season fit, 13.5–14 (`copula.py:~142`). Use the
-  fitted value.
+  - **Minutes-eval margin sd:** no live path used 12.4. `project_team` / `expected_minutes` have no
+    caller outside `minutes.py` and `minutes_eval.py`; the pipeline and copula take the margin from
+    `copula.fit_env`. So no switch and no `+ms`; live output is untouched (`MARGIN_SD` stays 12.4 as the
+    legacy default). The eval (`integrate`, `coverage`) now uses `minutes_eval.margin_sd(conn, S)` =
+    `fit_env(conn, S)["sd_margin"]` (3 seasons < S): 13.21 for 2023-24 and 13.23 for 2024-25 (2022-23
+    is 12.4, hence below 13.5). Set by `prepare_season` and `live_like`. Tests: `tests/test_margin_sd.py`.
+    - Re-run of `minutes_v05_eval` (same fit, 12.4 arm reproduces the stored report exactly), lock-45
+      MAE 4.633 -> 4.639 (2023-24) and 4.578 -> 4.580 (2024-25); bias 0.278 -> 0.264 and 0.399 -> 0.388;
+      lock-10 MAE 4.537 -> 4.544 and 4.484 -> 4.487; cov80 0.831 -> 0.832 and 0.841 -> 0.841. Headline
+      "28.9% / 27.3% better than rung-2" becomes 28.8% / 27.3%. Immaterial.
+    - Not re-run (heavy, report files not rewritten): `minutes_v1_eval` (v1, live-like slice) and
+      `minutes_v05_eval.{json,txt}` stay on 12.4; expect the same ~0.00-0.01 MAE shift.
+- ~~The minutes eval integrates margins at a hard-coded sd 12.4~~ (done, see status).
 - The props φ is fit on 2023-26 (`proj/props.py:93`, `fit_phi` ~`:688`), which overlaps the
   evaluation seasons. Fit on seasons < S.
 - The fringe P(play) "mid" model is fit on the T2.4 slice's own rows
@@ -373,6 +383,19 @@ projection joins. The upside is in four places:
     minutes ≫ last season's).
 - **Accept:** first-30-days DK CRPS ≥ 2 SE better on ≥ 2 seasons, no tier worse full-season.
 
+- **Status 2026-10-24: SHIPPED** (`+ep` ON, owner OK; bundle `_cx_mf_ep` in prod `var/proj/`; rollback `COURTSIDE_EARLY_PRIOR=0`).
+- **Status 2026-10-23: built behind `COURTSIDE_EARLY_PRIOR` (`+ep`, own bundle `_ep`); recommend
+  ship soon (owner OK needed)** (`docs/research/early-prior.md`).
+  - **Kept:** the preseason piece only. This season's preseason feeds the rate state with a
+    fitted weight and per-minute level (v ≈ 0.875 pts/ast).
+  - **Dropped:** age/experience (hurt 2025-26), the draft-slot rookie prior and role-change
+    shrinkage (no signal).
+  - **First-30-days CRPS z:** −3.4 / −2.8 harness, −1.9 / −2.9 RotoGuru. Full season −2.4 / −1.9
+    / −0.8 / −1.6, live −2.1.
+  - **Tiers:** none worse > 2 SE; bench leans worse.
+  - **Gain** fades by about December.
+  - **Pre-fit bundle:** Mac `~/Developer/courtside-compute/ep/data_ship/proj/bundle_2026-27_v1_cx_mf_ep.json`.
+
 ### P4. Non-uniform reconciliation (M / S)
 - **Where:** `proj/reconcile.py:44-66` scales every player by one factor c, clipped to
   [0.75, 1.33].
@@ -413,6 +436,15 @@ projection joins. The upside is in four places:
   - Measure latency: for each report or status change, minutes from the news to our next
     re-run and to lock. Add a dashboard row on `/health/dfs`.
 - **Accept:** restricted-player minutes MAE vs unflagged; latency distribution reported.
+
+- **Status 2026-10-23: built, uncommitted** (`docs/research/min-restrict.md`).
+  - **Parser** (`sources/espn_restrict.py`): 5/5 precision and recall on the hand-checked archive.
+    The archive only starts 2026-10-18.
+  - **Restriction prior:** `COURTSIDE_MIN_RESTRICT` (`+rs`, OFF). Rule: cap at the parsed
+    minutes, else 0.75 × normal, for 72 h. Only 3 flagged rows so far; keep OFF and refit at
+    100+ flags (Dec–Jan).
+  - **Latency card on `/health/dfs`** (display): official report → finished re-run, median
+    35 min. 4/46 had no re-run before tip (the 10-21 missed lock10).
 
 ### P8. Usage redistribution beyond the top-2 star bump (M / M)
 - **Where:** live redistribution is a tier bump only when one of a team's top-2 stars is out
@@ -492,6 +524,27 @@ OFF.
 - **Accept:** RotoGuru cash rate vs current rule, paired by slate.
 
 ### D3. Redefine the X factor as leverage (H for the owner's goal / M)
+- **Status 2026-10-24: SHIPPED, replaces xf-v1** (owner OK; `STRETCH_TR` live with `+tr`; rollback `COURTSIDE_XF_V2=0`).
+- **Status 2026-10-23: built behind `COURTSIDE_XF_V2` (`xf-v2`, OFF); owner to decide**
+  (`docs/research/xfactor-v2.md`).
+  - **Leverage:** top-1 % share ÷ field share over 4 noisy fields, shrunk (+0.25 % prior).
+  - **Tag:** leverage ≥ 1.5, P(play) ≥ 0.85, top-1 % share ≥ 2 %, field popularity < 10 %, not
+    in the public top-10 value, max 5. v1's bench/role filter is dropped.
+  - **RotoGuru walk-forward (281 dates, modelled fields):** tagged leverage 1.89 ± 0.11 (v2)
+    vs 1.20 ± 0.07 (v1).
+  - **Effect:** tags pricier players (10-21: Garland, Marshall, Randle, B. Miller, McCollum),
+    sometimes none on small slates.
+  - **Builder:** a leverage tilt on scenario solves gives E[payout] +2.4 to +3.1 % vs a control
+    at N=150. Confirm on 3+ slates.
+  - **Before ON:**
+    - precompute the table in the scheduled runs (a first page view costs 14–18 s);
+    - refit the `STRETCH` map if `+tr` ships.
+  - **Side finding:** the own-penalised builder solves add ~0 unique lineups.
+  - **Ship prep done (2026-10-23):**
+    - `STRETCH_TR` refit for `+tr`: held-out tagged calibration 39.8 → 40.7 ± 0.9 %, vs
+      39.5 → 43.0 with the old map.
+    - The v2 table is precomputed in `runner._execute` into `dfs_runs.detail["xfactor_v2"]`,
+      +2–11 s per lock-10 build.
 - **Current:** `xf-v1` = bench/role, P(play) ≥ 0.85, proxy band Low, calibrated
   P(DK ≥ 6×) ≥ 1/3, not in our top-10 value, max 5 (`proj/dfs/xfactor.py:120-242`). That
   mostly selects cheap value plays, which the public also finds. Value per $1k is the
@@ -558,6 +611,16 @@ OFF.
     P(top 1 %) rise (big-GPP P(top 1 %) is up to +50 %, on a noise fit from a single slate).
 
 ### D6. Fix GPP tail shape before payout scoring (H / M)
+- **Status 2026-10-24: SHIPPED** (`+tr` ON, owner OK; rollback `COURTSIDE_TAIL_REMAP=0`).
+- **Status 2026-10-23: built behind `COURTSIDE_TAIL_REMAP` (`+tr`, OFF); recommend ship (owner OK
+  needed)** (`docs/research/tail-remap.md`).
+  - **Design:** knots at .75–.99 per tier × minutes band, fit walk-forward, median fixed. Mean
+    −0.13 to −0.16 DK.
+  - **CRPS z:** −1.2 / −4.4 harness, −6.2 / −6.1 live, −3.1 / −5.1 RotoGuru. No tier worse.
+  - **Pooled held-out tails:** within ±0.3 pt (bench q95 3.27 → 4.79 %).
+  - **If shipped:**
+    - refit the X factor `STRETCH` map on `+tr` sims (it then runs ~1 pt low);
+    - consider `TRUTH_TAU` = 0 once ≥ 10 GPP uploads exist.
 - **Evidence:** `xfactor.md` §2. Upper tails are too wide: bench players at 16–24 minutes
   reach their q99 0.35 % of the time instead of 1 %, and their q95 3.1 % instead of 5 %. Yet
   `truth_sims` adds symmetric noise (`TRUTH_TAU`, `portfolio.py:99`).
@@ -634,6 +697,35 @@ NBA stacking or bring-back rules: causal teammate correlation is −0.03, oppone
   good margin/total. Score by CRPS of margin and total vs that line, not only log loss vs the
   close.
 
+- **Status 2026-10-23: built behind `COURTSIDE_NEWS_SINCE_LINE` (`+nsl`, OFF); keep OFF**
+  (`docs/research/line-timing.md`).
+  - **Live lines are fresh:** the pregame job captures odds in-run, so the line is ~1 min old
+    (5 h at the 3 AM run). The gap to the close comes from running early (0.33–0.50 pt at
+    2–13 h before tip), not from an old line.
+  - **Best ON result:** −0.0009 LL (1.6 SE) on one partial season, chosen after the fact. The
+    pre-registered version is flat.
+  - **Re-test** after ~60 days of 2026-27 snapshots.
+
+### G4. Our injury/absence values are about 2× the market's (M / S) — new 2026-10-23
+- **Evidence (G1 Phase 1):** the ESPN open→close spread move regresses on the opinion model's
+  injury-news value with slope 0.45 (SE 0.05), n = 879 (2025-26). Totals show no relationship.
+- **Change to test:**
+  - Shrink the opinion model's absence values, or learn the scale walk-forward.
+  - Check whether the player side's star-out bump (+3.1 DK per remaining top-6) is
+    similarly too large.
+- **Accept:** opinion-model LL vs close; margin CRPS; Brief "injury moves the odds" numbers.
+
+- **Status 2026-10-23: not 2×; built behind `COURTSIDE_ABSENCE_SCALE` (`+as`, OFF); do not
+  shrink** (`docs/research/absence-scale.md`).
+  - Against outcomes the absence component scales by 1.29 (SE 0.17); the close prices it at
+    0.92 (0.04). The 0.45 is timing: the open already prices ~⅓ of the later news. Placebos
+    are null.
+  - P(play) (B4 cells, Doubtful 0.15) changes nothing (best −0.00015 LL, 0.4 SE).
+  - Walk-forward s runs to the cap (1.5), flat; halving costs opinion margin CRPS +0.056
+    (2.1 SE).
+  - Player side: the star-out bump realises 1.01× (harness) / 0.84× (2025-26 live) for top-6;
+    no change.
+
 ### G2. Stop trying to beat the close (decision, no code)
 - Beating the close isn't realistic with free data. `gbm_market`'s departures from the close
   are ~30 % borne out, `gbm_opinion`'s ~11 % (`game-calibration.md` §0, §3).
@@ -657,6 +749,16 @@ NBA stacking or bring-back rules: causal teammate correlation is −0.03, oppone
 ## 5. Evaluation and MLOps
 
 ### E1. Locked confirmation set and pre-registration (H / S)
+- **Status 2026-10-24: deployed** (owner OK; `+tr`/`+ep` arms marked `shipped` since they are now in the champion).
+- **Status 2026-10-23: live shadows built, uncommitted** (`proj/shadows.py`, registry
+  `mlops/shadow_registry.json`, `docs/MLOPS.md` §6, 23 tests).
+  - **Runs:** after each pregame job (`run-job.sh`, nice 10, never in the DFS tick), the
+    champion plus `+tr +ep +gd +lf +tm +rs +pq`, one switch each, same seed, 10,000 sims.
+  - **Limits:** a 90 s budget, and a skip near any lock window. Output goes to files only;
+    nothing is served.
+  - **Grading:** the postgame step `shadow_grade` reports pass / fail / pending per
+    pre-registered bar (two-way night × player SE). The results are on /health/dfs.
+  - **`+ep`:** the shadow needs `bundle_2026-27_v1_cx_mf_ep.json` copied to prod `var/proj/`.
 - **Problem:**
   - Harness 2023-24/2024-25, RotoGuru 2019-21 and the 2025-26 live slice have each been
     reused for ~15–20 arms and redesigns.
@@ -733,6 +835,17 @@ selection over the candidate stack on the harness, then confirm once on E1.
   (row counts plus max dates per source table, or a hash).
 - **PSI drift on seasonal features** (e.g. `elo_diff` early season) is mostly noise. Suppress
   it or set season-aware baselines.
+
+- **Status 2026-10-23: done, uncommitted** (`docs/MLOPS.md` updated; 22 tests). All six items are in:
+  - the online gate is "not worse by > 2 clustered SE";
+  - the offline gate uses a clustered SE on the regular season only;
+  - retrain runs monthly or when an alert is open (`--if-due`);
+  - the calibration alert is model − market, persistent over 3 days;
+  - a data fingerprint is stored on register;
+  - PSI is suppressed for seasonal features for the first 6 weeks.
+
+  Follow-up: the PSI window is hard-coded from Oct 20; derive it from the season's first game
+  date.
 
 ### E7. Shipped P(play) v2 has no default test coverage (L / S)
 - **Status 2026-10-23: done.** `tests/test_pplay_v2_paths.py` adds 20 cases on top of the existing

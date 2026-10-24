@@ -1,0 +1,95 @@
+{
+  "about": "Pre-registered player-side live shadows (docs/IMPROVEMENTS.md E1, docs/MLOPS.md section 6). The 2026-27 live season is the confirmatory set. Each arm = the live champion with ONE switch on, projected at the scheduled pregame runs with the champion's seeds and never served (courtside.proj.shadows). Grading: paired arm minus champion on identical rows, DK points, DNP = 0, SE two-way clustered night x player (metrics.paired_cluster2); tiers are the champion's. Edit an entry's bar or metric only before its first graded night; later changes need a new entry (new arm key) so the ledger stays honest.",
+  "registered": "2026-10-23",
+  "defaults": {
+    "metric": "dk_crps",
+    "population": "emin10",
+    "run": "13:30",
+    "bar": {"direction": "lower", "z": -2.0, "tier_z": 2.0},
+    "min_nights": 14,
+    "max_nights": 60
+  },
+  "arms": [
+    {
+      "arm": "+tr",
+      "switch": "COURTSIDE_TAIL_REMAP",
+      "hypothesis": "The upper-tail quantile remap (D6) lowers DK CRPS: harness, live and RotoGuru sets were negative on every set (two-way z -1.2 to -6.2), no tier worse than +2 SE (ledger +tr, 2026-10-23).",
+      "metric": "dk_crps",
+      "population": "emin10",
+      "run": "13:30",
+      "bar": {"direction": "lower", "z": -2.0, "tier_z": 2.0},
+      "min_nights": 14,
+      "status": "shipped", "shipped": "2026-10-24"
+    },
+    {
+      "arm": "+ep",
+      "switch": "COURTSIDE_EARLY_PRIOR",
+      "hypothesis": "Preseason games in the rate state (P3) lower early-season DK CRPS: first 30 days z -1.9 to -3.4 on four seasons, no tier worse than +2 SE; the value is front-loaded (ledger +ep, 2026-10-23). Needs bundle_2026-27_v1_cx_mf_ep.json in var/proj/ (the shadow never fits a bundle).",
+      "metric": "dk_crps",
+      "population": "emin10",
+      "run": "13:30",
+      "window": {"until": "2026-11-19"},
+      "bar": {"direction": "lower", "z": -2.0, "tier_z": 2.0},
+      "min_nights": 14,
+      "status": "shipped", "shipped": "2026-10-24"
+    },
+    {
+      "arm": "+gd",
+      "switch": "COURTSIDE_INJ_GAMEDAY",
+      "hypothesis": "Keying official injury rows by game date (B8) is a correctness cleanup: P(play) log loss ON-OFF was -0.0005 to -0.0012, never past ~2 SE, and the gain sits in the morning runs (IMPROVEMENTS B8). Bar: not clearly worse on P(play) log loss at the 10:00 run (no tier past +2 SE), and DK CRPS (E[min] >= 10) not worse than +2 SE.",
+      "metric": "pplay_ll",
+      "population": "all",
+      "run": "10:00",
+      "bar": {"direction": "not_worse", "z": 2.0, "tier_z": 2.0},
+      "guard": [{"metric": "dk_crps", "population": "emin10", "z": 2.0}],
+      "min_nights": 14,
+      "status": "active"
+    },
+    {
+      "arm": "+lf",
+      "switch": "COURTSIDE_LINE_FRESH",
+      "hypothesis": "Dropping stale book lines (B9) moves the game environment toward the close (gap 0.364 -> 0.307 in the 11 affected runs of the first 3 nights) and so lowers DK CRPS on the latest run before tip. Descriptive only so far (IMPROVEMENTS B9).",
+      "metric": "dk_crps",
+      "population": "emin10",
+      "run": "last",
+      "bar": {"direction": "lower", "z": -2.0, "tier_z": 2.0},
+      "min_nights": 21,
+      "status": "active"
+    },
+    {
+      "arm": "+tm",
+      "switch": "COURTSIDE_TIER_MATCH",
+      "hypothesis": "Fit-matched copula tiers (B11) are neutral on DK CRPS by construction (harness |z| <= 0.65, no tier past +1.8; ledger +tm). The shadow only guards against harm; the ship gate is a lineup backtest.",
+      "metric": "dk_crps",
+      "population": "emin10",
+      "run": "13:30",
+      "bar": {"direction": "not_worse", "z": 2.0, "tier_z": 2.0},
+      "min_nights": 14,
+      "status": "active"
+    },
+    {
+      "arm": "+rs",
+      "switch": "COURTSIDE_MIN_RESTRICT",
+      "hypothesis": "Minutes restrictions parsed from ESPN comments (P7) lower minutes MAE on the restricted rows. Ledger +rs: n = 3 flagged rows, revisit with >= 100 flagged rows. Population = rows whose projection the switch changed, played rows only; DK CRPS (E[min] >= 10) must not be worse than +2 SE.",
+      "metric": "min_mae",
+      "population": "changed",
+      "run": "last",
+      "bar": {"direction": "lower", "z": -2.0, "tier_z": 2.0},
+      "guard": [{"metric": "dk_crps", "population": "emin10", "z": 2.0}],
+      "min_nights": 14,
+      "min_rows": 100,
+      "status": "active"
+    },
+    {
+      "arm": "+pq",
+      "switch": "COURTSIDE_PPLAYQ",
+      "hypothesis": "The lock-10 Questionable refit (P5) lowers DK CRPS (harness -2.7 SE, P(play) log loss -3.2 SE). It acts only once DK starter flags are out, so pregame shadows see it on the latest run before tip at most; expect few changed rows.",
+      "metric": "dk_crps",
+      "population": "emin10",
+      "run": "last",
+      "bar": {"direction": "lower", "z": -2.0, "tier_z": 2.0},
+      "min_nights": 14,
+      "status": "active"
+    }
+  ]
+}

@@ -131,10 +131,11 @@ if [ -z "$uv_bin" ]; then
 fi
 
 if [ "$job" = "weekly" ]; then
-  # MLOps: train challengers (offline gate), evaluate shadows (online gate), refresh the card;
-  # then the weekly DFS report.
+  # MLOps: train challengers (offline gate; --if-due = first weekly run of the month or an open
+  # calibration/drift alert), evaluate shadows (online gate), refresh the card; then the weekly
+  # DFS report.
   rc=0
-  for cmd in "retrain --model all" "shadows" "card"; do
+  for cmd in "retrain --model all --if-due" "shadows" "card"; do
     # shellcheck disable=SC2086
     "$uv_bin" run --frozen courtside mlops $cmd 2>&1 | log_lines
     r="${PIPESTATUS[0]}"
@@ -147,6 +148,14 @@ if [ "$job" = "weekly" ]; then
 else
   "$uv_bin" run --frozen courtside collect "$job" 2>&1 | log_lines
   rc="${PIPESTATUS[0]}"
+  if [ "$job" = "pregame" ]; then
+    # Player-side live shadows (IMPROVEMENTS E1, proj/shadows.py): its own low-priority process
+    # after the pregame job, never in the DFS tick; skips itself near a lock build window, 90 s
+    # budget, COURTSIDE_SHADOWS=0 turns it off. A failure is logged but never fails the job.
+    nice -n 10 "$uv_bin" run --frozen courtside proj shadows run 2>&1 | log_lines
+    r="${PIPESTATUS[0]}"
+    [ "$r" -ne 0 ] && echo "[run-job] shadows failed (exit $r), not fatal" | log_lines
+  fi
 fi
 
 echo "[run-job] end $job exit=$rc" | log_lines

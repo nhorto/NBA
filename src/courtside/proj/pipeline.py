@@ -101,6 +101,23 @@ Inputs per game, all as known at the run time (`at`) or strictly before the game
   `set_tier_match`): the draw assigns the rho / CV tiers from the fit's inputs (r_dk x mpg, mpg;
   players who play in no sim count as bench) instead of mu_played / min_played. Version
   `<model version>+tm` (after `+rb`); same bundle and seeds. `docs/research/tier-match.md`.
+* **Tail remap** (tr, `tail_remap.TAIL_REMAP`, default OFF; env ``COURTSIDE_TAIL_REMAP=1``;
+  `set_tail_remap`): `run_games` re-labels the upper half of each player's played sims through a
+  per tier x minutes-band quantile map fit on seasons < S (after the role blend), so stored sims,
+  cards, X factor and builder see it. Version `<model version>+tr` (after `+tm`); same bundle and
+  seeds. `docs/research/tail-remap.md`.
+* **Minutes restriction** (rs, `min_restrict.MIN_RESTRICT`, default OFF; env
+  ``COURTSIDE_MIN_RESTRICT=1``; `set_min_restrict`): players an ESPN injury comment of the last 72 h
+  before the run puts on a minutes restriction (`sources/espn_restrict.py`) get their planned minutes
+  capped (parsed cap, else 0.75 x normal minutes) via the panel's `rs_cap` column
+  (`project_games` -> `build_games(rs_caps=)`). Version `<model version>+rs` (after `+tr`); same
+  bundle and seeds. OFF: bit-identical. `docs/research/min-restrict.md`.
+* **Early-season prior** (ep, `early_prior.EARLY_PRIOR`, default OFF; env
+  ``COURTSIDE_EARLY_PRIOR=1``; `set_early_prior`): the rate state adds the season's preseason
+  games (weight and per-minute level per stat, fit on seasons < S) to the current-season
+  evidence (`state.rate_frame(..., ep=)`). Suffix on any arm: bundle `<arm's bundle>_ep.json`
+  (after `_bo`, before `_mr` / `_c1`; the arm's bundle + `state["early_prior"]`), version
+  `<arm>+ep`; seeds unchanged. OFF: bit-identical. `docs/research/early-prior.md`.
 
 Seeds (common random numbers): `stable_seed(slate_or_day, kind, SEED_VERSION)` (= the
 MODEL_VERSION without the context layer, so ON and OFF share draws); every game
@@ -137,10 +154,13 @@ from .. import config
 from . import availability as AV
 from . import context as CX
 from . import copula as C
+from . import early_prior as EP
+from . import min_restrict as MRS
 from . import minutes as M
 from . import reconcile as RC
 from . import role_blend as RB
 from . import state as ST
+from . import tail_remap as TR
 from . import store as SO
 from .dfs.optimizer import Projection
 
@@ -292,6 +312,10 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
     mv = mv + RB.ROLE_BLEND_TAG if RB.ROLE_BLEND else mv
     # the tier match (copula.TIER_MATCH, `+tm`): model version only, same bundle and seeds
     mv = mv + C.TIER_MATCH_TAG if C.TIER_MATCH else mv
+    # the tail remap (tail_remap.TAIL_REMAP, `+tr`): model version only, same bundle and seeds
+    mv = mv + TR.TAIL_REMAP_TAG if TR.TAIL_REMAP else mv
+    # the minutes restriction (min_restrict.MIN_RESTRICT, `+rs`): model version only
+    mv = mv + MRS.MIN_RESTRICT_TAG if MRS.MIN_RESTRICT else mv
     # line freshness (LINE_FRESH, `+lf`): model version only, same bundle and seeds
     return vs, (mv + LINE_FRESH_TAG if LINE_FRESH else mv)
 
@@ -313,6 +337,8 @@ def _versions_bundle(on: bool, ext: bool = False, copula: str = "v0", mr: bool =
         vs, mv = vs + MINFIX_SUFFIX, mv + MINFIX_TAG
     if bo:
         vs, mv = vs + BLOWOUT_SUFFIX, mv + BLOWOUT_TAG
+    if EP.EARLY_PRIOR:          # early-season prior (+ep): its own bundle (state["early_prior"])
+        vs, mv = vs + EP.EARLY_PRIOR_SUFFIX, mv + EP.EARLY_PRIOR_TAG
     if mr:
         vs, mv = vs + MINRATIO_SUFFIX, mv + MINRATIO_TAG
     if copula == "v1":
@@ -461,6 +487,31 @@ def set_role_blend(on: bool) -> None:
     """Flip the role-aware blend (role_blend.ROLE_BLEND) and MODEL_VERSION together."""
     global _VS, MODEL_VERSION
     RB.set_role_blend(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_tail_remap(on: bool) -> None:
+    """Flip the tail remap (tail_remap.TAIL_REMAP) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    TR.set_tail_remap(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_early_prior(on: bool) -> None:
+    """Flip the early-season prior (early_prior.EARLY_PRIOR), the bundle suffix and
+    MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    EP.set_early_prior(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_min_restrict(on: bool) -> None:
+    """Flip the minutes restriction (min_restrict.MIN_RESTRICT) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    MRS.set_min_restrict(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
                                    MINFIX, BLOWOUT)
 
@@ -686,6 +737,8 @@ def load_bundle(conn: sqlite3.Connection, season: str, ctx: Context | None = Non
         return _load_bundle_v1(conn, season, ctx, refit=refit, log=log)
     if COPULA == "v1r":
         return _load_bundle_v1r(conn, season, ctx, refit=refit, log=log)
+    if EP.EARLY_PRIOR:
+        return _load_bundle_ep(conn, season, ctx, refit=refit, log=log)
     if BLOWOUT:
         return _load_bundle_bo(conn, season, ctx, refit=refit, log=log)
     if MINFIX:
@@ -913,6 +966,36 @@ def _load_bundle_bo(conn: sqlite3.Connection, season: str, ctx: Context | None, 
     return b
 
 
+def _load_bundle_ep(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
+                    refit: bool, log) -> Bundle:
+    """The early-season prior's bundle: the same arm's bundle with EARLY_PRIOR off (loaded or
+    fitted the usual way) plus `state["early_prior"]` = `early_prior.fit` on seasons < S with
+    the arm's rate-state params, cached as `bundle_<S><arm>_ep.json`. Minutes, copula and
+    context layer are the arm's."""
+    say = log or (lambda m: None)
+    path = cache_dir() / f"bundle_{season}{_VS}.json"
+    if path.exists() and not refit:
+        b = Bundle.from_json(path.read_text())
+        if (EP.has_ep(b.state) and bool(b.minutes.minfix) == MINFIX
+                and bool(b.minutes.blowout) == BLOWOUT
+                and M.uses_preseason(b.minutes) == PRESEASON):
+            return b
+    set_early_prior(False)
+    try:
+        base = load_bundle(conn, season, ctx, refit=refit, log=log)
+    finally:
+        set_early_prior(True)
+    t0 = time.time()
+    sp = dict(base.state)
+    sp["early_prior"] = EP.fit(conn, season, base.state, log=say)
+    b = Bundle(season=season, minutes=base.minutes, state=sp, copula=base.copula,
+               context=base.context, copula_v1=base.copula_v1)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(b.to_json())
+    say(f"bundle {season} (early-season prior) in {time.time() - t0:.0f}s -> {path}")
+    return b
+
+
 def _load_bundle_mr(conn: sqlite3.Connection, season: str, ctx: Context | None, *,
                     refit: bool, log) -> Bundle:
     """The minutes-ratio arm's bundle: the same arm's bundle with MINRATIO off (loaded or fitted
@@ -1048,9 +1131,21 @@ def _rb_history(ctx: Context, conn: sqlite3.Connection) -> RB.RoleHistory:
     return h
 
 
+def _ep_input(ctx: Context, b: Bundle, conn: sqlite3.Connection):
+    """The early-season prior's input for `state.rate_frame` (None unless EARLY_PRIOR is on and
+    the bundle carries its params); bio and preseason logs loaded once per Context."""
+    if not (EP.EARLY_PRIOR and EP.has_ep(b.state)):
+        return None
+    data = getattr(ctx, "_ep_data", None)
+    if data is None:
+        data = ctx._ep_data = EP.load_data(conn)
+    return EP.EPInput(b.state["early_prior"], data)
+
+
 def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
                 games: pd.DataFrame, panel: pd.DataFrame, p_avail: dict, env: dict,
-                starters: set | None = None, pp_fix: dict | None = None) -> list[C.GameSpec]:
+                starters: set | None = None, pp_fix: dict | None = None,
+                rs_caps: dict | None = None) -> list[C.GameSpec]:
     """GameSpecs from a candidate panel (pregame_panel rows keyed game_id|team, optional
     `absent` column) and P(available) {(key, player_id): p} (default 1.0; absent -> 0).
     `pp_fix` (P(play) v2, `pplay_v2_fix`): {(key, player_id): P(plays | available)} replacing
@@ -1058,7 +1153,9 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
     panel = panel.reset_index(drop=True)
     q = pd.DataFrame({"player_id": panel["player_id"].astype(np.int64),
                       "game_date": day.isoformat()})
-    rates = ST.rate_frame(conn, q, b.state, games=ctx.games, pos=ctx.pos)
+    ep = _ep_input(ctx, b, conn)                  # early-season prior (+ep); None when OFF
+    rates = ST.rate_frame(conn, q, b.state, games=ctx.games, pos=ctx.pos,
+                          **({"ep": ep} if ep is not None else {}))
     panel["_star"] = _stars(panel, rates)
     if CONTEXT_ON and b.context is not None and len(panel):
         rates = apply_context(ctx, b, conn, day, games, panel, rates, env, p_avail=p_avail)
@@ -1094,6 +1191,8 @@ def build_games(ctx: Context, b: Bundle, conn: sqlite3.Connection, day: date,
             pm = p.drop(columns=["_star"])
             if pp_fix:
                 pm["pp_fix"] = [pp_fix.get((key, int(pid)), np.nan) for pid in pm["player_id"]]
+            if rs_caps and any(k == key for k, _ in rs_caps):   # +rs: planned-minutes caps
+                pm["rs_cap"] = MRS.rs_column(pm, rs_caps)
             sm = C.ScenarioMinutes(pm, b.minutes, shares,
                                    starters=_team_starters(starters, p))
             teams[side] = C.TeamSpec(team=team, players=pl, minutes=sm,
@@ -1287,11 +1386,13 @@ def run_games(specs: list, b: Bundle, n_sims: int, seed: int, day: date,
                                 game_seed(seed, gs.game_id)) for gs in specs]
     t_sim = time.time() - t0
     rb = RB.apply(sims, specs, day) if RB.ROLE_BLEND else None     # role blend (+rb)
+    tr = TR.apply(sims, day) if TR.TAIL_REMAP else None             # tail remap (+tr)
     players, stats = summarize_games(sims)
     teams = [dict(v, game_id=g.game_id) for g in sims for v in g.teams.values()]
     meta = {"seconds_sim": round(t_sim, 2), "seconds_summary": round(time.time() - t0 - t_sim, 2),
             "n_sims": n_sims, "seed": seed, "games": len(specs),
             "recon": RC.acceptance(teams), **({"role_blend": rb} if rb is not None else {}),
+            **({"tail_remap": tr} if tr is not None else {}),
             "env": {g.game_id: {"mu_margin": g.mu_margin, "mu_total": g.mu_total,
                                 "source": g.env_source} for g in specs}}
     return DayResult(day=day, sims=sims, players=players, stats=stats, teams=teams, meta=meta)
@@ -1388,11 +1489,13 @@ def project_games(conn: sqlite3.Connection, day, games: pd.DataFrame, *, ctx: Co
                   at: datetime | None = None, env_mode: str = "live",
                   extras: dict | None = None, starters: set | None = None,
                   listed: set | None = None, salaries: dict | None = None,
-                  log: Callable[[str], None] | None = None) -> DayResult:
+                  log: Callable[[str], None] | None = None,
+                  rs_at: datetime | None = None) -> DayResult:
     """Core of the live and report paths: candidates (+ extras), P(available) {player_id: p}
     (default 1; 0 = out), environment per `env_mode` at `at`, simulate, summarise.
     `listed` (the report's listed, not-Out players) and `salaries` ({player_id: DK salary}):
-    P(play) v2 only (`pplay_v2_fix`)."""
+    P(play) v2 only (`pplay_v2_fix`). `rs_at`: the run time the minutes restriction (+rs)
+    reads the ESPN comments at when `at` is None (the report path)."""
     day = _as_date(day)
     panel = candidate_panel(ctx, day, games, extras)
     if env_mode == "live":
@@ -1400,11 +1503,15 @@ def project_games(conn: sqlite3.Connection, day, games: pd.DataFrame, *, ctx: Co
     pa = {(k, int(pid)): float(p_avail[int(pid)])
           for k, pid in zip(panel["key"], panel["player_id"]) if int(pid) in (p_avail or {})}
     env = {g: environment(conn, g, at, mode=env_mode) for g in games["game_id"]}
+    rs = (MRS.restrict_caps(conn, panel, at if at is not None else rs_at)
+          if MRS.MIN_RESTRICT else None)
     if PPLAY == "v2":
         fix = pplay_v2_fix(ctx, panel, p_avail, listed, starters, salaries)
-        specs = build_games(ctx, bundle, conn, day, games, panel, pa, env, starters, pp_fix=fix)
+        specs = build_games(ctx, bundle, conn, day, games, panel, pa, env, starters, pp_fix=fix,
+                            rs_caps=rs)
     else:
-        specs = build_games(ctx, bundle, conn, day, games, panel, pa, env, starters)
+        specs = build_games(ctx, bundle, conn, day, games, panel, pa, env, starters,
+                            rs_caps=rs)
     return run_games(specs, bundle, n_sims, seed, day, log)
 
 
@@ -1547,7 +1654,8 @@ def save_run(conn: sqlite3.Connection, res: DayResult, *, run_id: str, slate_id:
     proj["inputs_json"] = [
         {"p_avail": r.p_avail, "normal": bool(r.normal), "mu_played": r.mu_played,
          "dk_id": getattr(r, "dk_id", None), "env": res.meta.get("env", {}).get(r.game_id),
-         **({"rb_shift": float(getattr(r, "rb_shift", 0.0))} if RB.ROLE_BLEND else {})}
+         **({"rb_shift": float(getattr(r, "rb_shift", 0.0))} if RB.ROLE_BLEND else {}),
+         **({"tr_shift": float(getattr(r, "tr_shift", 0.0))} if TR.TAIL_REMAP else {})}
         for r in pl.itertuples(index=False)]
     SO.write_projections(conn, proj, res.stats)
     pid, fp = res.fp_matrix()
@@ -1643,7 +1751,7 @@ def project_historical(conn: sqlite3.Connection, game_date, *, protocol: str = "
         p_avail, extras, avinfo = report_avail(conn, day, at, games)
         res = project_games(conn, day, games, ctx=ctx, bundle=b, n_sims=n_sims, seed=seed,
                             p_avail=p_avail, at=None, env_mode="closing", extras=extras,
-                            listed=listed_of(extras), log=log)
+                            listed=listed_of(extras), log=log, rs_at=at)
         res.meta.update({"at": _iso(at), **avinfo})
     else:
         games, panel, p_avail = historical_inputs(conn, ctx, day, protocol=protocol)

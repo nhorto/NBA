@@ -1,6 +1,6 @@
 # HANDOFF: start here after a context reset
 
-*Last updated 2026-10-22 ~09:00 ET (day 2; live model pathA-v0.3+p2).*
+*Last updated 2026-10-24 (live model pathA-v0.3+mf+ep+p2+rx+rb+tr).*
 
 **2026-10-23: methodology review done → `docs/IMPROVEMENTS.md`** is the improvement spec and
 work list (bugs B1–B11, owner decisions in its §6, revised order in §7, Fable second review in §9). Read it after this file.
@@ -19,8 +19,19 @@ DB backup: `~/Developer/backups/courtside-pre-7b7b693.db` on the Mac.
   batch: D2 cash by P(cash) (keep OFF), D5 K-field ownership noise `COURTSIDE_FIELD_K` (held OFF
   until 3+ more uploads), B11 `+tm` (neutral).
 
+**2026-10-24: batch 3 shipped (owner OK on all four).** Live `pathA-v0.3+mf+ep+p2+rx+rb+tr`:
+- **`+tr` tail remap (D6)** and **`+ep` early-season prior (P3)** ON. `+ep` uses its own pre-fit
+  bundle `bundle_2026-27_v1_cx_mf_ep.json` (copied to prod `var/proj/`).
+- **X factor v2 (D3, `xf-v2`) replaces v1** on the DFS page; `STRETCH_TR` is used while `+tr` is on.
+- **E1 live shadows deployed** (`mlops/shadow_registry.json`; `+tr`/`+ep` arms marked
+  `shipped`, the rest active).
+- Shipped OFF in the same batch: E6 retrain/monitoring, P7 `+rs` + latency card, G1 `+nsl`,
+  G4 `+as`, B7 margin sd.
+- New rollbacks: `COURTSIDE_TAIL_REMAP=0`, `COURTSIDE_EARLY_PRIOR=0`, `COURTSIDE_XF_V2=0`.
+
 Rollbacks: `COURTSIDE_MINFIX=0`, `COURTSIDE_RESERVE_EXTRAS=0`, `COURTSIDE_ROLE_BLEND=0`,
-`COURTSIDE_PORTFOLIO_SPLIT=off` (or flip the `*_DEFAULT` constants). Tests pin them off in
+`COURTSIDE_PORTFOLIO_SPLIT=off`, `COURTSIDE_TAIL_REMAP=0`, `COURTSIDE_EARLY_PRIOR=0`,
+`COURTSIDE_XF_V2=0` (or flip the `*_DEFAULT` constants). Tests pin them off in
 `tests/conftest.py`. Golden float tests are Linux-only (macOS rounds differently).
 
 Per-item status: the IMPROVEMENTS.md status blocks. Switch decisions: `docs/research/switch-ledger.md`.

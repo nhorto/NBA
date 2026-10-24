@@ -20,12 +20,15 @@ That is the "inner validation that never touches the benchmark test seasons".
 Only the margin head is benchmarked: the win probability (and so log-loss) is the calibrated
 margin. The total head is carried over from the champion unless explicitly given.
 
-Offline gate (all test games, regular season + playoffs, identical game ids)
----------------------------------------------------------------------------
-d_i = LL_challenger_i - LL_champion_i, paired SE = sd(d) / sqrt(n).
+Offline gate (regular-season test games only, identical game ids)
+------------------------------------------------------------------
+d_i = LL_challenger_i - LL_champion_i, SE = date-clustered SE of mean(d)
+(`proj.metrics.paired_cluster`: games on one night share conditions, so per-game SE is too small;
+without a `game_date` column it falls back to one cluster per game). Playoffs are excluded when
+`season_type` is present.
 1. overall: mean(d) < -2 SE (better by more than 2 paired standard errors);
 2. most recent test season: mean(d_recent) <= 2 SE_recent (not worse beyond noise);
-3. calibration: ECE_challenger - ECE_champion <= 0.005 (10 equal-width bins, all games).
+3. calibration: ECE_challenger - ECE_champion <= 0.005 (10 equal-width bins, same games).
 Pass -> registered `candidate`, then `shadow`. Fail -> registered `candidate`, then `retired`
 with a `reject` event carrying the reasons. Everything is logged to MLflow.
 
@@ -33,10 +36,14 @@ Online gate (`evaluate_shadows`)
 --------------------------------
 For each shadow: resolved live games where both the shadow and the champion of its model have a
 latest pre-tip prediction, d_i = LL_shadow_i - LL_champion_i.
+The offline gate already demanded a proven improvement; the online gate only guards against a
+live regression, so it asks "not clearly worse". SE = date-clustered SE of mean(d).
 * n < 100: wait.
-* n >= 100, mean(d) <= 0 and no open `critical` alert: promote (old champion retired).
-* n >= 300 and mean(d) > 0: reject (retired, `reject` event).
-* otherwise (better but a critical alert is open, or worse with n < 300): wait.
+* n >= 100 and mean(d) > 2 SE (clearly worse): reject (retired, `reject` event).
+* n >= 100, otherwise, and no open `critical` alert: promote (old champion retired).
+* n >= 100, not clearly worse, but a critical alert is open: wait.
+(Without a usable SE, e.g. one night of games, the old rule applies: mean(d) <= 0 promotes,
+n >= 300 and mean(d) > 0 rejects.)
 """
 
 from __future__ import annotations
@@ -51,6 +58,7 @@ import pandas as pd
 
 from .. import config
 from ..model import metrics
+from ..proj.metrics import paired_cluster
 from . import registry, tracking
 
 log = logging.getLogger("courtside.mlops.retrain")
@@ -100,6 +108,15 @@ def paired(a: np.ndarray, b: np.ndarray) -> dict:
     n = len(d)
     se = float(d.std(ddof=1) / np.sqrt(n)) if n > 1 else float("nan")
     return {"n": int(n), "diff": float(d.mean()) if n else float("nan"), "se": se}
+
+
+def paired_clustered(a: np.ndarray, b: np.ndarray, clusters) -> dict:
+    """mean(a - b) with the cluster-robust SE (clusters = game date). Same keys as `paired`
+    plus n_clusters. One cluster per row (SE = sd/sqrt(n)) when `clusters` is None."""
+    d = np.asarray(a, float) - np.asarray(b, float)
+    cl = np.arange(len(d)) if clusters is None else np.asarray(clusters)
+    pc = paired_cluster(d, cl)
+    return {"n": pc["n"], "diff": pc["mean"], "se": pc["se"], "n_clusters": pc["n_clusters"]}
 
 
 def _summ(y, p, margin=None, margin_pred=None) -> dict:
@@ -157,19 +174,26 @@ def summarize(preds: pd.DataFrame, mkt_p: pd.Series | None = None) -> dict:
 
 def offline_gate(champ: pd.DataFrame, chal: pd.DataFrame, *, se_mult: float = GATE_SE,
                  ece_tol: float = GATE_ECE_TOL) -> dict:
-    """The offline gate on per-game predictions (columns game_id, season, y, p) of the champion
-    and the challenger. Only games present in both count. Returns {"passed", "reasons",
+    """The offline gate on per-game predictions (columns game_id, season, y, p, and optionally
+    season_type / game_date for the regular-season filter and the date-clustered SE) of the
+    champion and the challenger. Only games present in both count. Returns {"passed", "reasons",
     "overall", "recent", "ece", "n"}; see the module docstring for the rules."""
-    a = champ[["game_id", "season", "y", "p"]].rename(columns={"p": "p_champ"})
+    extra = [c for c in ("season_type", "game_date") if c in champ.columns]
+    a = champ[["game_id", "season", "y", "p", *extra]].rename(columns={"p": "p_champ"})
     b = chal[["game_id", "p"]].rename(columns={"p": "p_chal"})
     m = a.merge(b, on="game_id", how="inner")
+    if "season_type" in m.columns:               # regular season only: no playoffs in the gate
+        m = m[m["season_type"] == "Regular Season"]
+    m = m.reset_index(drop=True)
     if len(m) < 2:
         return {"passed": False, "reasons": ["fewer than 2 common benchmark games"], "n": len(m)}
+    cl = m["game_date"].astype(str).to_numpy() if "game_date" in m.columns else None
     l_champ, l_chal = ll_vec(m["y"], m["p_champ"]), ll_vec(m["y"], m["p_chal"])
-    overall = paired(l_chal, l_champ)
+    overall = paired_clustered(l_chal, l_champ, cl)
     last = sorted(m["season"].unique())[-1]
     r = (m["season"] == last).to_numpy()
-    recent = {"season": last, **paired(l_chal[r], l_champ[r])}
+    recent = {"season": last, **paired_clustered(l_chal[r], l_champ[r],
+                                                 None if cl is None else cl[r])}
     ece_c, ece_n = metrics.ece(m["y"], m["p_champ"]), metrics.ece(m["y"], m["p_chal"])
     ece = {"champion": ece_c, "challenger": ece_n, "diff": ece_n - ece_c, "tol": ece_tol}
     reasons = []
@@ -184,7 +208,8 @@ def offline_gate(champ: pd.DataFrame, chal: pd.DataFrame, *, se_mult: float = GA
     return {"passed": not reasons, "reasons": reasons, "n": int(len(m)), "overall": overall,
             "recent": recent, "ece": ece,
             "log_loss": {"champion": float(l_champ.mean()), "challenger": float(l_chal.mean())},
-            "rules": {"overall": f"diff < -{se_mult:g} SE", "recent": f"diff <= {se_mult:g} SE",
+            "rules": {"scope": "regular season, date-clustered SE",
+                      "overall": f"diff < -{se_mult:g} SE", "recent": f"diff <= {se_mult:g} SE",
                       "ece": f"ECE diff <= {ece_tol}"}}
 
 
@@ -329,7 +354,11 @@ def run_challenger(conn, model_name: str, *, search: str = "small", params: dict
               "final_fit_s": round(t_final, 1), "total_s": round(time.time() - t_start, 1)}
     features = registry.feature_list(model_name)
     spec = registry.spec_hash(model_name, nparams, features, registry.code_sha())
+    fp = registry.data_fingerprint(conn)
+    fp_changes = registry.fingerprint_diff(registry.version_fingerprint(conn, champ["version_id"]),
+                                           fp)
     result = {"model_name": model_name, "champion": champ["version_id"], "mode": mode,
+              "data_fingerprint": fp["hash"], "data_changes_vs_champion": fp_changes,
               "search": search if not params else None, "params": nparams, "spec_hash": spec,
               "gate": gate, "timing": timing, "seasons": [seasons[0], seasons[-1]],
               "memo": {"hits": memo.hits, "misses": memo.misses}}
@@ -340,6 +369,9 @@ def run_challenger(conn, model_name: str, *, search: str = "small", params: dict
            f"{gate['ece']['challenger']:.4f}")
     for r in gate["reasons"]:
         log_fn(f"  reject: {r}")
+    if fp_changes:
+        log_fn(f"data changed since the champion was registered ({len(fp_changes)} tables); "
+               f"first: {fp_changes[0]}")
 
     if spec == champ["spec_hash"]:
         result["status"] = "no_change"
@@ -360,7 +392,7 @@ def run_challenger(conn, model_name: str, *, search: str = "small", params: dict
         result["status"] = "not_registered"
         return result
     vid = registry.register(conn, model_name, nparams, features, status="candidate",
-                            benchmark=bench, mlflow_run_id=run_id,
+                            benchmark=bench, mlflow_run_id=run_id, data_fp=fp,
                             notes=f"challenger ({mode}{', ' + search if not params else ''}) "
                                   f"vs {champ['version_id']}")
     result["version_id"] = vid
@@ -382,6 +414,32 @@ def run_challenger(conn, model_name: str, *, search: str = "small", params: dict
 
 def _brief_gate(g: dict) -> dict:
     return {k: g.get(k) for k in ("passed", "reasons", "n", "overall", "recent", "ece")}
+
+
+# ------------------------------------------------------------------ cadence
+
+TRIGGER_KINDS = ("calibration", "drift")     # open alerts of these kinds queue an early retrain
+MONTHLY_DAY_MAX = 7
+
+
+def retrain_due(conn, today=None) -> tuple[bool, str]:
+    """Is the weekly job's retrain step due? Re-running the same grid on the same procedure gives
+    diff = 0 and cannot pass its own gate, so weekly retrains are wasted compute. Due when
+    (a) `today` is in the first 7 days of a month (the first weekly run of the month; the job
+    runs once a week, so exactly one run per month qualifies), or (b) a calibration or drift
+    alert is open. Shadows, the model card and the other weekly steps are not gated by this."""
+    today = today or config.today_nba_day()
+    if today.day <= MONTHLY_DAY_MAX:
+        return True, f"monthly: first weekly run of {today:%Y-%m}"
+    try:
+        keys = [r[0] for r in conn.execute(
+            f"SELECT key FROM alerts WHERE status='open' AND kind IN "
+            f"({','.join('?' * len(TRIGGER_KINDS))}) ORDER BY key", TRIGGER_KINDS)]
+    except Exception:  # noqa: BLE001 - no alerts table yet
+        keys = []
+    if keys:
+        return True, "open alert(s): " + ", ".join(keys)
+    return False, "not the first weekly run of the month and no calibration/drift alert open"
 
 
 # ------------------------------------------------------------------ online gate
@@ -415,12 +473,22 @@ def shadow_pairs(conn, version_id: str, model_name: str) -> pd.DataFrame:
     return df
 
 
-def shadow_decision(n: int, diff: float, critical_alerts: int, *,
-                    min_games: int = SHADOW_MIN_GAMES, max_games: int = SHADOW_MAX_GAMES
-                    ) -> tuple[str, str]:
-    """(action, why) with action in promote | reject | wait. See the module docstring."""
+def shadow_decision(n: int, diff: float, critical_alerts: int, se: float | None = None, *,
+                    min_games: int = SHADOW_MIN_GAMES, max_games: int = SHADOW_MAX_GAMES,
+                    se_mult: float = GATE_SE) -> tuple[str, str]:
+    """(action, why) with action in promote | reject | wait. See the module docstring.
+    `se`: date-clustered SE of `diff`. Without a usable one the old rule applies."""
     if n < min_games:
         return "wait", f"{n} of {min_games} resolved games"
+    if se is not None and np.isfinite(se) and se > 0:
+        if diff > se_mult * se:
+            return "reject", (f"clearly worse: log-loss diff {diff:+.5f} > {se_mult:g} SE "
+                              f"({se_mult * se:.5f}) over {n} games")
+        if critical_alerts == 0:
+            return "promote", (f"not clearly worse: log-loss diff {diff:+.5f} <= {se_mult:g} SE "
+                               f"({se_mult * se:.5f}) over {n} games")
+        return "wait", (f"not clearly worse ({diff:+.5f}) but {critical_alerts} critical "
+                        "alert(s) open")
     if diff <= 0 and critical_alerts == 0:
         return "promote", f"paired log-loss diff {diff:+.5f} <= 0 over {n} games"
     if diff <= 0:
@@ -440,9 +508,11 @@ def evaluate_shadows(conn, *, dry_run: bool = False, min_games: int = SHADOW_MIN
         vid, name = v["version_id"], v["model_name"]
         pairs = shadow_pairs(conn, vid, name)
         n = len(pairs)
-        st = (paired(ll_vec(pairs["y"], pairs["p_shadow"]), ll_vec(pairs["y"], pairs["p_champion"]))
+        st = (paired_clustered(ll_vec(pairs["y"], pairs["p_shadow"]),
+                               ll_vec(pairs["y"], pairs["p_champion"]),
+                               pairs["nba_day"].astype(str).to_numpy())
               if n else {"n": 0, "diff": float("nan"), "se": float("nan")})
-        action, why = shadow_decision(n, st["diff"], crit, min_games=min_games,
+        action, why = shadow_decision(n, st["diff"], crit, st["se"], min_games=min_games,
                                       max_games=max_games)
         rec = {"version_id": vid, "model_name": name, "n": n, "diff": st["diff"],
                "se": st["se"], "critical_alerts": crit, "action": action, "why": why,
