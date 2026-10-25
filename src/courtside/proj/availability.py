@@ -517,13 +517,15 @@ def _latest(batches: list[Batch], at: datetime) -> tuple[Batch | None, list[Batc
 def team_game_rows(*, game_id: str, day: date, team: str, tip: datetime, at: datetime,
                    batches: list[Batch], hist: History, pool: list[tuple[int, str]],
                    league: list[tuple[int, str]], _match_cache: dict | None = None,
-                   source: str = injuries.OFFICIAL) -> list[dict]:
+                   source: str = injuries.OFFICIAL,
+                   pool_extra: list[tuple[int, str]] | None = None) -> list[dict]:
     """Every candidate player of `team` for `game_id` as known at `at`.
 
     Candidates: players the report on file lists (matched to a player_id), players listed in an
     earlier report of the day and dropped from the latest ('removed'), and the team's regulars
     (appeared in its last 10 games) the report does not list ('unlisted').  Uses only batches
-    with t <= at (and at is never after the tip)."""
+    with t <= at (and at is never after the tip).  `pool_extra` (REPORT_MATCH): a second-stage
+    roster for names `pool` / `league` do not resolve."""
     at = min(at, tip)
     latest, upto = _latest(batches, at)
     cache = _match_cache if _match_cache is not None else {}
@@ -532,6 +534,8 @@ def team_game_rows(*, game_id: str, day: date, team: str, tip: datetime, at: dat
         k = (team, name)
         if k not in cache:
             cache[k] = injuries.match_player(name, pool, None, league)[0]
+            if cache[k] is None and pool_extra:          # rm (OFF: pool_extra is None)
+                cache[k] = injuries.match_player(name, pool_extra, None, None)[0]
         return cache[k]
 
     rows: dict[int, dict] = {}
@@ -737,6 +741,7 @@ def _slate(conn: sqlite3.Connection, day: date, at: datetime, params: Availabili
     res = injuries.resolve(conn, injuries.iso(at), espn_max_age_h=injuries.ESPN_MAX_AGE_H)
     act = injuries.active_players(conn, day)
     rosters = injuries.recent_rosters(conn, day, None, act)
+    extra = current_roster_extra(conn, day, rosters) if REPORT_MATCH else None   # rm (OFF: None)
     league = [(p, n) for p, n, _ in act]
     mc: dict = {}
     out: list[dict] = []
@@ -747,9 +752,10 @@ def _slate(conn: sqlite3.Connection, day: date, at: datetime, params: Availabili
             if not batches:
                 batches, source = _fallback_batches(res, team, day)
                 batches = [b for b in batches if b.t <= at]
+            kw = {"pool_extra": extra.get(team, [])} if extra is not None else {}
             out += team_game_rows(game_id=g.game_id, day=day, team=team, tip=g.tip, at=at,
                                   batches=batches, hist=hist, pool=rosters.get(team, []),
-                                  league=league, _match_cache=mc, source=source)
+                                  league=league, _match_cache=mc, source=source, **kw)
     df = pd.DataFrame(out)
     if df.empty:
         return pd.DataFrame(columns=cols)
@@ -1076,6 +1082,56 @@ def set_inj_gameday(on: bool) -> None:
     """Flip the game-day keying switch at run time (evaluation scripts, tests)."""
     global INJ_GAMEDAY
     INJ_GAMEDAY = bool(on)
+
+
+# --- Report name match on the current roster (rm; opt-in, COURTSIDE_REPORT_MATCH=1, OFF) --------
+#
+# docs/research/reeval-A.md.  `_slate` matches a report name only against the team's players with
+# a box row in the last injuries.ROSTER_LOOKBACK_DAYS (300) days.  A player who has been out
+# longer (season-long injury, surgery: Lively, Beal on 2026-10-21) is not there, so his official
+# 'Out' row is silently dropped; the DK pool then forces him in as a "fringe" player and P(play)
+# v2's fringe logit gives him 0.5-0.9 (live 2026-10-20 .. 24: 19 DK-OUT fringe rows, P 0.48,
+# none played).  ON: the matching roster of each team also holds the players of its
+# current-season `team_rosters` snapshot, as a second-stage match for names the box-history
+# roster does not resolve (a name that matched before still matches the same player); and
+# (pipeline.project_day, slate runs) a DK-pool player DK marks 'O' whom the report does not
+# list gets P(available) 0 (live: 149 DK-'O' rows, none played; 9 of them fringe rows the
+# report never named).  OFF: nothing here runs (bit-identical).
+
+REPORT_MATCH_DEFAULT = False           # shipping = True here (env still overrides)
+REPORT_MATCH_ENV = "COURTSIDE_REPORT_MATCH"
+REPORT_MATCH = _flag(REPORT_MATCH_ENV, REPORT_MATCH_DEFAULT)
+REPORT_MATCH_TAG = "+rm"
+
+
+def set_report_match(on: bool) -> None:
+    """Flip the current-roster report matching at run time (evaluation scripts, tests)."""
+    global REPORT_MATCH
+    REPORT_MATCH = bool(on)
+
+
+def _season_label(day: date) -> str:
+    y = day.year if day.month >= 8 else day.year - 1
+    return f"{y}-{(y + 1) % 100:02d}"
+
+
+def current_roster_extra(conn: sqlite3.Connection, day: date,
+                         rosters: dict[str, list[tuple[int, str]]]
+                         ) -> dict[str, list[tuple[int, str]]]:
+    """team -> [(player_id, name)] of the team's `team_rosters` snapshot of the day's season
+    that are NOT on its box-history roster `rosters` ({} when there is no snapshot).  Used
+    only as a second-stage match for names the box roster does not resolve, so a name that
+    matched before still matches the same player."""
+    rows = conn.execute("SELECT team, player_id, player FROM team_rosters WHERE season=? "
+                        "ORDER BY team, player_id", (_season_label(day),)).fetchall()
+    have = {t: {int(p) for p, _ in v} for t, v in rosters.items()}
+    out: dict[str, list[tuple[int, str]]] = {}
+    for team, pid, name in rows:
+        if not team or pid is None or not name or int(pid) in have.get(team, ()):
+            continue
+        if all(int(pid) != q for q, _ in out.get(team, ())):
+            out.setdefault(team, []).append((int(pid), str(name)))
+    return out
 
 
 def q_group(status: str, role: str, started: bool, lineup_known: bool, missed: int,

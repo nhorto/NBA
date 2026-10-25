@@ -255,7 +255,8 @@ def fit_season(conn: sqlite3.Connection, season: str, sp: dict, *,
     t0 = time.time()
     fr = frame if frame is not None else FX.build_frame(conn, season, sp, n_train=n_train,
                                                          log=say)
-    ext = [g for g in groups if g in FX.EXTENSION_GROUPS or g in FX.MARKET_GROUPS]
+    ext = [g for g in groups if g in FX.EXTENSION_GROUPS or g in FX.MARKET_GROUPS
+           or g in FX.REEVAL_GROUPS]
     if ext:
         fr = FX.extend_frame(conn, fr, ext, season=season, cache=frame is None, log=say)
     train = (fr["season"] < season).to_numpy()
@@ -465,7 +466,7 @@ def sanity(test: pd.DataFrame, mults: dict) -> dict:
 
 
 def extract_proxy(test: pd.DataFrame, mults: dict, extract: Path, *,
-                  alpha: float = 0.5) -> dict:
+                  alpha: float = 0.5, pairs: Sequence[tuple] | None = None) -> dict:
     """Fast end-to-end proxy on the T2.7 projection extract (`corr_extract_<S>.pkl`: the
     pipeline's pregame DK mean `mu` and minutes `min_proj` per player-game, avail protocol).
     mu_new = mu x sum_s a_s m'_s / sum_s a_s with a_s = w_s r_s min_proj, where the points
@@ -503,7 +504,7 @@ def extract_proxy(test: pd.DataFrame, mults: dict, extract: Path, *,
         out["variants"][v] = {"mae": float(np.abs(y - mu).mean()),
                               "mae_min15": float(np.abs(y - mu)[big].mean()),
                               "bias": float((y - mu).mean())}
-    for a_, b_ in PAIRS:
+    for a_, b_ in (PAIRS if pairs is None else pairs):
         if a_ in mus and b_ in mus:
             dd = np.abs(y - mus[b_]) - np.abs(y - mus[a_])
             out["pairs"][f"{a_} vs {b_}"] = {"mae": float(dd.mean()),
@@ -514,6 +515,7 @@ def extract_proxy(test: pd.DataFrame, mults: dict, extract: Path, *,
 def run_ablation(conn: sqlite3.Connection, season: str, *, n_train: int = 6,
                  variants: dict | None = None, frame: pd.DataFrame | None = None,
                  base: str = "E", center: bool = False, save_models: bool = True,
+                 pairs: Sequence[tuple] | None = None,
                  log: Callable[[str], None] | None = None) -> dict:
     """Walk-forward ablation for test season S (models fit on the n_train seasons < S).
     base 'E' = EB x actual minutes x the market reconciliation (the pipeline's mean, default);
@@ -525,7 +527,8 @@ def run_ablation(conn: sqlite3.Connection, season: str, *, n_train: int = 6,
     fr = frame if frame is not None else FX.build_frame(conn, season, sp, n_train=n_train,
                                                          log=say)
     ext = sorted({g for v in variants.values() for g in v
-                  if g in FX.EXTENSION_GROUPS or g in FX.MARKET_GROUPS})
+                  if g in FX.EXTENSION_GROUPS or g in FX.MARKET_GROUPS
+                  or g in FX.REEVAL_GROUPS})
     if ext:
         fr = FX.extend_frame(conn, fr, ext, season=season, log=say)
     if base != "E":
@@ -550,7 +553,7 @@ def run_ablation(conn: sqlite3.Connection, season: str, *, n_train: int = 6,
         if save_models and groups and base == "E" and not center:
             save(mdl, model_path(season, v))
     masks = {"all": np.ones(len(test), bool), "mpg15": (test["mpg"] >= 15).to_numpy()}
-    pairs = [p for p in PAIRS if p[0] in mults and p[1] in mults]
+    pairs = [p for p in (PAIRS if pairs is None else pairs) if p[0] in mults and p[1] in mults]
     ev = evaluate(test, mults, cv, pairs=pairs, masks=masks)
     ev["season"] = season
     ev["base"], ev["center"] = base, center
@@ -574,7 +577,7 @@ def run_ablation(conn: sqlite3.Connection, season: str, *, n_train: int = 6,
     for ex in (config.data_dir() / "proj" / f"corr_extract_{season}.pkl",
                config.REPO_ROOT / "var" / "proj" / f"corr_extract_{season}.pkl"):
         if ex.exists() and base == "E":
-            ev["extract_proxy"] = extract_proxy(test, mults, ex)
+            ev["extract_proxy"] = extract_proxy(test, mults, ex, pairs=pairs)
             break
     ev["seconds"] = round(time.time() - t0, 1)
     return ev

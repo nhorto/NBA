@@ -15,6 +15,14 @@ before the game date (season-to-date + recency-weighted + shrunk, `common.ew_aso
   F6  schedule context (home, rest, density, travel, time zones, altitude, stage) schedule.py
   F4  shot quality / shooting luck (xFG from the cdn PBP: quality, diet, skill,
       luck inside the EB rates, opponent quality / luck allowed)                  shots.py
+  F7  referee crew tendencies (FTA / fouls / pace vs expected, shrunk)       referees.py
+  F8  player vs this opponent (EB-shrunk residual vs EB x F2; F8r: light fixed
+      shrinkage; F8c: vs the opponent's head coach)                           opp_history.py
+  F3x tracking-dashboard opportunity (potential assists, drives, touches)     tracking_ext.py
+      F7 / F8 / F8r / F8c / F3x: re-evaluation workstream B (docs/research/reeval-B.md). Registered
+      only with the switch ON (`CONTEXT_B_DEFAULT` = False, env COURTSIDE_CONTEXT_B=1 or
+      `set_context_b(True)`); OFF the registry is exactly the pre-reeval one. In no live group
+      set and not wired into the pipeline.
   F9  market player-prop lines as of a lock cutoff (de-vigged implied mean vs the
       EB rate, has-line flags, moves). Registered, OFF: in no live group set;
       props exist only from 2026-10-19 (`market_props.readiness`)                 market_props.py
@@ -34,11 +42,12 @@ Public API
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
-from . import (market_props, matchups, opp_avail, opp_defense, player, schedule, shots,
-               tracking)
+from . import (market_props, matchups, opp_avail, opp_defense, opp_history, player, referees,
+               schedule, shots, tracking, tracking_ext)
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,42 @@ EXTENSION_GROUPS = ("F3", "F5", "F6", "F4")
 # path reads them with `market_props.live_lines`); in no live group set (off by default)
 MARKET_GROUPS = ("F9",)
 
+# re-evaluation workstream B (H1 F8 / F8c, H3 F7, H4 F3x): behind a switch, OFF by default
+CONTEXT_B_DEFAULT = False
+B_GROUPS: dict[str, Group] = {
+    "F7": Group("F7", "referee crew tendencies", referees.columns, referees.monotone,
+                neutral=dict(referees.NEUTRAL)),
+    "F8": Group("F8", "player vs this opponent (EB-shrunk residual)", opp_history.columns,
+                opp_history.monotone, neutral=dict(opp_history.NEUTRAL)),
+    "F8r": Group("F8r", "player vs this opponent (light fixed shrinkage)", opp_history.columns_r,
+                 opp_history.monotone_r, neutral=dict(opp_history.NEUTRAL_R)),
+    "F8c": Group("F8c", "player vs this opponent's head coach", opp_history.columns_c,
+                 opp_history.monotone_c, neutral=dict(opp_history.NEUTRAL_C)),
+    "F3x": Group("F3x", "tracking-dashboard opportunity", tracking_ext.columns,
+                 tracking_ext.monotone, neutral=dict(tracking_ext.NEUTRAL)),
+}
+REEVAL_GROUPS: tuple = ()
+
+
+def set_context_b(on: bool) -> None:
+    """Register (ON) or remove (OFF) the workstream-B groups in GROUPS / REEVAL_GROUPS."""
+    global REEVAL_GROUPS
+    if on:
+        GROUPS.update(B_GROUPS)
+        REEVAL_GROUPS = tuple(B_GROUPS)
+    else:
+        for g in B_GROUPS:
+            GROUPS.pop(g, None)
+        REEVAL_GROUPS = ()
+
+
+def context_b_on() -> bool:
+    return bool(REEVAL_GROUPS)
+
+
+set_context_b(os.environ.get("COURTSIDE_CONTEXT_B", "1" if CONTEXT_B_DEFAULT else "0")
+              not in ("", "0", "false", "False"))
+
 
 def model_columns(stat: str, groups: Sequence[str]) -> list[str]:
     cols: list[str] = []
@@ -102,5 +147,6 @@ from .store import (LiveExtras, attach, build_frame, day_features,  # noqa: E402
 
 __all__ = ["GROUPS", "Group", "model_columns", "monotone_for", "categorical_for", "build_frame",
            "team_game_features", "day_features", "attach", "extend_frame", "LiveExtras",
-           "EXTENSION_GROUPS", "MARKET_GROUPS",
-           "market_props", "opp_avail", "opp_defense", "player", "tracking", "matchups", "schedule", "shots"]
+           "EXTENSION_GROUPS", "MARKET_GROUPS", "REEVAL_GROUPS", "CONTEXT_B_DEFAULT",
+           "set_context_b", "context_b_on", "B_GROUPS",
+           "opp_history", "referees", "tracking_ext", "market_props", "opp_avail", "opp_defense", "player", "tracking", "matchups", "schedule", "shots"]

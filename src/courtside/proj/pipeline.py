@@ -312,6 +312,19 @@ LINE_FRESH_TAG = "+lf"
 LINE_FRESH_MAX_H = 3.0
 LINE_FRESH_REL_H = 1.0
 LINE_FRESH = _env_flag(LINE_FRESH_ENV, LINE_FRESH_DEFAULT)
+# Ghost candidates (gh, default OFF; env COURTSIDE_GHOST_DROP=1; `set_ghost_drop`;
+# docs/research/reeval-A.md). The minutes candidates are the players of a team's last 10 games
+# whose last team it is; at the start of a season (and after waivers) that keeps last April's
+# two-way / 10-day / tank-minutes players who are on no NBA roster any more (live 2026-10-20 ..
+# 24: 191 projected rows, P(play) 0.33, none played, ~12 expected minutes per team-game taken
+# from the real players). ON, live path only (`project_games` with env_mode "live"):
+# `drop_moved_players(strict=True)` also drops a candidate who is not forced in (DK pool /
+# report) and is on no team of the season's `team_rosters` snapshot (no snapshot -> no-op).
+# Model version only (`+gh`), same bundle and seeds. OFF: unchanged (bit-identical).
+GHOST_DROP_DEFAULT = False
+GHOST_DROP_ENV = "COURTSIDE_GHOST_DROP"
+GHOST_DROP_TAG = "+gh"
+GHOST_DROP = _env_flag(GHOST_DROP_ENV, GHOST_DROP_DEFAULT)
 
 
 def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1",
@@ -330,8 +343,15 @@ def _versions(on: bool, ext: bool = False, copula: str = "v0", pplay: str = "v1"
     # official injury rows keyed by game date (availability.INJ_GAMEDAY, `+gd`): model version
     # only, same bundle and seeds; its refit cells live in availability's own params file
     mv = mv + AV.INJ_GAMEDAY_TAG if AV.INJ_GAMEDAY else mv
+    # report names matched on the current roster too (availability.REPORT_MATCH, `+rm`) and
+    # ghost candidates dropped (GHOST_DROP, `+gh`): model version only, same bundle and seeds
+    mv = mv + AV.REPORT_MATCH_TAG if AV.REPORT_MATCH else mv
+    mv = mv + GHOST_DROP_TAG if GHOST_DROP else mv
     # reserve extras (minutes.RESERVE_EXTRAS, `+rx`): model version only, same bundle and seeds
     mv = mv + M.RESERVE_EXTRAS_TAG if M.RESERVE_EXTRAS else mv
+    # lineup known (minutes.LINEUP, `+lu`): model version only, same bundle and seeds; its
+    # weights live in minutes' own params file
+    mv = mv + M.LINEUP_TAG if M.LINEUP else mv
     # the reconciliation reserve (reconcile.RECON_RESERVE, `+rr`): model version only, same
     # bundle and seeds; its bench rates live in reconcile's own params file
     mv = mv + RC.RECON_RESERVE_TAG if RC.RECON_RESERVE else mv
@@ -497,6 +517,22 @@ def set_inj_gameday(on: bool) -> None:
                                    MINFIX, BLOWOUT)
 
 
+def set_report_match(on: bool) -> None:
+    """Flip current-roster report matching (availability.REPORT_MATCH) and MODEL_VERSION."""
+    global _VS, MODEL_VERSION
+    AV.set_report_match(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_ghost_drop(on: bool) -> None:
+    """Flip the ghost-candidate drop (GHOST_DROP) and MODEL_VERSION together."""
+    global GHOST_DROP, _VS, MODEL_VERSION
+    GHOST_DROP = bool(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
 def set_line_fresh(on: bool) -> None:
     """Flip the line-freshness bound (LINE_FRESH) and MODEL_VERSION together."""
     global LINE_FRESH, _VS, MODEL_VERSION
@@ -525,6 +561,14 @@ def set_reserve_extras(on: bool) -> None:
     """Flip the reserve extras (minutes.RESERVE_EXTRAS) and MODEL_VERSION together."""
     global _VS, MODEL_VERSION
     M.set_reserve_extras(on)
+    _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
+                                   MINFIX, BLOWOUT)
+
+
+def set_lineup(on: bool) -> None:
+    """Flip the lineup-known adjustments (minutes.LINEUP) and MODEL_VERSION together."""
+    global _VS, MODEL_VERSION
+    M.set_lineup(on)
     _VS, MODEL_VERSION = _versions(CONTEXT_ON, CONTEXT_EXT, COPULA, PPLAY, MINRATIO, PRESEASON,
                                    MINFIX, BLOWOUT)
 
@@ -1374,6 +1418,8 @@ def pplay_v2_fix(ctx: Context, panel: pd.DataFrame, p_avail: dict | None,
        >= `availability.EARLY_ENGINE_SALARY` there keeps the engine's value); DK starter flag
        -> 0.99.
        The engine scores these as active roster players (~0.7 vs ~0.25 played).
+    3. **Lineup known** (`minutes.LINEUP`, `+lu`, default OFF): a DK-flagged starter who is not
+       on the report gets `minutes.LU_P_STARTER`.
     Everybody else keeps the engine's value."""
     out: dict = {}
     if not len(panel):
@@ -1398,6 +1444,10 @@ def pplay_v2_fix(ctx: Context, panel: pd.DataFrame, p_avail: dict | None,
     for k, pid in zip(keys, pids):
         if int(pid) in listed:
             out[(k, int(pid))] = 1.0
+    if M.LINEUP and starters:   # +lu (default OFF): confirmed starters off the report
+        for k, pid in zip(keys, pids):
+            if int(pid) in starters and int(pid) not in listed and (k, int(pid)) not in out:
+                out[(k, int(pid))] = M.LU_P_STARTER
     return out
 
 
@@ -1589,13 +1639,18 @@ def current_teams(conn: sqlite3.Connection, season: str) -> dict[int, str]:
 
 
 def drop_moved_players(panel: pd.DataFrame, current: dict[int, str],
-                       extras: dict | None = None) -> pd.DataFrame:
+                       extras: dict | None = None, strict: bool = False) -> pd.DataFrame:
     """Remove candidates whose current roster team differs from the team they are a candidate
     for (an offseason or mid-season move: last season's box games put a traded player on his
-    old team). Players forced onto a team via `extras` (the DK pool, the report) are kept."""
+    old team). Players forced onto a team via `extras` (the DK pool, the report) are kept.
+    `strict` (GHOST_DROP, `+gh`): a candidate on no team of `current` is removed too."""
     if not current or not len(panel):
         return panel
     forced = {(team, int(p)) for (_, team), pids in (extras or {}).items() for p in pids}
+    if strict:                  # +gh (default OFF: this branch never runs)
+        keep = [(t, int(p)) in forced or current.get(int(p)) == t
+                for p, t in zip(panel["player_id"], panel["team"])]
+        return panel[np.asarray(keep, bool)].reset_index(drop=True)
     keep = [(t, int(p)) in forced or current.get(int(p), t) == t
             for p, t in zip(panel["player_id"], panel["team"])]
     return panel[np.asarray(keep, bool)].reset_index(drop=True)
@@ -1616,7 +1671,11 @@ def project_games(conn: sqlite3.Connection, day, games: pd.DataFrame, *, ctx: Co
     day = _as_date(day)
     panel = candidate_panel(ctx, day, games, extras)
     if env_mode == "live":
-        panel = drop_moved_players(panel, current_teams(conn, season_of(day)), extras)
+        if GHOST_DROP:          # +gh (default OFF: the else line is the unchanged call)
+            panel = drop_moved_players(panel, current_teams(conn, season_of(day)), extras,
+                                       strict=True)
+        else:
+            panel = drop_moved_players(panel, current_teams(conn, season_of(day)), extras)
     pa = {(k, int(pid)): float(p_avail[int(pid)])
           for k, pid in zip(panel["key"], panel["player_id"]) if int(pid) in (p_avail or {})}
     env = {g: environment(conn, g, at, mode=env_mode) for g in games["game_id"]}
@@ -1643,10 +1702,12 @@ def project_day(conn: sqlite3.Connection, nba_day, at, *, n_sims: int = 25_000,
                 seed: int | None = None, kind: str = "manual", game_ids=None,
                 ctx: Context | None = None, bundle: Bundle | None = None,
                 extras: dict | None = None, starters: set | None = None,
-                salaries: dict | None = None,
+                salaries: dict | None = None, dk_out: set | None = None,
                 log: Callable[[str], None] | None = None) -> DayResult:
     """All games of an NBA day (or `game_ids`) as known at `at`, keyed by NBA player_id.
-    `salaries` {player_id: DK salary}: read by P(play) v2 only."""
+    `salaries` {player_id: DK salary}: read by P(play) v2 only. `dk_out` (player_ids DK marks
+    'O'): read only with availability.REPORT_MATCH (`+rm`): a player the report does not list
+    gets P(available) 0."""
     t0 = time.time()
     day = _as_date(nba_day)
     at = _aware(at)
@@ -1657,6 +1718,9 @@ def project_day(conn: sqlite3.Connection, nba_day, at, *, n_sims: int = 25_000,
     if seed is None:
         seed = stable_seed(day.isoformat(), kind, SEED_VERSION)
     p_avail, rep_extras, avinfo = report_avail(conn, day, at, games, starters)
+    if AV.REPORT_MATCH and dk_out:      # +rm (default OFF): DK 'O' off the report = out
+        for pid in dk_out:
+            p_avail.setdefault(int(pid), 0.0)
     ex = merge_extras(extras, rep_extras)
     res = project_games(conn, day, games, ctx=ctx, bundle=b, n_sims=n_sims, seed=seed,
                         p_avail=p_avail, at=at, env_mode="live", extras=ex, starters=starters,
@@ -1699,6 +1763,7 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
     extras: dict = {}
     starters: set = set()
     salaries: dict = {}
+    dk_out: set = set()
     for p in pool.players:
         nid = dk2nba.get(str(p.dk_player_id))
         if nid is None or not p.game_id or not p.team:
@@ -1706,6 +1771,8 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
         extras.setdefault((p.game_id, p.team), []).append(nid)
         if p.starter:
             starters.add(nid)
+        if AV.REPORT_MATCH and getattr(p, "status", None) == "O":     # +rm only
+            dk_out.add(nid)
         if p.salary and pool.game_type_id == CLASSIC_GAME_TYPE:
             salaries.setdefault(nid, int(p.salary))
     if seed is None:
@@ -1714,7 +1781,8 @@ def project_slate(conn: sqlite3.Connection, slate_id, at, *, run_id: str,
         salaries = classic_salaries(conn, day)          # Showdown prices are another scale
     res = project_day(conn, day, at, n_sims=n_sims, seed=seed, kind=kind, game_ids=game_ids,
                       ctx=ctx, bundle=bundle, extras=extras, starters=starters or None,
-                      salaries=salaries if PPLAY == "v2" else None, log=log)
+                      salaries=salaries if PPLAY == "v2" else None,
+                      dk_out=dk_out if AV.REPORT_MATCH else None, log=log)
     nba2dk = {}
     for dk, nid in dk2nba.items():
         nba2dk.setdefault(nid, dk)

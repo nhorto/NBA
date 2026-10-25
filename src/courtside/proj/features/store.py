@@ -24,8 +24,8 @@ import pandas as pd
 
 from ... import config
 from .. import state as ST
-from . import (market_props, matchups, opp_avail, opp_defense, player, schedule, shots,
-               tracking)
+from . import (market_props, matchups, opp_avail, opp_defense, opp_history, player, referees,
+               schedule, shots, tracking, tracking_ext)
 from .common import ALL_STATS, base_rows, load_team_games, season_label
 
 FRAME_VERSION = 4
@@ -189,7 +189,11 @@ def extend_frame(conn: sqlite3.Connection, frame: pd.DataFrame, groups, *, seaso
     F6, and the market group F9; others are ignored) and their row-level columns. Row order
     is kept."""
     out = frame
+    b_on = _b_groups()
     for g in groups:
+        if g in b_on:                 # workstream B (switch ON only); OFF: ignored as before
+            out = _extend_b(conn, out, frame, g, season=season, cache=cache, log=log)
+            continue
         if g == "F9":                 # market lines: never cached (the prop log grows daily)
             if "f9_mean_pts" in out.columns:
                 continue
@@ -222,6 +226,49 @@ def extend_frame(conn: sqlite3.Connection, frame: pd.DataFrame, groups, *, seaso
             out = pd.concat([out, tracking.row_features(out)], axis=1)
         if g == "F4":
             out = pd.concat([out, shots.row_features(out)], axis=1)
+    return out
+
+
+def _b_groups() -> tuple:
+    from .. import features as _fx
+    return tuple(_fx.REEVAL_GROUPS)
+
+
+B_VERSION = 1                 # workstream-B table versions (own cache files)
+B_COLS = {"F7": referees.TEAM_COLS, "F8": opp_history.COLS, "F8r": opp_history.COLS_R,
+          "F8c": opp_history.COLS_C, "F3x": tracking_ext.TEAM_COLS}
+
+
+def _extend_b(conn: sqlite3.Connection, out: pd.DataFrame, frame: pd.DataFrame, g: str, *,
+              season: str, cache: bool, log) -> pd.DataFrame:
+    """Join a workstream-B group (F7 per (game_id, team); F8 / F8c / F3x per (game_id,
+    player_id)), cached like the other extension groups."""
+    say = log or (lambda m: None)
+    cols = B_COLS[g]
+    if all(c in out.columns for c in cols):
+        return out
+    path = _ext_path(season, f"{g}b{B_VERSION}", frame)
+    if cache and path.exists():
+        tab = pd.read_parquet(path)
+    else:
+        t0 = time.time()
+        if g == "F7":
+            tab = referees.build(conn, frame, season=season)
+        elif g in ("F8", "F8r", "F8c"):
+            tab = opp_history.build(conn, frame, season=season, coach=g == "F8c")
+        else:
+            tab = tracking_ext.build(conn, frame, pos=ST.load_positions(conn))
+        say(f"features: {g} {len(tab)} rows ({time.time() - t0:.0f}s)")
+        if cache:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tab.to_parquet(path)
+    key = ["game_id", "team"] if g == "F7" else ["game_id", "player_id"]
+    tab = tab.drop_duplicates(key)
+    n = len(out)
+    out = out.merge(tab[key + list(cols)], on=key, how="left")
+    assert len(out) == n
+    if g == "F3x":
+        out = pd.concat([out, tracking_ext.row_features(out)], axis=1)
     return out
 
 

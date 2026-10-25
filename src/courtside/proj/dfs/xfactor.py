@@ -536,7 +536,8 @@ def noisy_fields(players, inputs, contest, rules, *, base=None, ownership=None,
         f = F.build_field(players, inputs, contest, rules=rules, n=n or int(base.n),
                           mix=base.mix, archetype=base.archetype, ownership=opj,
                           seed=seed + 100 + j, threads=threads, opt_pairs=base.opt_solves)
-        f.version = F.FIELD_VERSION + F.FIELD_K_TAG
+        f.version = (F.FIELD_VERSION_CAL if op.version.startswith(F.MODEL_CAL)
+                     else F.FIELD_VERSION) + F.FIELD_K_TAG
         fields.append(f)
     return F.FieldSet(fields, op, sdv, unc, seconds=time.perf_counter() - t0)
 

@@ -676,9 +676,16 @@ def strength_field(players, inputs, contest: F.Contest, rules: Rules, name: str,
     COURTSIDE_FIELD_K on (`field.field_k()`), K fields (`field.build_fields`, ownership
     uncertainty with the late-news `own_unc` multipliers); `op` stays the un-perturbed proxy."""
     params, version = F.load_params()
-    w = float(np.clip(params.get("w_ours", 0.5) + STRENGTH_W[name], 0.0, 1.0))
-    op = F.ownership_proxy(inputs, players, rules, archetype=contest.archetype,
-                           params={**params, "w_ours": w}, version=version)
+    w_cal = F.own_cal_w(contest.archetype)          # H8 recalibration (COURTSIDE_OWN_CAL)
+    if w_cal is None:
+        w = float(np.clip(params.get("w_ours", 0.5) + STRENGTH_W[name], 0.0, 1.0))
+        op = F.ownership_proxy(inputs, players, rules, archetype=contest.archetype,
+                               params={**params, "w_ours": w}, version=version)
+    else:                                           # strengths shift around the refit w_ours
+        w = float(np.clip(w_cal + STRENGTH_W[name], 0.0, 1.0))
+        op = F.ownership_proxy(inputs, players, rules, archetype=contest.archetype,
+                               params={**params, "w_ours": w}, version=version,
+                               cal=F.cal_spec_at_w(contest.archetype, w))
     if F.field_k():
         fld = F.build_fields(players, inputs, contest, k=F.field_k(), own_unc=own_unc,
                              rules=rules, n=s.n_field, mix=s.mix, ownership=op,
@@ -1150,7 +1157,7 @@ def _k_bands(fld: "F.FieldSet", lad: Ladder, pay: np.ndarray, rank: np.ndarray,
         per.append(_summary(lad, pay[r], rank[r], contest) | {
             "p_cash": (rank[r] <= lad.paid).mean(0), "p_top1": (rank[r] <= lad.top1).mean(0)})
     port = {"k": fld.k, "version": fld.version,
-            "sd": float(F.OWN_SD.get(fld.ownership.archetype, np.nan)),
+            "sd": float(F.own_sd_table(fld.ownership).get(fld.ownership.archetype, np.nan)),
             "own_unc_players": int(sum(1 for v in fld.own_unc.values() if float(v) != 1.0))}
     for key in ("p_any_cash", "p_any_top1", "e_payout"):
         v = [float(x[key]) for x in per]

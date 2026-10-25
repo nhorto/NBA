@@ -273,6 +273,112 @@ def sd_cpt() -> bool:
     return SD_CPT
 
 
+# Ownership-proxy recalibration on the real standings (re-evaluation H8, IMPROVEMENTS.md D5 / D7 /
+# E8, docs/research/reeval-C.md; switch COURTSIDE_OWN_CAL, OFF by default). OFF, the proxy is
+# own-proxy-1.2 exactly. ON (`OWN_CAL_SPEC`; versions own-proxy-1.3 / field-proxy-1.3):
+# * GPPs: concentration 0.90 -> 0.65 (small GPP keeps the 1.2 ratio: 1.00 -> 0.72) and the public
+#   projection's weight on our projection w_ours 0.50 -> 0.70 (the public uses news-aware
+#   projections, not early-season DK FPPG = last season's average: Suggs 20.3 FPPG / 30.2 ours,
+#   4 % proxy vs 31-36 % real). The 1.2 GPP proxy is too steep, not too flat: real vs proxy
+#   log-odds slope 0.74-0.90 on all 8 GPPs and its own top 10 are +6 to +21 pp too high; the
+#   real top 10 reading 11-15 pp low is mostly selection on the outcome (an unbiased proxy with
+#   these errors reads about -11, docs/research/field-k.md §2). Picked on the mean MAE over 3
+#   slates; leave-one-slate-out MAE 4.96 -> 4.37 pp, rank corr 0.86 -> 0.90 (the 10-20 opener
+#   alone is slightly worse, 5.26 -> 5.34).
+# * cash: unchanged (conc 1.60, w_ours 0.50): the only double-ups are the 3 of 10-20 (one
+#   slate); every MAE improves as the cash proxy flattens while real double-ups are far MORE
+#   concentrated than it (Σ own² 4.7 vs 3.5): the miss is who, not how much (D7).
+# * `cal_utility` also carries z(salary), recent-form and teammate-out terms (b_sal / b_form /
+#   b_news, 0 here): fitted on 3 slates their weights flip sign between losses and folds, so
+#   they are not used. `slate_inputs` reads `recent_dk` only when b_form != 0.
+# * K fields (COURTSIDE_FIELD_K): the ON proxy's log-odds noise is OWN_SD_CAL (refit).
+# Fitted by research/reeval_c.py (`grid`, `loso`, `noise`). Re-check after ~3 more slates.
+OWN_CAL_ENV = "COURTSIDE_OWN_CAL"
+OWN_CAL_DEFAULT = False
+MODEL_CAL = "own-proxy-1.3"
+FIELD_VERSION_CAL = "field-proxy-1.3"
+OWN_CAL_FORM_GAMES = 3
+OWN_CAL_NEWS_MIN = 20.0       # a teammate OUT who averaged >= 20 minutes (last 15 games)
+OWN_CAL_SPEC: dict[str, Any] = {
+    "params": {"w_ours": 0.70, "b_sal": 0.0, "b_form": 0.0, "b_news": 0.0},
+    "arch_params": {"cash": {"w_ours": 0.50}},
+    "conc": {"cash": 1.60, "small_gpp": 0.65 / 0.90, "large_gpp": 0.65},
+}
+OWN_SD_CAL: dict[str, float] = {"cash": 2.00, "small_gpp": 1.00, "large_gpp": 1.00}
+
+
+def own_cal_mode(v: Any, default: bool = OWN_CAL_DEFAULT) -> bool:
+    """'' / None -> `default`; 1 on true yes -> True; 0 off false no -> False."""
+    if v is None:
+        return bool(default)
+    if isinstance(v, bool):
+        return v
+    x = str(v).strip().lower()
+    if x == "":
+        return bool(default)
+    if x in ("1", "on", "true", "yes"):
+        return True
+    if x in ("0", "off", "false", "no"):
+        return False
+    log.warning("%s=%r not understood; ownership recalibration off", OWN_CAL_ENV, v)
+    return False
+
+
+OWN_CAL = own_cal_mode(os.environ.get(OWN_CAL_ENV), OWN_CAL_DEFAULT)
+
+
+def set_own_cal(on: Any) -> None:
+    """Turn the ownership recalibration on / off for later proxies (the env is read at import)."""
+    global OWN_CAL
+    OWN_CAL = own_cal_mode(on, False)
+
+
+def own_cal() -> bool:
+    return OWN_CAL
+
+
+def _cal_spec(cal: Any) -> dict | None:
+    """The recalibration spec in effect: None -> the switch; False -> none; True -> OWN_CAL_SPEC;
+    a mapping {"params": ..., "conc": ...} -> that (research refits)."""
+    if cal is None:
+        cal = OWN_CAL
+    if cal is False:
+        return None
+    if cal is True:
+        return OWN_CAL_SPEC
+    return {"params": dict(cal.get("params") or {}),
+            "arch_params": dict(cal.get("arch_params") or {}),
+            "conc": {**OWN_CAL_SPEC["conc"], **(cal.get("conc") or {})}}
+
+
+def own_cal_w(archetype: str) -> float | None:
+    """The ON spec's public-projection weight at `archetype` (None when the switch is OFF): the
+    contest builder's field strengths (`portfolio.STRENGTH_W`) shift around it."""
+    spec = _cal_spec(None)
+    if spec is None:
+        return None
+    return float(_cal_params(spec, archetype).get("w_ours", DEFAULT_PARAMS["w_ours"]))
+
+
+def cal_spec_at_w(archetype: str, w: float) -> dict:
+    """OWN_CAL_SPEC with the public-projection weight at `archetype` set to `w`."""
+    spec = _cal_spec(True)
+    ap = {a: dict(v) for a, v in (spec.get("arch_params") or {}).items()}
+    ap.setdefault(archetype, {})["w_ours"] = float(w)
+    return {"params": dict(spec["params"]), "arch_params": ap, "conc": dict(spec["conc"])}
+
+
+def own_sd_table(op: "OwnershipProxy") -> dict[str, float]:
+    """The K-field log-odds sd table of a proxy: OWN_SD_CAL for the H8 recalibration, else
+    OWN_SD."""
+    return OWN_SD_CAL if op.version.startswith(MODEL_CAL) else OWN_SD
+
+
+def _cal_params(spec: Mapping[str, Any], archetype: str) -> dict:
+    """The spec's utility weights at `archetype` (its per-archetype overrides applied)."""
+    return {**spec["params"], **(spec.get("arch_params") or {}).get(archetype, {})}
+
+
 # ============================================================================== inputs
 
 def _f(v) -> float | None:
@@ -378,6 +484,36 @@ def recent_minutes(conn: sqlite3.Connection, nba_ids: Iterable[int], before: str
     return out
 
 
+def recent_dk(conn: sqlite3.Connection, nba_ids: Iterable[int], before: str,
+              n_games: int = OWN_CAL_FORM_GAMES) -> dict[int, float]:
+    """Mean DK points (`rules.dk_points`) over each player's last `n_games` box scores with
+    minutes before `before` (any season type): the recent-form input of the H8 recalibration."""
+    from .rules import dk_points
+    ids = sorted({int(i) for i in nba_ids if i is not None})
+    out: dict[int, float] = {}
+    for k in range(0, len(ids), 400):
+        chunk = ids[k:k + 400]
+        q = ",".join("?" * len(chunk))
+        try:
+            rows = conn.execute(
+                f"SELECT player_id, pts, fg3m, reb, ast, stl, blk, tov, min FROM player_games "
+                f"WHERE player_id IN ({q}) AND game_date < ? ORDER BY player_id, game_date DESC",
+                [*chunk, before]).fetchall()
+        except sqlite3.Error:
+            return out
+        got: dict[int, list[float]] = {}
+        for r in rows:
+            d = dict(zip(("player_id", "pts", "fg3m", "reb", "ast", "stl", "blk", "tov", "min"),
+                         tuple(r)))
+            if not (_f(d["min"]) or 0) > 0:
+                continue
+            g = got.setdefault(int(d["player_id"]), [])
+            if len(g) < n_games:
+                g.append(dk_points(d))
+        out.update({pid: float(np.mean(v)) for pid, v in got.items() if v})
+    return out
+
+
 def pool_inputs(pool: SlatePool | Sequence[PoolPlayer], *, proj: Mapping[str, float] | None = None,
                 fppg: Mapping[str, float] | None = None,
                 proj_min: Mapping[str, float] | None = None,
@@ -413,12 +549,16 @@ def capture_at(conn: sqlite3.Connection, slate_id, ts: str | None) -> str | None
 
 
 def slate_inputs(conn: sqlite3.Connection, slate_id, run_id: str | None = None, *,
-                 as_of: str | None = None) -> tuple[SlatePool, pd.DataFrame, dict]:
+                 as_of: str | None = None, cal: Any = None
+                 ) -> tuple[SlatePool, pd.DataFrame, dict]:
     """(pool, inputs, info) for a live DK slate from its latest salary capture, the projection run
     (`run_id`, default the newest run with sims), line snapshots and recent box-score minutes.
     `as_of` (ISO UTC) uses the latest capture at or before it instead (statuses, starter flags
     and FPPG as the public saw them then: the ownership refit and the real-standings research
-    rebuild a past run's inputs this way; live runs leave it None = the newest capture)."""
+    rebuild a past run's inputs this way; live runs leave it None = the newest capture).
+    With the H8 recalibration in effect (`cal`, None = the COURTSIDE_OWN_CAL switch) and a
+    non-zero form weight, the inputs also carry `recent_dk` (`recent_dk`, the last
+    OWN_CAL_FORM_GAMES box scores); otherwise (OFF, or the shipped spec) they do not."""
     from . import rules as R
     from .. import ids as IDS
     sid = str(slate_id)
@@ -449,6 +589,13 @@ def slate_inputs(conn: sqlite3.Connection, slate_id, run_id: str | None = None, 
         if (p.game_id, side) in tt:
             totals[p.dk_player_id] = tt[(p.game_id, side)]
     inp = pool_inputs(pool, proj=proj, proj_min=pmin, recent_min=recent, totals=totals)
+    spec = _cal_spec(cal)
+    if spec is not None and day and any(_cal_params(spec, a).get("b_form", 0.0)
+                                        for a in ARCHETYPES):
+        rdk = recent_dk(conn, dk2nba.values(), day)
+        inp["recent_dk"] = [rdk.get(dk2nba.get(p)) if dk2nba.get(p) is not None else None
+                            for p in inp["pid"]]
+        inp["recent_dk"] = pd.to_numeric(inp["recent_dk"], errors="coerce")
     info = {"run_id": run_id, "sim_path": run.get("sim_path") if run else None,
             "n_projected": int(inp["proj"].notna().sum()), "n_totals": len(totals),
             "n_recent_min": len(recent), "nba_day": day, "lock_utc": lock}
@@ -590,6 +737,49 @@ def utility(inputs: pd.DataFrame, params: Mapping[str, float], archetype: str = 
     return np.where(active, u, -np.inf), active, feats
 
 
+def cal_utility(inputs: pd.DataFrame, params: Mapping[str, float], archetype: str,
+                spec: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, dict]:
+    """The recalibrated utility (COURTSIDE_OWN_CAL ON, `OWN_CAL_SPEC`): `utility`'s terms with
+    the spec's weights, plus z(salary), recent form and teammate-out news, at the spec's
+    per-archetype concentration. Same return shape as `utility`."""
+    P = {"b_sal": 0.0, "b_form": 0.0, "b_news": 0.0, **DEFAULT_PARAMS, **(params or {}),
+         **_cal_params(spec, archetype)}
+    pub = public_projection(inputs, P["w_ours"])
+    sal = inputs["salary"].to_numpy(float)
+    status = inputs["status"].fillna("").astype(str).str.upper().to_numpy()
+    active = (pub >= MIN_PUB_PROJ) & ~np.isin(status, list(OUT_STATUSES)) & (sal > 0)
+    value = pub / np.maximum(sal / 1000.0, 0.1)
+    ref = active & (pub >= 8)
+    games = inputs.loc[active, "game"].nunique() if active.any() else 0
+    small = float(np.clip((8 - games) / 6.0, 0.0, 1.0))
+    zt = _z(inputs["team_total"].to_numpy(float), ref)
+    pmin, rmin = inputs["proj_min"].to_numpy(float), inputs["recent_min"].to_numpy(float)
+    gain = np.where(np.isfinite(pmin) & np.isfinite(rmin), pmin - np.nan_to_num(rmin), 0.0)
+    repl = (np.isfinite(pmin) & np.isfinite(rmin) & (gain >= 6)).astype(float)
+    q = np.isin(status, list(Q_STATUSES)).astype(float)
+    st = inputs["starter"]
+    known = st.notna().any() and bool(st.fillna(False).astype(bool).any())
+    bench = (known & (~st.fillna(False).astype(bool)).to_numpy() & (repl == 0)).astype(float)
+    # teammate-out news: a rotation teammate (>= OWN_CAL_NEWS_MIN recent minutes) is OUT
+    out = np.isin(status, list(OUT_STATUSES)) & (np.nan_to_num(rmin) >= OWN_CAL_NEWS_MIN)
+    teams_out = set(inputs.loc[out, "team"].astype(str))
+    hit = inputs["team"].astype(str).isin(teams_out).to_numpy()
+    news = np.where(hit, np.clip(gain / 10.0, 0.0, 1.5), 0.0)
+    if "recent_dk" in inputs.columns:
+        rd = inputs["recent_dk"].to_numpy(float)
+        form = np.clip((rd - pub) / np.maximum(pub, 10.0), -1.0, 1.0)
+        form = np.where(np.isfinite(form), form, 0.0)
+    else:
+        form = np.zeros(len(inputs))
+    conc = float(spec["conc"][archetype])
+    u = conc * (P["b_value"] * _z(value, ref) + (P["b_proj"] + P["b_small"] * small) * _z(pub, ref)
+                + P["b_total"] * zt + P["b_repl"] * repl + P["b_q"] * q + P["b_bench"] * bench
+                + P["b_sal"] * _z(sal, ref) + P["b_form"] * form + P["b_news"] * news)
+    feats = {"pub": pub, "value": value, "small": small, "games": games, "repl": repl, "q": q,
+             "bench": bench, "form": form, "news": news}
+    return np.where(active, u, -np.inf), active, feats
+
+
 def cpt_utility(inputs: pd.DataFrame, params: Mapping[str, float], archetype: str,
                 feats: Mapping[str, Any], active: np.ndarray) -> np.ndarray:
     """The Showdown captain utility (B6, `CPT_PARAMS`): star-weighted by the public projection
@@ -633,12 +823,14 @@ def ownership_proxy(inputs: pd.DataFrame, pool: SlatePool | Sequence[PoolPlayer]
                     rules: Rules | None = None, *, archetype: str = "large_gpp",
                     params: Mapping[str, float] | None = None, version: str | None = None,
                     spend: float | None = None, row_cap: float | None = None,
-                    cpt: bool | None = None) -> OwnershipProxy:
+                    cpt: bool | None = None, cal: Any = None) -> OwnershipProxy:
     """The ownership proxy (Σ own = number of slots). See the module docstring. `spend`
     (fraction of the cap the field spends on average) defaults to SPEND; `row_cap` (most
     ownership any one player gets) to the archetype's (`row_cap_for`). `cpt` (None: the
     COURTSIDE_SD_CPT switch, `sd_cpt()`): the Showdown captain term (B6, `cpt_utility`) for
-    the CPT column; ignored on rosters without a CPT slot."""
+    the CPT column; ignored on rosters without a CPT slot. `cal` (None: the COURTSIDE_OWN_CAL
+    switch, `own_cal()`; True / False; or a spec mapping): the real-standings recalibration
+    (`OWN_CAL_SPEC`, `cal_utility`); its version replaces MODEL by MODEL_CAL."""
     spend = SPEND if spend is None else float(spend)
     row_cap = row_cap_for(archetype) if row_cap is None else float(row_cap)
     rules = rules or (pool.rules if isinstance(pool, SlatePool) else None)
@@ -652,7 +844,14 @@ def ownership_proxy(inputs: pd.DataFrame, pool: SlatePool | Sequence[PoolPlayer]
         params = params if params is not None else lp
         version = version or lv
     P = {**DEFAULT_PARAMS, **params}
-    u, active, feats = utility(inputs, P, archetype)
+    spec = _cal_spec(cal)
+    if spec is None:
+        u, active, feats = utility(inputs, P, archetype)
+    else:                               # H8 recalibration (COURTSIDE_OWN_CAL)
+        u, active, feats = cal_utility(inputs, P, archetype, spec)
+        P = {**P, **_cal_params(spec, archetype)}
+        version = (version.replace(MODEL, MODEL_CAL, 1) if MODEL in version
+                   else f"{MODEL_CAL}-{version}")
     names, counts, E, S = _eligibility(inputs, by_id, rules)
     E &= active[:, None]
     target = spend * rules.salary_cap
@@ -798,7 +997,9 @@ def fit_from_uploads(conn: sqlite3.Connection, *, save: bool = True,
     def predict(params, gs):
         out = []
         for sid, pool, inp, arch, y in gs:
-            op = ownership_proxy(inp, pool, archetype=arch, params=params, version="fit")
+            # the 1.2 utility: the H8 spec (COURTSIDE_OWN_CAL) would override the fitted w_ours
+            op = ownership_proxy(inp, pool, archetype=arch, params=params, version="fit",
+                                 cal=False)
             # Showdown uploads store the UTIL %Drafted (standings._ownership_rows; CPT in the
             # upload's detail), so a Showdown contest is compared on the UTIL column (B6)
             pred = dict(zip(op.pids, op.by_slot[:, op.slot_names.index("UTIL")]
@@ -907,7 +1108,8 @@ def calibration_report(conn: sqlite3.Connection) -> dict:
         pass
     ds = ST.ownership_dataset(conn)
     run_of = dict(zip(ds["contest_id"].astype(str), ds["run_id"])) if len(ds) else {}
-    out: dict = {"label": LABEL, "version": f"{MODEL}/{FIELD_VERSION}", "contests": [],
+    ver = f"{MODEL_CAL}/{FIELD_VERSION_CAL}" if own_cal() else f"{MODEL}/{FIELD_VERSION}"
+    out: dict = {"label": LABEL, "version": ver, "contests": [],
                  "slates": {}, "n_slates": len({r[1] for r in rows}), "needed": MIN_FIT_SLATES}
     cache: dict = {}
     by_slate: dict = {}
@@ -922,6 +1124,11 @@ def calibration_report(conn: sqlite3.Connection) -> dict:
                 keys.append(tuple(sorted(n for _, n in pr)))
         cnt = pd.Series(keys).value_counts() if keys else pd.Series(dtype=int)
         m = max(1, len(keys))
+        if c is not None and c.field_size <= 1 and not c.payouts and len(keys) > 1:
+            # upload-only contest without a stored field size: classify by the standings'
+            # entries (it read as a 0-entry small GPP: 4 of the 10-23 GPPs)
+            c = dc_replace(c, field_size=len(keys), archetype=classify_contest(
+                {"attrs": {}, "payouts": [], "field_size": len(keys)}))
         own = {}
         for pid, pct in conn.execute("SELECT player_id, pct_drafted FROM dfs_contest_ownership "
                                      "WHERE contest_id=?", (cid,)):
@@ -1152,9 +1359,12 @@ class Field:
 
 
 def field_version(op: "OwnershipProxy | None" = None, k: bool = False) -> str:
-    """The field proxy's version: FIELD_VERSION, + FIELD_K_TAG for K fields (D5), + SD_CPT_TAG
-    when the ownership proxy carries the Showdown captain term (B6)."""
-    return (FIELD_VERSION + (FIELD_K_TAG if k else "")
+    """The field proxy's version: FIELD_VERSION (FIELD_VERSION_CAL when the ownership proxy is
+    the H8 recalibration, MODEL_CAL), + FIELD_K_TAG for K fields (D5), + SD_CPT_TAG when the
+    ownership proxy carries the Showdown captain term (B6)."""
+    base = FIELD_VERSION_CAL if op is not None and op.version.startswith(MODEL_CAL) \
+        else FIELD_VERSION
+    return (base + (FIELD_K_TAG if k else "")
             + (SD_CPT_TAG if op is not None and SD_CPT_TAG in op.version else ""))
 
 
@@ -1419,7 +1629,7 @@ def build_field(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
               salary=sal_u, field_size=contest.field_size, mix=mix, archetype=archetype,
               ownership=op, n_solves=len(opt_pairs), opt_keys=okeys, dupe_c=dupe_c,
               cap=rules.salary_cap, slot_salary=S, opt_solves=opt_pairs)
-    if SD_CPT_TAG in op.version:        # B6 captain term ON (Showdown only)
+    if SD_CPT_TAG in op.version or op.version.startswith(MODEL_CAL):   # B6 / H8 ON
         f.version = field_version(op)
     f.info["contest"] = {"contest_id": contest.contest_id, "name": contest.name,
                          "source": contest.source}
@@ -1468,7 +1678,8 @@ def own_sd_for(op: OwnershipProxy, own_unc: Mapping[str, float] | None = None,
                sd: float | None = None) -> np.ndarray:
     """Per-player log-odds sd of the ownership noise: the archetype's OWN_SD (or `sd`) x the
     player's `own_unc` multiplier (late_news_tag.own_uncertainty; default 1.0)."""
-    base = OWN_SD.get(op.archetype.split("/")[0], OWN_SD["large_gpp"]) if sd is None else sd
+    table = own_sd_table(op)
+    base = table.get(op.archetype.split("/")[0], table["large_gpp"]) if sd is None else sd
     u = own_unc or {}
     return np.array([base * float(u.get(str(p), 1.0)) for p in op.pids], float)
 
@@ -1584,7 +1795,7 @@ def build_fields(pool: SlatePool | Sequence[PoolPlayer], inputs: pd.DataFrame,
         shared = f.opt_solves
         fields.append(f)
     fs = FieldSet(fields, op, sdv, unc, seconds=time.perf_counter() - t0)
-    if SD_CPT_TAG in op.version:        # B6 captain term ON (Showdown only)
+    if SD_CPT_TAG in op.version or op.version.startswith(MODEL_CAL):   # B6 / H8 ON
         fs.version = field_version(op, k=True)
     return fs
 

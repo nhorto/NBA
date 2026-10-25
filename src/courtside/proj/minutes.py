@@ -2335,6 +2335,66 @@ def _rx_table() -> dict:
         return {}
 
 
+# Lineup known (lu, default OFF; env COURTSIDE_LINEUP=1; pipeline.set_lineup; docs/research/
+# reeval-A.md). With confirmed starters (lock-10) `project_arrays` demotes an expected starter
+# who is not in the lineup to min(adj, (1 - w_demote) adj + w_demote bench_target) and lifts an
+# unexpected starter toward w_target x the team's starter target + (1 - w_target) x his own
+# EWMA; OFF both weights are the hard-coded 0.5. Live 2026-10-20 .. 24 (lock-10 / swap, played):
+# unexpected starters ran -2.3 (rotation tier, n 54) / -6.3 (fringe rotation, n 12) minutes
+# short, expected starters left out of the lineup +3.1 long (n 52). ON: the weights of season S
+# from `lineup_params.json` (fit on seasons < S by research/reeval_a_lineup.py; a season
+# without an entry uses the newest earlier one; no file -> the OFF 0.5 / 0.5) and, in
+# pipeline.pplay_v2_fix, a confirmed starter who is not on the report gets P(plays | available)
+# LU_P_STARTER (the report path already gives listed ones 0.99; live: 281 flagged starters at
+# P 0.96 on average, none sat). Model version only (`+lu`), same bundle and seeds.
+LINEUP_DEFAULT = False                 # shipping = True here (env still overrides)
+LINEUP_ENV = "COURTSIDE_LINEUP"
+LINEUP_TAG = "+lu"
+LU_PATH = Path(__file__).with_name("lineup_params.json")
+LU_OFF = (0.5, 0.5)                    # (w_demote, w_target) of the OFF code
+LU_P_STARTER = 0.99
+_LU_OVERRIDE: tuple[float, float] | None = None     # research grid fits only
+
+
+def _lu_flag() -> bool:
+    v = os.environ.get(LINEUP_ENV, "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return LINEUP_DEFAULT
+
+
+LINEUP = _lu_flag()
+
+
+def set_lineup(on: bool) -> None:
+    """Flip the lineup-known switch at run time (pipeline.set_lineup, tests)."""
+    global LINEUP
+    LINEUP = bool(on)
+
+
+@lru_cache(maxsize=None)
+def _lu_table() -> dict:
+    try:
+        return json.loads(LU_PATH.read_text())["seasons"]
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def lineup_weights(season: str) -> tuple[float, float]:
+    """(w_demote, w_target) for season S: `_LU_OVERRIDE` (research), else the season's entry
+    of `lineup_params.json`, else the newest entry of an earlier season, else LU_OFF."""
+    if _LU_OVERRIDE is not None:
+        return _LU_OVERRIDE
+    t = _lu_table()
+    prior = [x for x in t if x <= season]
+    if not prior:
+        return LU_OFF
+    e = t[max(prior)]
+    return float(e["w_demote"]), float(e["w_target"])
+
+
 def pool_reserve(season: str, tgs: float) -> float | None:
     """E[team minutes of career debutants] (no box row before the date: nobody can project them)
     for a team-game `tgs` team games into season S, by DEBUT_BINS, pooled over seasons < S
@@ -2432,9 +2492,16 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
     starters = None if starters is None else np.asarray(starters, bool)
     unexpected = (starters & ~exp_start & avail) if starters is not None else np.zeros(n, bool)
     used = np.zeros(n, bool)
+    lu = LINEUP and starters is not None            # +lu (default OFF: lu is False)
+    if lu:
+        w_dem, w_tgt = lineup_weights(params.season)
     if starters is not None:
         demote = exp_start & avail & ~starters
-        adj[demote] = np.minimum(adj[demote], 0.5 * adj[demote] + 0.5 * params.bench_target)
+        if lu:
+            adj[demote] = np.minimum(adj[demote], (1.0 - w_dem) * adj[demote]
+                                     + w_dem * params.bench_target)
+        else:
+            adj[demote] = np.minimum(adj[demote], 0.5 * adj[demote] + 0.5 * params.bench_target)
     js = np.flatnonzero(absent & exp_start & (base >= ROTATION_MIN))
     js = js[np.argsort(-base[js], kind="stable")]
     pool = avail & (p > 0.05) & ~exp_start
@@ -2475,7 +2542,7 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
                         probs[cand] = w / w.sum()
                         mass[cand] *= (1.0 - probs[cand])
         if probs.any():
-            new = 0.5 * t[gj] + 0.5 * ew
+            new = (w_tgt * t[gj] + (1.0 - w_tgt) * ew) if lu else 0.5 * t[gj] + 0.5 * ew
             gain = np.maximum(new - base, 0.0) * probs
             if starters is None:
                 gain = gain * params.nmu_scale     # v1: the GBM already promotes
@@ -2499,7 +2566,8 @@ def project_arrays(base, p_avail, absent, g1, g2, st10, ew, tgt, params: Minutes
     # confirmed unexpected starters not used as anyone's replacement: lift to starter level
     if starters is not None:
         for i in np.flatnonzero(unexpected & ~used):
-            new = 0.5 * t[g1[i]] + 0.5 * ew[i]
+            new = (w_tgt * t[g1[i]] + (1.0 - w_tgt) * ew[i]) if lu else \
+                0.5 * t[g1[i]] + 0.5 * ew[i]
             if new > adj[i] + lift[i]:
                 lift[i] += new - (adj[i] + lift[i])
             pstart[i] = 1.0
