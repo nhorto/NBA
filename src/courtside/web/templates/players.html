@@ -11,33 +11,105 @@
 </div>
 {%- endmacro %}
 
+{#- Market context strip: the Brief's pre-tip line, implied team totals and pace ranks. -#}
+{% macro market_strip(g, mk) -%}
+<div class="tr-mkt" role="group" aria-label="Market context, {{ g.label }}">
+  <span class="tr-k" data-tip="The betting market's numbers for this game, shown for context. Not advice.">Market context</span>
+  {%- if mk.has_line %}
+  <span class="tr-i"><span class="tr-l">Spread</span> <b>{{ mk.spread_text }}</b></span>
+  <span class="tr-i"><span class="tr-l">Total</span> <b>{{ mk.total|num(1) }}</b></span>
+  {%- if mk.home_implied is not none %}
+  <span class="tr-i" data-tip="Implied team total: total / 2 minus the team's own spread / 2 (the favourite's is the bigger one).">
+    <span class="tr-l">Implied</span> <b>{{ g.away.code }} {{ mk.away_implied|num(1) }}</b> <span class="muted">&middot;</span> <b>{{ g.home.code }} {{ mk.home_implied|num(1) }}</b></span>
+  {%- endif %}
+  {%- else %}
+  <span class="tr-i muted">No line posted yet</span>
+  {%- endif %}
+  {%- if mk.away_pace or mk.home_pace %}
+  <span class="tr-i" data-tip="League pace rank, {{ mk.pace_season }} (1st = fastest). Pace is possessions per 48 minutes.">
+    <span class="tr-l">Pace</span>
+    {%- for t, pc in ((g.away, mk.away_pace), (g.home, mk.home_pace)) if pc %} <b>{{ t.code }}</b> {{ m.rank_chip(pc.rank, mk.pace_n, "Pace rank") }}{% endfor %}
+    {%- set gp = [(mk.away_pace or {}).gp or 0, (mk.home_pace or {}).gp or 0]|max %}
+    <span class="muted tr-s">{{ mk.pace_season }}{% if gp and gp < 10 %}, {{ gp }} game{{ "s" if gp != 1 }}{% endif %}</span></span>
+  {%- endif %}
+  {%- if mk.has_line %}<span class="tr-src muted">{{ mk.provider or "Market" }}{% if mk.captured_at %}, {{ mk.captured_at|stamp }}{% elif mk.kind == "closing" %}, closing line{% endif %}. Context, not advice.</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- Teammate out: with/without splits for each player listed Out or Doubtful (collapsed). -#}
+{% macro teammate_out(g) -%}
+<details class="tr-tout">
+  <summary>Teammate out: with and without <span class="muted">({{ g.tout_n }} listed Out or Doubtful)</span></summary>
+  <div class="tr-tout-body">
+  {%- for t in g.tout %}
+  {%- set none_ = t.absent|rejectattr("rows")|list %}
+  {%- for b in t.absent if b.rows %}
+  <div class="tr-blk">
+    <h4 class="tr-h">{{ m.badge(team(t.team)) }} Without {{ m.plink(b.player_id, b.name) }} {{ m.status_pill(b.status) }}
+      <span class="muted tr-s">he played {{ b.a_games }} game{{ "s" if b.a_games != 1 }} for {{ t.team }} in {{ b.seasons|join(" and ") }}</span></h4>
+    <div class="tr-scroll">
+    <table class="tr-tbl">
+      <caption class="sr">{{ t.team }} teammates with and without {{ b.name }}: per-game averages, with then without, and the change</caption>
+      <thead><tr><th scope="col" class="l">Teammate</th><th scope="col" data-tip="Games he played with {{ b.name }} / without him (same team, {{ b.seasons|join(' and ') }})">Games<br><span class="tr-sub">with / w/o</span></th>
+      {%- for c in b.rows[0].cells %}<th scope="col">{{ c.label }}<br><span class="tr-sub">with &rarr; w/o</span></th>{% endfor %}</tr></thead>
+      <tbody>
+      {%- for r in b.rows %}
+      <tr class="{% if r.small %}is-small{% endif %}">
+        <th scope="row" class="l">{{ m.plink(r.player_id, r.name) }}</th>
+        <td class="tr-n">{{ r.n_with }} / {{ r.n_without }}{% if r.small %}<span class="tr-small">{{ "small sample" if r.n_without else "no games without" }}</span>{% endif %}</td>
+        {%- for c in r.cells %}
+        <td><span class="tr-pair"><span class="tr-w">{{ c.w|num(1) }}</span><span class="tr-ar" aria-hidden="true">&rarr;</span><b class="tr-wo">{{ c.wo|num(1) }}</b></span>
+          {%- if c.d is not none %}<span class="tr-d {{ 'up' if c.d > 0.05 else ('dn' if c.d < -0.05 else 'eq') }}">{{ c.d|signed(1) }}</span>{% endif %}</td>
+        {%- endfor %}
+      </tr>
+      {%- endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {%- endfor %}
+  {%- if none_ %}
+  <p class="tr-none muted">{{ t.team }}: no games for the team this season or last from {% for b in none_ %}{{ m.plink(b.player_id, b.name) }}{{ ", " if not loop.last }}{% endfor %}, so no split.</p>
+  {%- endif %}
+  {%- endfor %}
+  <p class="tr-note muted">Per-game averages in games the teammate played for the same team, this season and last (regular season and playoffs; only seasons in which the absent player played for the team). &ldquo;With&rdquo; means the absent player also played; &ldquo;w/o&rdquo; means he had no minutes. The change is w/o minus with. Usage % is the share of team plays he used while on the floor. Splits from fewer than {{ v.small_n }} games without him are greyed and marked small sample. These are past results, not a projection.</p>
+  </div>
+</details>
+{%- endmacro %}
+
+{% block head %}<link rel="stylesheet" href="/static/tonight-research.css?v={{ asset_v }}">{% endblock %}
+
 {% block title %}Tonight&rsquo;s players &middot; {{ v.day|medium_date }} &middot; Courtside{% endblock %}
 {% block description %}Our projection for tonight's NBA rotation players, with the book's main player props shown as our chance vs the market's. Information only.{% endblock %}
 
 {% block content %}
-<section class="wrap dfs-hero" aria-labelledby="pl-title">
-  <div class="mast-kicker">
-    <span class="kicker">Players</span>
-    <time datetime="{{ v.day }}">{{ v.day_label }}</time>
+<section class="wrap tp-head" aria-labelledby="pl-title">
+  <div class="card tp-hero">
+    <div class="tp-hero-main">
+      <div class="mast-kicker">
+        <span class="kicker">Tonight</span>
+        <time datetime="{{ v.day }}">{{ v.day_label }}</time>
+      </div>
+      <h1 class="page-title" id="pl-title">Tonight&rsquo;s players</h1>
+      <nav class="tp-links" aria-label="Related">
+        <a href="/brief/{{ v.day }}#tonight">Tonight&rsquo;s games</a><a href="/dfs/{{ v.day }}">DFS slates</a>
+      </nav>
+    </div>
+    <nav class="daynav tp-daynav" aria-label="Day">
+      {% if v.prev_day %}<a class="daynav-a" href="/tonight/{{ v.prev_day }}">{{ m.icon("back") }} {{ v.prev_day|short_date }}</a>{% else %}<span></span>{% endif %}
+      {% if v.next_day %}<a class="daynav-a" href="/tonight/{{ v.next_day }}">{{ v.next_day|short_date }} {{ m.icon("arrow") }}</a>{% else %}<span></span>{% endif %}
+    </nav>
   </div>
-  <h1 class="dfs-h1" id="pl-title">Tonight&rsquo;s players</h1>
-  <nav class="daynav dfs-daynav" aria-label="Day">
-    {% if v.prev_day %}<a class="daynav-a" href="/players/{{ v.prev_day }}">{{ m.icon("back") }} {{ v.prev_day|short_date }}</a>{% else %}<span></span>{% endif %}
-    {% if v.next_day %}<a class="daynav-a" href="/players/{{ v.next_day }}">{{ v.next_day|short_date }} {{ m.icon("arrow") }}</a>{% else %}<span></span>{% endif %}
-  </nav>
-  <nav class="rs-links" aria-label="Related">
-    <a href="/brief/{{ v.day }}#tonight">Tonight&rsquo;s games</a><a href="/dfs/{{ v.day }}">DFS slates</a>
-  </nav>
   {% if v.filters %}
-  <nav class="dfs-tabs" aria-label="Games">
+  <nav class="tp-tabs" aria-label="Games">
     {% for t in v.filters %}
-    <a href="{{ t.url }}" class="dfs-tab{% if t.active %} is-active{% endif %}"{% if t.active %} aria-current="page"{% endif %}><b>{{ t.label }}</b><span>{{ t.sub or (v.n_games ~ " games") }}</span></a>
+    <a href="{{ t.url }}" class="tp-tab{% if t.active %} is-active{% endif %}"{% if t.active %} aria-current="page"{% endif %}><b>{{ t.label }}</b><span>{{ t.sub or (v.n_games ~ " games") }}</span></a>
     {% endfor %}
   </nav>
   {% endif %}
 </section>
 
-<div class="wrap dfs-body">
+<div class="wrap tp-body">
 {% if v.state == "no_db" %}
   {{ m.empty("No data yet", "The database is not available on this server.") }}
 {% elif v.state == "no_games" %}
@@ -45,10 +117,10 @@
 {% else %}
   <p class="caveat pl-disclaimer" role="note"><strong>{{ v.disclaimer }}</strong></p>
 
-  <div class="dfs-filters pl-sorts">
-    <span class="muted pl-sort-k">Sort</span>
-    <ul class="dfs-posf" aria-label="Sort players">
-      {% for s in v.sorts %}<li><a href="{{ s.url }}" class="dfs-pos{% if s.active %} is-active{% endif %}"{% if s.active %} aria-current="true"{% endif %}>{{ s.label }}</a></li>{% endfor %}
+  <div class="tp-sorts">
+    <span class="pl-sort-k">Sort</span>
+    <ul class="tp-seg" aria-label="Sort players">
+      {% for s in v.sorts %}<li><a href="{{ s.url }}" class="tp-sort{% if s.active %} is-active{% endif %}"{% if s.active %} aria-current="true"{% endif %}>{{ s.label }}</a></li>{% endfor %}
     </ul>
   </div>
 
@@ -56,18 +128,20 @@
   <section class="section pl-game" id="g-{{ g.game_id }}" aria-labelledby="g-{{ g.game_id }}-title">
     <header class="sec-head pl-ghead">
       <p class="sec-num" aria-hidden="true">{{ loop.index }}</p>
-      <h2 id="g-{{ g.game_id }}-title" class="pl-gtitle">{{ m.badge(g.away) }} <span>{{ g.away.nickname }} <span class="muted">at</span> {{ g.home.nickname }}</span> {{ m.badge(g.home) }}</h2>
+      <h2 id="g-{{ g.game_id }}-title" class="pl-gtitle">{{ m.badge(g.away, link=True) }} <span>{{ m.tlink(g.away, g.away.nickname) }} <span class="muted">at</span> {{ m.tlink(g.home, g.home.nickname) }}</span> {{ m.badge(g.home, link=True) }}</h2>
       <p class="sec-meta">
         {% if g.tip %}{{ g.tip|tipoff }}{% endif %}
         {% if g.run %} &middot; Projection from the {{ g.run.created_at|stamp }} run{% endif %}
         {% if g.market_at %} &middot; Market as of {{ g.market_at|stamp }}{% endif %}
       </p>
     </header>
+    {% if g.market %}{{ market_strip(g, g.market) }}{% endif %}
     {% if g.listed %}
     <p class="pl-listed"><span class="pl-listed-k">Not expected to play:</span>
-      {% for c in g.listed %}<span class="pl-listed-p">{{ c.name }} <span class="team-tag">{{ c.team }}</span> {{ m.status_pill(c.status) }}</span>{% endfor %}
+      {% for c in g.listed %}<span class="pl-listed-p">{{ m.plink(c.player_id, c.name) }} <span class="team-tag">{{ m.tlink(team(c.team)) }}</span> {{ m.status_pill(c.status) }}</span>{% endfor %}
     </p>
     {% endif %}
+    {% if g.tout %}{{ teammate_out(g) }}{% endif %}
     {% if not g.run %}
     {{ m.empty("No projection yet", "Cards appear after the first projection run for this game.") }}
     {% elif not g.cards %}
@@ -77,9 +151,9 @@
       {% for c in g.cards %}
       <article class="card pl-card" aria-label="{{ c.name }}">
         <header class="pl-head">
-          <h3 class="pl-name">{{ c.name }}</h3>
+          <h3 class="pl-name">{{ m.plink(c.player_id, c.name) }}</h3>
           <p class="pl-sub">
-            <span class="team-tag">{{ c.team }}</span>{% if c.opp %} <span class="muted">{{ c.opp }}</span>{% endif %}
+            <span class="team-tag">{{ m.tlink(team(c.team)) }}</span>{% if c.opp %} <span class="muted">{{ c.opp }}</span>{% endif %}
             {% if c.status %}{{ m.status_pill(c.status) }}{% if c.reason %} <span class="muted pl-reason">{{ c.reason }}</span>{% endif %}{% else %}<span class="muted pl-reason">Not on the injury report</span>{% endif %}
             {% if c.ln %} <span class="tag tag-hl pl-ln" title="{{ c.ln_label }}">Teammate out<span class="sr">: {{ c.ln_label }}</span></span>{% endif %}
           </p>
@@ -122,7 +196,7 @@
   </section>
   {% endfor %}
 
-  <p class="footnote pl-foot">Numbers are our projection if he plays: the mean, then the 10th to 90th percentile range (simulated). DK is DraftKings points. The chance he plays comes from the injury report and our availability model. For each prop line, &ldquo;our model&rdquo; is our chance he finishes above the line and &ldquo;market&rdquo; is the book&rsquo;s chance with its margin removed; the bar fills to ours and the dark tick marks the market&rsquo;s. Props are DraftKings lines via ESPN.{% if v.has_splits %} &ldquo;With and without&rdquo; splits our simulations by whether a teammate who may or may not play is available: minutes and DK points are if he plays; big night is how often he scores at least {{ v.big_k }}&times; his DraftKings salary in thousands in DK points, counting the games he may miss and adjusted for how our upper ranges have run in past seasons; sims is the share of our simulations in each case (shown when each case has at least {{ v.split_min_n }}).{% endif %}{% if v.has_late %} Teammate out marks a teammate of a starter or rotation player listed Doubtful or Out on the injury report in the last {{ v.ln_window }} minutes before the first game of a DFS slate, whose projection rose since the run before that news; hover the tag for the details.{% endif %} {{ v.disclaimer }}</p>
+  <p class="footnote tp-foot">Numbers are our projection if he plays: the mean, then the 10th to 90th percentile range (simulated). DK is DraftKings points. The chance he plays comes from the injury report and our availability model. For each prop line, &ldquo;our model&rdquo; is our chance he finishes above the line and &ldquo;market&rdquo; is the book&rsquo;s chance with its margin removed; the bar fills to ours and the white tick marks the market&rsquo;s. Props are DraftKings lines via ESPN.{% if v.has_splits %} &ldquo;With and without&rdquo; splits our simulations by whether a teammate who may or may not play is available: minutes and DK points are if he plays; big night is how often he scores at least {{ v.big_k }}&times; his DraftKings salary in thousands in DK points, counting the games he may miss and adjusted for how our upper ranges have run in past seasons; sims is the share of our simulations in each case (shown when each case has at least {{ v.split_min_n }}).{% endif %}{% if v.has_late %} Teammate out marks a teammate of a starter or rotation player listed Doubtful or Out on the injury report in the last {{ v.ln_window }} minutes before the first game of a DFS slate, whose projection rose since the run before that news; hover the tag for the details.{% endif %} {{ v.disclaimer }}</p>
 {% endif %}
 </div>
 {% endblock %}

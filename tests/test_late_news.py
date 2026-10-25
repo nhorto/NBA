@@ -270,7 +270,7 @@ def test_dfs_pool_shows_the_tag(data_dir):
     app = create_app(data_dir)
     app.state.dfs_now = lambda: NOW
     html = TestClient(app).get(f"/dfs/{WDAY}/{SLATE}?all=1").text
-    assert 'class="tag tag-hl dfs-ln"' in html and html.count("dfs-ln") == 1
+    assert 'class="dx-tag dx-ln"' in html and html.count("dx-ln") == 1
     t = text_of(html)
     assert f"{news['name']} listed Out" in t and "1 on this slate" in t
     for w in ("edge", "lean", "smash", "leverage", "chalk"):

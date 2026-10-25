@@ -3,7 +3,10 @@
 Routes: `/` (latest Brief), `/brief/<day>`, `/archive`, `/game/<game_id>`, `/health` (model health),
 `/health/dfs` (DFS tab), `/healthz`, `/api/health`, `/dfs` (DFS slates, see dfs_view.py),
 `/dfs/results` (real contest results: uploads and the owner's entries, see dfs_results.py),
-`/players` (Tonight player cards + props vs the market, see players_view.py),
+`/tonight` (Tonight player cards + props vs the market, see players_view.py; `/players/<day>`
+redirects there), the stats pages `/games`, `/teams`, `/team/<ABBR>`, `/players`,
+`/player/<id>`, `/leaders`, `/compare`, `/finder`, `/lineups` (stats_*.py, docs/STATS_SITE.md),
+`/api/search?q=` (top-bar search),
 `/api/brief/<day|latest>`. Run with `courtside serve`; see docs/WEB.md.
 """
 
@@ -12,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,8 +27,12 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import config
+from ..stats import search as stats_search
+from ..stats import seasons as stats_seasons
 from . import (dfs_contest, dfs_results, dfs_swap, dfs_view, dfs_weekly, fmt, health, health_dfs,
-               players_view, view)
+               players_view, stats_compare, stats_finder, stats_games, stats_leaders,
+               stats_lineups, stats_players, stats_teams, view)
+from .stats_common import open_db
 from .store import BriefStore
 from .teams import identity
 
@@ -42,12 +50,20 @@ def _asset_version() -> str:
     return h.hexdigest()[:10]
 
 
+def _safe_today():
+    try:
+        return config.today_nba_day()
+    except Exception:  # noqa: BLE001 - never fail a page over the clock
+        return datetime.now(timezone.utc).date()
+
+
 def make_env(dev: bool = False) -> Environment:
     env = Environment(loader=FileSystemLoader(str(TEMPLATES)),
                       autoescape=select_autoescape(["html", "xml"]),
                       auto_reload=dev, trim_blocks=True, lstrip_blocks=True)
     env.filters.update(fmt.FILTERS)
-    env.globals.update(team=identity, DASH=fmt.DASH, MINUS=fmt.MINUS)
+    env.globals.update(team=identity, DASH=fmt.DASH, MINUS=fmt.MINUS,
+                       stats_seasons=lambda: stats_seasons.seasons(_safe_today()))
     return env
 
 
@@ -63,7 +79,23 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
     dev = bool(os.environ.get("COURTSIDE_WEB_DEV")) if dev is None else dev
     store = BriefStore(data_dir)
     env = make_env(dev)
-    app = FastAPI(title="Courtside", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        # stats warm-up (stats/warm.py): one low-priority background thread precomputes the
+        # shared stats aggregates and serves stale-while-revalidate; COURTSIDE_WARM=0 disables
+        from ..stats import warm as stats_warm
+        tpl = ("templates", lambda: [env.get_template(t) for t in env.list_templates()
+                                     if t.endswith(".html")])
+        warmer = stats_warm.start(store.db_path, today=_safe_today, extra=[tpl])
+        try:
+            yield
+        finally:
+            if warmer is not None:
+                stats_warm.stop(store.db_path)
+
+    app = FastAPI(title="Courtside", docs_url=None, redoc_url=None, openapi_url=None,
+                  lifespan=lifespan)
     app.state.store = store
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.mount("/static", _CachedStatic(directory=str(STATIC)), name="static")
@@ -90,11 +122,7 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
     def not_found(msg: str, detail: str = "") -> HTMLResponse:
         return render("404.html", status=404, message=msg, detail=detail, page="error")
 
-    def _today():
-        try:
-            return config.today_nba_day()
-        except Exception:  # noqa: BLE001 - never fail a page over the clock
-            return datetime.now(timezone.utc).date()
+    _today = _safe_today
 
     def health_banner():
         """Site-wide notice on the Brief pages: only open *critical* alerts trigger it."""
@@ -171,11 +199,12 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
                              f"No stored Brief mentions game {game_id}.")
         day, where, g = hit
         key = ("game", game_id, where) + store.version(day)
+        box = stats_games.game_box(store, game_id)    # box-score hook (None until built)
         if where == "last_night":
             vm = store.derived(key, lambda: view.game_view(g))
-            return render("game.html", g=vm, day=day, page="game")
+            return render("game.html", g=vm, day=day, page="game", box=box)
         vm = store.derived(key, lambda: view.tonight_view(g))
-        return render("preview.html", t=vm, day=day, page="game")
+        return render("preview.html", t=vm, day=day, page="game", box=box)
 
     # /dfs/results and /dfs/weekly must be registered before dfs_view's '/dfs/{day}'
     dfs_results.register(app, store=store, render=render, not_found=not_found, today=_today,
@@ -190,6 +219,17 @@ def create_app(data_dir: str | Path | None = None, *, dev: bool | None = None) -
                          health_banner=health_banner)
     players_view.register(app, store=store, render=render, not_found=not_found, today=_today,
                           health_banner=health_banner)
+    # stats dashboard (docs/STATS_SITE.md): one module per page family
+    for mod in (stats_games, stats_teams, stats_players, stats_leaders, stats_compare,
+                stats_finder, stats_lineups):
+        mod.register(app, store=store, render=render, not_found=not_found, today=_today)
+
+    @app.get("/api/search")
+    def api_search(q: str = ""):
+        with open_db(store) as conn:
+            results = stats_search.search(conn, q, today=_today()) if conn is not None else []
+        return JSONResponse({"q": q, "results": results},
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/health", response_class=HTMLResponse)
     def model_health():

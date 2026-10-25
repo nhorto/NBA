@@ -82,6 +82,40 @@ def by_team_id(team_id: int | str) -> Team:
     return _BY_ID[int(team_id)]
 
 
+# --- Conference / division (current alignment) ------------------------------------------------
+
+DIVISIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "Atlantic": ("East", ("BOS", "BKN", "NYK", "PHI", "TOR")),
+    "Central": ("East", ("CHI", "CLE", "DET", "IND", "MIL")),
+    "Southeast": ("East", ("ATL", "CHA", "MIA", "ORL", "WAS")),
+    "Northwest": ("West", ("DEN", "MIN", "OKC", "POR", "UTA")),
+    "Pacific": ("West", ("GSW", "LAC", "LAL", "PHX", "SAC")),
+    "Southwest": ("West", ("DAL", "HOU", "MEM", "NOP", "SAS")),
+}
+CONFERENCES = ("East", "West")
+_DIVISION_OF = {t: d for d, (_, ts) in DIVISIONS.items() for t in ts}
+
+
+def division(tricode: str) -> str:
+    """Current division of a team ('Atlantic', 'Central', 'Southeast', 'Northwest', 'Pacific',
+    'Southwest')."""
+    return _DIVISION_OF[by_tricode(tricode).tricode]
+
+
+def conference(tricode: str) -> str:
+    """Current conference of a team: 'East' or 'West'."""
+    return DIVISIONS[division(tricode)][0]
+
+
+def teams_in(*, conference: str | None = None, division: str | None = None) -> list[Team]:
+    """Teams of a conference and/or division (case-insensitive), in TEAMS order."""
+    def keep(t: Team) -> bool:
+        d = _DIVISION_OF[t.tricode]
+        return ((division is None or d.lower() == division.lower())
+                and (conference is None or DIVISIONS[d][0].lower() == conference.lower()))
+    return [t for t in TEAMS if keep(t)]
+
+
 # --- Franchise continuity -------------------------------------------------------------------
 #
 # Historical tricodes -> current franchise tricode, by *roster continuity* (who the players

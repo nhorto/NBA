@@ -1,163 +1,197 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_stats.html" as st %}
 {% set t = v.totals %}
+{% macro pl(name, nba_id) -%}
+{%- if nba_id %}<a class="link" href="/player/{{ nba_id }}">{{ name }}</a>{% else %}{{ name }}{% endif -%}
+{%- endmacro %}
 {% block title %}Real results &middot; DFS &middot; Courtside{% endblock %}
 {% block description %}Upload DraftKings contest standings and enter your own contests: your real entries, fees, winnings and ROI, kept apart from the simulated lineups.{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-dfs.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page dfs-page{% endblock %}
 
 {% block content %}
-<section class="wrap dfs-hero" aria-labelledby="rs-title">
-  <div class="mast-kicker"><span class="kicker">DFS</span><span class="rs-real-tag">Real money</span></div>
-  <h1 class="dfs-h1" id="rs-title">Real results</h1>
-  <p class="hm-sub">Contests you actually played: the standings you upload and the entries you add. These numbers never mix with the simulated lineups on <a href="/dfs">the slate pages</a> or <a href="/health/dfs">DFS health</a>.</p>
-  <nav class="rs-links" aria-label="DFS">
-    <a href="/dfs">Slates</a><a href="/health/dfs">DFS health</a><a href="/dfs/weekly">Weekly report</a><a href="/dfs/results" aria-current="page">Real results</a>
-  </nav>
-</section>
+<div class="pro dfs">
+  <div class="crumbs"><a href="/dfs">DFS</a> &rsaquo; <span>Real results</span></div>
 
-{% if v.flash %}
-<div class="wrap">
-  <div class="rs-flash is-{{ v.flash.kind }}" role="status">
-    <p class="rs-flash-title">{{ v.flash.title }}</p>
-    {% for ln in v.flash.lines %}<p>{{ ln }}</p>{% endfor %}
+  <section class="card dx-hero" aria-labelledby="rs-title">
+    <div class="hero">
+      <div class="hero-badge" aria-hidden="true">$</div>
+      <div>
+        <h1 id="rs-title">Real results</h1>
+        <div class="meta">DFS <span class="dx-st dx-st-real">Real money</span></div>
+      </div>
+    </div>
+    <p class="dx-lede">Contests you actually played: the standings you upload and the entries you add. These numbers never mix with the simulated lineups on <a href="/dfs">the slate pages</a> or <a href="/health/dfs">DFS health</a>.</p>
+    <nav class="dx-tools" aria-label="DFS">
+      <a href="/dfs">Slates</a><a href="/health/dfs">DFS health</a><a href="/dfs/weekly">Weekly report</a><a href="/dfs/results" aria-current="page">Real results</a>
+    </nav>
+  </section>
+
+  {% if v.flash %}
+  <div class="rs-flash dx-callout is-{{ v.flash.kind }}" role="status">
+    <span class="dx-ico" aria-hidden="true">{{ "!" if v.flash.kind == "error" else ("✓" if v.flash.kind == "ok" else "i") }}</span>
+    <div>
+      <p class="dx-ct">{{ v.flash.title }}</p>
+      {% for ln in v.flash.lines %}<p>{{ ln }}</p>{% endfor %}
+    </div>
   </div>
-</div>
-{% endif %}
+  {% endif %}
 
 {% if not v.has_db %}
-<section class="section wrap">{{ m.empty("No database yet", "Results can be saved once the collector has created the database.") }}</section>
+  <section class="card"><h3>Real results</h3><div class="body">{{ st.empty("No database yet", "Results can be saved once the collector has created the database.") }}</div></section>
 {% else %}
 
-{# ================================================================ UPLOAD #}
-<section class="section wrap" id="upload" aria-labelledby="upload-title">
-  {{ m.sec_head("upload", "01", "Upload a finished contest") }}
-  <div class="card rs-card">
-    <ol class="rs-steps">
-      <li>When a contest is over, open it on DraftKings and use <b>Export lineups to CSV</b>.</li>
-      <li>Choose that file here (a <code>.zip</code> of them works too). Your DraftKings Contest History CSV is accepted as well.</li>
-      <li>Everything is read on this machine. The file name usually carries the contest number; if it does not, type it in.</li>
-    </ol>
-    <form class="rs-form" method="post" action="/dfs/results/upload" enctype="multipart/form-data">
-      <label class="rs-field rs-wide"><span>File <small>(up to {{ v.max_mb }} MB)</small></span>
-        <input class="dfs-input" type="file" name="file" accept=".csv,.zip,text/csv,application/zip" required></label>
-      <label class="rs-field"><span>Your DraftKings username{% if v.needs_username %} <small>(needed to find your entries)</small>{% endif %}</span>
-        <input class="dfs-input" type="text" name="username" autocomplete="off" autocapitalize="off" maxlength="120"
-               value="{{ v.usernames[0] if v.usernames else '' }}" placeholder="the name shown on your entries"{% if v.needs_username %} required{% endif %}></label>
-      <label class="rs-field"><span>Contest number <small>(only if the file name has none)</small></span>
-        <input class="dfs-input" type="text" name="contest_id" inputmode="numeric" pattern="[0-9]*" maxlength="14" placeholder="e.g. 196456028"></label>
-      <label class="rs-field"><span>Slate <small>(optional: used when it cannot be worked out)</small></span>
-        <select class="dfs-input" name="slate_id"><option value="">Work it out</option>
-          {% for s in v.slates %}<option value="{{ s.id }}">{{ s.label }}</option>{% endfor %}</select></label>
-      <label class="rs-check"><input type="checkbox" name="remember" value="1" checked> Remember my username</label>
-      <div class="rs-actions"><button class="btn" type="submit">Upload</button></div>
-    </form>
-    {% if v.usernames %}<p class="card-sub">Matching entries named <b>{{ v.usernames|join(", ") }}</b> (the &ldquo;(2/20)&rdquo; part is ignored).</p>{% endif %}
-  </div>
-</section>
-
 {# ================================================================ MY RESULTS #}
-<section class="section wrap" id="mine" aria-labelledby="mine-title">
-  {% set tmeta %}{% if t.entries %}{{ t.entries }} entr{{ 'y' if t.entries == 1 else 'ies' }}{% endif %}{% endset %}
-  {{ m.sec_head("mine", "02", "My results", tmeta) }}
-  {% if t.entries %}
-  <dl class="stats rs-stats" aria-label="Real totals">
-    <div><dt>Entries</dt><dd>{{ t.entries }}</dd></div>
-    <div><dt>Fees</dt><dd>{{ t.fees }}</dd></div>
-    <div><dt>Winnings</dt><dd>{{ t.winnings }}</dd></div>
-    <div><dt>Net</dt><dd class="rs-{{ t.net_sign }}">{{ t.net }}</dd></div>
-    <div><dt>ROI</dt><dd class="rs-{{ t.net_sign }}">{{ t.roi }}</dd></div>
-    <div><dt>Cashed</dt><dd>{{ t.cashed }}</dd></div>
-  </dl>
-  {% if t.pending %}<p class="caveat">{{ t.pending }} entr{{ 'y has' if t.pending == 1 else 'ies have' }} no winnings recorded yet, so {{ 'it is' if t.pending == 1 else 'they are' }} left out of winnings, net and ROI until you add {{ 'it' if t.pending == 1 else 'them' }}.</p>{% endif %}
-  {% if t.no_fee %}<p class="caveat">{{ t.no_fee }} entr{{ 'y has' if t.no_fee == 1 else 'ies have' }} no entry fee recorded. Add it below.</p>{% endif %}
-  <p class="card-sub">A few entries cannot show whether the lineups make money: a good strategy still loses over many short stretches. They are most useful for real cash lines and ownership.</p>
-  <ul class="rs-entries" aria-label="Your real contest entries">
-    {% for e in v.entries %}
-    <li class="card rs-entry">
-      <div class="card-head-row"><h3 class="rs-cname">{{ e.contest }}</h3><span class="muted card-note">{{ e.day|medium_date if e.day else "" }}</span></div>
-      <p class="rs-sub">{% if e.lineup %}{{ e.lineup }} &middot; {% endif %}{{ 'added by hand' if e.source == 'manual' else 'from an upload' }}</p>
-      <dl class="rs-kv rs-kv5">
-        <div><dt>Fee</dt><dd>{% if e.fee_missing %}<form class="rs-inline" method="post" action="/dfs/results/entry/{{ e.id }}"><input class="dfs-input rs-mini" name="fee" inputmode="decimal" placeholder="fee" aria-label="Entry fee"><button class="btn btn-sm btn-ghost" type="submit">Save</button></form>{% else %}{{ e.fee }}{% endif %}</dd></div>
-        <div><dt>Points</dt><dd>{{ e.points }}</dd></div>
-        <div><dt>Place</dt><dd>{{ e.place }}{% if e.pct %}<span class="psub">{{ e.pct }}</span>{% endif %}</dd></div>
-        <div><dt>Won</dt><dd>{% if e.pending %}<form class="rs-inline" method="post" action="/dfs/results/entry/{{ e.id }}"><input class="dfs-input rs-mini" name="payout" inputmode="decimal" placeholder="winnings" aria-label="Winnings"><button class="btn btn-sm btn-ghost" type="submit">Save</button></form>{% else %}{{ e.payout }}{% endif %}</dd></div>
-        <div><dt>Net</dt><dd class="rs-{{ e.net_sign }}">{{ e.net }}</dd></div>
-      </dl>
-      {% if e.players %}<details class="rs-lu"><summary>Lineup</summary><p>{{ e.players }}</p></details>{% endif %}
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  {{ m.empty("No entries yet", "Upload a finished contest with your username set, or add an entry by hand below. Your entries, fees, winnings and ROI show up here.") }}
-  {% endif %}
-</section>
+  <section class="card" id="mine" aria-labelledby="mine-title">
+    <h3 id="mine-title">My results{% if t.entries %} <span class="sub">{{ t.entries }} entr{{ 'y' if t.entries == 1 else 'ies' }}</span>{% endif %}</h3>
+    {% if t.entries %}
+    <dl class="tiles dx-rs-tiles" aria-label="Real totals">
+      <div class="tile"><dt class="lab">Entries</dt><dd class="val"><span class="num-big">{{ t.entries }}</span></dd></div>
+      <div class="tile"><dt class="lab">Fees</dt><dd class="val"><span class="num-big">{{ t.fees }}</span></dd></div>
+      <div class="tile"><dt class="lab">Winnings</dt><dd class="val"><span class="num-big">{{ t.winnings }}</span></dd></div>
+      <div class="tile"><dt class="lab">Net</dt><dd class="val"><span class="num-big dx-rs-{{ t.net_sign }}">{{ t.net }}</span></dd></div>
+      <div class="tile"><dt class="lab">ROI</dt><dd class="val"><span class="num-big dx-rs-{{ t.net_sign }}">{{ t.roi }}</span></dd></div>
+      <div class="tile"><dt class="lab">Cashed</dt><dd class="val"><span class="num-big">{{ t.cashed }}</span></dd></div>
+    </dl>
+    {% if t.pending or t.no_fee %}
+    <div class="body">
+      {% if t.pending %}<p class="dx-callout is-warn"><span class="dx-ico" aria-hidden="true">!</span><span>{{ t.pending }} entr{{ 'y has' if t.pending == 1 else 'ies have' }} no winnings recorded yet, so {{ 'it is' if t.pending == 1 else 'they are' }} left out of winnings, net and ROI until you add {{ 'it' if t.pending == 1 else 'them' }}.</span></p>{% endif %}
+      {% if t.no_fee %}<p class="dx-callout is-warn"><span class="dx-ico" aria-hidden="true">!</span><span>{{ t.no_fee }} entr{{ 'y has' if t.no_fee == 1 else 'ies have' }} no entry fee recorded. Add it below.</span></p>{% endif %}
+    </div>
+    {% endif %}
+    <p class="note dx-pad">A few entries cannot show whether the lineups make money: a good strategy still loses over many short stretches. They are most useful for real cash lines and ownership.</p>
+    <div class="scroll dx-scroll dx-rs-escroll">
+    <table class="dx-rs-entries" data-sortable aria-label="Your real contest entries">
+      <thead><tr><th scope="col" class="l" data-sorted="desc">Date</th><th scope="col" class="l">Contest</th><th scope="col">Fee</th><th scope="col">Points</th><th scope="col" data-sort-first="asc">Place</th><th scope="col">Won</th><th scope="col">Net</th><th scope="col" class="l" data-nosort>Lineup</th></tr></thead>
+      <tbody>
+      {% for e in v.entries %}
+      <tr>
+        <td class="l" data-v="{{ e.day }}">{{ e.day|medium_date if e.day else "" }}</td>
+        <th scope="row" class="dx-rs-c">{{ e.contest }}<span class="dx-psub">{% if e.lineup %}{{ e.lineup }} &middot; {% endif %}{{ 'added by hand' if e.source == 'manual' else 'from an upload' }}</span></th>
+        <td class="num" data-v="{{ e.fee_v if e.fee_v is not none else '' }}">{% if e.fee_missing %}<form class="dx-rs-inline" method="post" action="/dfs/results/entry/{{ e.id }}"><input class="dx-input dx-rs-mini" name="fee" inputmode="decimal" placeholder="fee" aria-label="Entry fee"><button class="btn btn-sm btn-ghost" type="submit">Save</button></form>{% else %}{{ e.fee }}{% endif %}</td>
+        <td class="num" data-v="{{ e.points_v if e.points_v is not none else '' }}">{{ e.points }}</td>
+        <td class="num" data-v="{{ e.rank if e.rank is not none else '' }}">{{ e.place }}{% if e.pct %}<span class="dx-psub">{{ e.pct }}</span>{% endif %}</td>
+        <td class="num" data-v="{{ e.payout_v if e.payout_v is not none else '' }}">{% if e.pending %}<form class="dx-rs-inline" method="post" action="/dfs/results/entry/{{ e.id }}"><input class="dx-input dx-rs-mini" name="payout" inputmode="decimal" placeholder="winnings" aria-label="Winnings"><button class="btn btn-sm btn-ghost" type="submit">Save</button></form>{% else %}{{ e.payout }}{% endif %}</td>
+        <td class="num dx-rs-{{ e.net_sign }}" data-v="{{ e.net_v if e.net_v is not none else '' }}">{{ e.net }}</td>
+        <td class="l">{% if e.player_list %}<details class="dx-rs-lu"><summary>Lineup</summary><p>{% for p in e.player_list %}{{ pl(p.name, p.nba_id) }}{% if not loop.last %}, {% endif %}{% endfor %}</p></details>{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="body">{{ st.empty("No entries yet", "Upload a finished contest with your username set, or add an entry by hand below. Your entries, fees, winnings and ROI show up here.") }}</div>
+    {% endif %}
+  </section>
+
+  <div class="grid g-12">
+{# ================================================================ UPLOAD #}
+  <section class="card span-6" id="upload" aria-labelledby="upload-title">
+    <h3 id="upload-title">Upload a finished contest</h3>
+    <div class="body">
+      <ol class="dx-steps">
+        <li>When a contest is over, open it on DraftKings and use <b>Export lineups to CSV</b>.</li>
+        <li>Choose that file here (a <code>.zip</code> of them works too). Your DraftKings Contest History CSV is accepted as well.</li>
+        <li>Everything is read on this machine. The file name usually carries the contest number; if it does not, type it in.</li>
+      </ol>
+      <form class="dx-form" method="post" action="/dfs/results/upload" enctype="multipart/form-data">
+        <label class="dx-field dx-wide"><span>File <small>(up to {{ v.max_mb }} MB)</small></span>
+          <input class="dx-input" type="file" name="file" accept=".csv,.zip,text/csv,application/zip" required></label>
+        <label class="dx-field"><span>Your DraftKings username{% if v.needs_username %} <small>(needed to find your entries)</small>{% endif %}</span>
+          <input class="dx-input" type="text" name="username" autocomplete="off" autocapitalize="off" maxlength="120"
+                 value="{{ v.usernames[0] if v.usernames else '' }}" placeholder="the name shown on your entries"{% if v.needs_username %} required{% endif %}></label>
+        <label class="dx-field"><span>Contest number <small>(only if the file name has none)</small></span>
+          <input class="dx-input" type="text" name="contest_id" inputmode="numeric" pattern="[0-9]*" maxlength="14" placeholder="e.g. 196456028"></label>
+        <label class="dx-field dx-wide"><span>Slate <small>(optional: used when it cannot be worked out)</small></span>
+          <select class="dx-input" name="slate_id"><option value="">Work it out</option>
+            {% for s in v.slates %}<option value="{{ s.id }}">{{ s.label }}</option>{% endfor %}</select></label>
+        <label class="dx-check dx-wide"><input type="checkbox" name="remember" value="1" checked> Remember my username</label>
+        <div class="dx-go"><button class="btn" type="submit">Upload</button></div>
+      </form>
+      {% if v.usernames %}<p class="note">Matching entries named <b>{{ v.usernames|join(", ") }}</b> (the &ldquo;(2/20)&rdquo; part is ignored).</p>{% endif %}
+    </div>
+  </section>
 
 {# ================================================================ ADD BY HAND #}
-<section class="section wrap" id="add" aria-labelledby="add-title">
-  {{ m.sec_head("add", "03", "Add an entry by hand") }}
-  <div class="card rs-card">
-    <form class="rs-form" method="post" action="/dfs/results/entry">
-      <label class="rs-field"><span>Contest number</span>
-        <input class="dfs-input" type="text" name="contest_id" inputmode="numeric" pattern="[0-9]*" maxlength="14" required></label>
-      <label class="rs-field"><span>Entry fee ($)</span>
-        <input class="dfs-input" type="text" name="fee" inputmode="decimal" placeholder="3.00"></label>
-      <label class="rs-field"><span>Points</span>
-        <input class="dfs-input" type="text" name="points" inputmode="decimal"></label>
-      <label class="rs-field"><span>Finished (rank)</span>
-        <input class="dfs-input" type="text" name="rank" inputmode="numeric"></label>
-      <label class="rs-field"><span>Entries in contest</span>
-        <input class="dfs-input" type="text" name="field_size" inputmode="numeric"></label>
-      <label class="rs-field"><span>Winnings ($) <small>(leave blank if not known)</small></span>
-        <input class="dfs-input" type="text" name="payout" inputmode="decimal"></label>
-      <label class="rs-field rs-wide"><span>Lineup: one of ours</span>
-        <select class="dfs-input" name="lineup_id"><option value="">No lineup chosen (or paste it below)</option>
-          {% for l in v.lineups %}<option value="{{ l.id }}">{{ l.label }}</option>{% endfor %}</select></label>
-      <label class="rs-field rs-wide"><span>Or paste the lineup <small>(as DraftKings exports it, or one player per line)</small></span>
-        <textarea class="dfs-input" name="lineup_text" rows="3" placeholder="C Joel Embiid F LeBron James G Tyrese Maxey ..."></textarea></label>
-      <label class="rs-field rs-wide"><span>Note</span>
-        <input class="dfs-input" type="text" name="note" maxlength="300"></label>
-      <div class="rs-actions"><button class="btn" type="submit">Add entry</button></div>
-    </form>
+  <section class="card span-6" id="add" aria-labelledby="add-title">
+    <h3 id="add-title">Add an entry by hand</h3>
+    <div class="body">
+      <form class="dx-form dx-rs-add" method="post" action="/dfs/results/entry">
+        <label class="dx-field"><span>Contest number</span>
+          <input class="dx-input" type="text" name="contest_id" inputmode="numeric" pattern="[0-9]*" maxlength="14" required></label>
+        <label class="dx-field"><span>Entry fee ($)</span>
+          <input class="dx-input" type="text" name="fee" inputmode="decimal" placeholder="3.00"></label>
+        <label class="dx-field"><span>Points</span>
+          <input class="dx-input" type="text" name="points" inputmode="decimal"></label>
+        <label class="dx-field"><span>Finished (rank)</span>
+          <input class="dx-input" type="text" name="rank" inputmode="numeric"></label>
+        <label class="dx-field"><span>Entries in contest</span>
+          <input class="dx-input" type="text" name="field_size" inputmode="numeric"></label>
+        <label class="dx-field"><span>Winnings ($) <small>(leave blank if not known)</small></span>
+          <input class="dx-input" type="text" name="payout" inputmode="decimal"></label>
+        <label class="dx-field dx-wide"><span>Lineup: one of ours</span>
+          <select class="dx-input" name="lineup_id"><option value="">No lineup chosen (or paste it below)</option>
+            {% for l in v.lineups %}<option value="{{ l.id }}">{{ l.label }}</option>{% endfor %}</select></label>
+        <label class="dx-field dx-wide"><span>Or paste the lineup <small>(as DraftKings exports it, or one player per line)</small></span>
+          <textarea class="dx-input" name="lineup_text" rows="3" placeholder="C Joel Embiid F LeBron James G Tyrese Maxey ..."></textarea></label>
+        <label class="dx-field dx-wide"><span>Note</span>
+          <input class="dx-input" type="text" name="note" maxlength="300"></label>
+        <div class="dx-go"><button class="btn" type="submit">Add entry</button></div>
+      </form>
+    </div>
+  </section>
   </div>
-</section>
 
 {# ================================================================ CONTESTS #}
-<section class="section wrap" id="contests" aria-labelledby="contests-title">
-  {% set cmeta %}{% if v.contests %}{{ v.contests|length }} uploaded{% endif %}{% endset %}
-  {{ m.sec_head("contests", "04", "Uploaded contests", cmeta) }}
-  {% if v.contests %}
-  <p class="sec-lede">Real numbers from the whole field. The cash line is the score of the last paid place; it feeds the nightly grades.</p>
-  <div class="rs-contests">
-    {% for c in v.contests %}
-    <article class="card rs-contest">
-      <header class="card-head-row"><h3 class="card-title">{{ c.name }}</h3><span class="muted card-note">{{ c.day }}{% if c.day %} &middot; {% endif %}{{ c.game_type }}{% if c.fee %} &middot; {{ c.fee }} entry{% endif %}</span></header>
-      <dl class="rs-kv">
-        <div><dt>Field</dt><dd>{{ c.field }}</dd></div>
-        <div><dt>Winning score</dt><dd>{{ c.win }}</dd></div>
-        <div><dt>Top 1% score</dt><dd>{{ c.top1 }}</dd></div>
-        <div><dt>Cash line</dt><dd>{{ c.line }}</dd></div>
-        <div><dt>Median</dt><dd>{{ c.median }}</dd></div>
-        <div><dt>Paid places</dt><dd>{{ c.paid }}</dd></div>
-      </dl>
-      <p class="card-sub">Cash line {{ c.line_note }}.</p>
-      {% if c.own_top %}<p class="rs-own"><b>Most owned:</b> {{ c.own_top|join(" · ") }}</p>{% endif %}
-      {% if c.n_unmatched %}<p class="caveat">{{ c.n_unmatched }} player name{{ '' if c.n_unmatched == 1 else 's' }} could not be matched to an NBA player: {{ c.unmatched|join(", ") }}{% if c.n_unmatched > c.unmatched|length %}, ...{% endif %}</p>{% endif %}
-      {% if not c.linked %}
-      <form class="rs-inline rs-link" method="post" action="/dfs/results/link">
-        <input type="hidden" name="contest_id" value="{{ c.contest_id }}">
-        <label class="rs-field"><span>Which slate was this? Without it the grader cannot use this contest.</span>
-          <select class="dfs-input" name="slate_id" required><option value="">Choose a slate</option>
-            {% for s in v.slates %}<option value="{{ s.id }}">{{ s.label }}</option>{% endfor %}</select></label>
-        <button class="btn btn-sm" type="submit">Link</button>
-      </form>
-      {% else %}<p class="muted card-note">Slate {{ c.slate_id }}{% if c.slate_how %} ({{ c.slate_how }}){% endif %} &middot; uploaded {{ c.uploaded }}{% if c.filename %} &middot; {{ c.filename }}{% endif %}</p>{% endif %}
-    </article>
-    {% endfor %}
-  </div>
-  {% else %}
-  {{ m.empty("No contests uploaded yet", "After your first finished contest, upload its standings above. You get the real cash line, the top scores and the field's ownership.") }}
-  {% endif %}
-</section>
+  <section class="card dx-rs-cwrap" id="contests" aria-labelledby="contests-title">
+    <h3 id="contests-title">Uploaded contests{% if v.contests %} <span class="sub">{{ v.contests|length }} uploaded</span>{% endif %}</h3>
+    {% if v.contests %}
+    <p class="note dx-pad">Real numbers from the whole field. The cash line is the score of the last paid place; it feeds the nightly grades.</p>
+    <div class="dx-rs-contests">
+      {% for c in v.contests %}
+      <article class="dx-rs-contest" aria-labelledby="rc-{{ c.contest_id }}">
+        <header class="dx-rs-ch"><h4 id="rc-{{ c.contest_id }}">{{ c.name }}</h4><span class="note">{{ c.day }}{% if c.day %} &middot; {% endif %}{{ c.game_type }}{% if c.fee %} &middot; {{ c.fee }} entry{% endif %}</span></header>
+        <div class="tiles">
+          {{ st.tile("Field", c.field) }}
+          {{ st.tile("Winning score", c.win) }}
+          {{ st.tile("Top 1% score", c.top1) }}
+          {{ st.tile("Cash line", c.line) }}
+          {{ st.tile("Median", c.median) }}
+          {{ st.tile("Paid places", c.paid) }}
+        </div>
+        <p class="note dx-pad">Cash line {{ c.line_note }}.</p>
+        {% if c.own_rows %}
+        <div class="scroll dx-scroll">
+        <table class="dx-rs-own" data-sortable>
+          <caption>Most owned</caption>
+          <thead><tr><th scope="col" class="l">Player</th><th scope="col" data-sorted="desc">Drafted</th><th scope="col">DK pts</th></tr></thead>
+          <tbody>
+          {% for o in c.own_rows %}<tr><th scope="row">{{ pl(o.name, o.nba_id) }}</th><td class="num" data-v="{{ o.pct }}">{{ "%.1f"|format(o.pct) }}%</td><td class="num" data-v="{{ o.fpts if o.fpts is not none else '' }}">{{ o.fpts|num(1) }}</td></tr>{% endfor %}
+          </tbody>
+        </table>
+        </div>
+        {% endif %}
+        <div class="body">
+          {% if c.n_unmatched %}<p class="dx-callout is-warn"><span class="dx-ico" aria-hidden="true">!</span><span>{{ c.n_unmatched }} player name{{ '' if c.n_unmatched == 1 else 's' }} could not be matched to an NBA player: {{ c.unmatched|join(", ") }}{% if c.n_unmatched > c.unmatched|length %}, ...{% endif %}</span></p>{% endif %}
+          {% if not c.linked %}
+          <form class="dx-rs-link" method="post" action="/dfs/results/link">
+            <input type="hidden" name="contest_id" value="{{ c.contest_id }}">
+            <label class="dx-field"><span><span class="dx-st dx-st-questionable">Not linked</span> Which slate was this? Without it the grader cannot use this contest.</span>
+              <select class="dx-input" name="slate_id" required><option value="">Choose a slate</option>
+                {% for s in v.slates %}<option value="{{ s.id }}">{{ s.label }}</option>{% endfor %}</select></label>
+            <button class="btn btn-sm" type="submit">Link</button>
+          </form>
+          {% else %}<p class="note">Slate {{ c.slate_id }}{% if c.slate_how %} ({{ c.slate_how }}){% endif %} &middot; uploaded {{ c.uploaded }}{% if c.filename %} &middot; {{ c.filename }}{% endif %}</p>{% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="body">{{ st.empty("No contests uploaded yet", "After your first finished contest, upload its standings above. You get the real cash line, the top scores and the field's ownership.") }}</div>
+    {% endif %}
+  </section>
 {% endif %}
+</div>
 {% endblock %}
 
 {% block foot %}

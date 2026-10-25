@@ -447,3 +447,161 @@ def test_runner_late_news_entries_render_plain_english():
         "status": {"from": "Q", "to": "O", "source": "draftkings"},
         "minutes": {"from": 24.1, "to": 31.0, "delta": 6.9}})
     assert txt == "status Q → O; named a starter; projected minutes 24.1 → 31.0"
+
+
+# ------------------------------------------------------------------------------- research
+# Boom / bust, leverage and DK points vs salary on the pool (stats/dfs_research.py).
+
+import numpy as np  # noqa: E402
+
+from courtside.stats import dfs_research as RS  # noqa: E402
+
+QV = [10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 55.0]      # q05 q10 q25 q50 q75 q90 q95
+
+
+def test_boom_bust_from_quantiles():
+    # $5,000: boom mark 30 (= q50), bust mark 15 (= q10)
+    up, dn = RS.boom_bust_quantiles(QV, 5000)
+    assert up == pytest.approx(0.50) and dn == pytest.approx(0.10)
+    # between quantiles: linear (35 is half-way q50 -> q75)
+    assert RS.cdf(QV, 35.0) == pytest.approx(0.625)
+    assert RS.tail_above(QV, 35.0) == pytest.approx(0.375)
+    # beyond q95 the chance halves every q95 - q90 = 5 points: 60 -> 2.5 %, 65 -> 1.25 %
+    up, dn = RS.boom_bust_quantiles(QV, 10000)
+    assert up == pytest.approx(0.025) and dn == pytest.approx(0.50)
+    assert RS.tail_above(QV, 65.0) == pytest.approx(0.0125)
+    # below q05 likewise (q10 - q05 = 5): 5 -> 2.5 %
+    assert RS.cdf(QV, 5.0) == pytest.approx(0.025)
+    assert RS.boom_bust_quantiles([None] * 7, 5000) == (None, None)
+    assert RS.boom_bust_quantiles(QV, None) == (None, None)
+
+
+def test_boom_bust_from_sims(make, data_dir, tmp_path):
+    # 10 sims, 2 players; player A ($5,000: boom >= 30, bust < 15) misses 2 sims (DNP)
+    fp = np.array([[0, 30], [0, 31], [31, 10], [30, 40], [29, 5], [14, 20], [15, 35],
+                   [40, 12], [10, 50], [50, 22]], dtype=np.float16)
+    min_t = np.ones((2, 10), dtype=np.uint8) * 30
+    min_t[0, :2] = 0
+    path = tmp_path / "sims.npz"
+    np.savez(path, fp=fp, dk_id=np.array(["1001", "1002"]), min_t=min_t)
+    make()
+    conn = db.connect(data_dir.parent / "data0" / "courtside.db")
+    conn.execute("UPDATE dfs_runs SET sim_path=? WHERE run_id='run1'", (str(path),))
+    conn.commit()
+    out = RS.sim_boom_bust(conn, "run1", {"1001": 5000.0, "1002": 4000.0})
+    conn.close()
+    boom, bust, n = out["1001"]
+    assert n == 8                                       # only the sims in which he played
+    assert boom == pytest.approx(4 / 8)                 # 31, 30, 40, 50
+    assert bust == pytest.approx(2 / 8)                 # 14, 10 (not the two DNPs)
+    boom, bust, n = out["1002"]                         # $4,000: boom >= 24, bust < 12
+    assert (n, boom, bust) == (10, pytest.approx(0.5), pytest.approx(0.2))
+    # a run whose file is gone: no sims (the page falls back to the quantiles)
+    assert RS.sim_boom_bust(db.connect(data_dir.parent / "data0" / "courtside.db"),
+                            "nope", {"1001": 5000.0}) == {}
+
+
+def test_leverage_sign():
+    assert RS.leverage(0.30, 10.0) == pytest.approx(20.0)        # in more lineups than the field
+    assert RS.leverage(0.0, 12.5) == pytest.approx(-12.5)        # in none of ours
+    assert RS.leverage(0.10, 25.0) == pytest.approx(-15.0)
+    assert RS.leverage(0.5, None) is None                        # no popularity estimate
+    shares, n = RS.lineup_shares([lineup_slots([1, 2, 3]), lineup_slots([1, 4, 5])])
+    assert n == 2 and shares[pid(1)] == 1.0 and shares[pid(4)] == 0.5 and pid(9) not in shares
+
+
+def test_value_vs_salary_fit_and_delta(make, data_dir):
+    make()
+    conn = db.connect(data_dir.parent / "data0" / "courtside.db")
+    _add_grades(conn)
+    lines = RS.compute_salary_lines(conn, DAY)
+    conn.close()
+    fit = lines["2026-27"]
+    # y = 5 DK per $1,000 - 5 exactly
+    assert fit["n"] == 60 and fit["b"] == pytest.approx(0.005) and fit["a"] == pytest.approx(-5)
+    assert RS.expected_dk(fit, 6000) == pytest.approx(25.0)
+    recent = {"last": [30.0, 34.0], "last_seasons": ["2026-27", "2025-26"], "cur": "2026-27",
+              "season_mean": 30.0, "season_n": 1}
+    v = RS.value_vs_salary(recent, fit, 6000)
+    assert v["pm"] == pytest.approx(7.0) and v["last_n"] == 2 and v["last_prev"] == 1
+    assert v["season_pm"] == pytest.approx(5.0)
+    assert RS.value_vs_salary({"last": []}, fit, 6000) is None
+    assert RS.value_vs_salary(recent, None, 6000) is None
+
+
+def _add_grades(conn) -> None:
+    """60 graded Classic player-games before DAY on the line DK = 5/1000 salary - 5, plus
+    two box scores for players[29] (NBA id 529) and the popularity proxy of run1."""
+    for k in range(60):
+        sal = 3000 + 100 * k
+        cur = conn.execute("INSERT INTO player_projections (game_id, nba_day, player_id, run_id, "
+                           "created_at, model_version) VALUES (?,?,?,?,?,?)",
+                           (f"00226{k:05d}", "2026-10-1" + str(k % 9), 700 + k, "old",
+                            "2026-10-10T00:00:00Z", "m"))
+        conn.execute("INSERT INTO player_projection_grades (projection_id, game_id, player_id, "
+                     "run_id, graded_at, played, actual_dk, salary) VALUES (?,?,?,?,?,?,?,?)",
+                     (cur.lastrowid, f"00226{k:05d}", 700 + k, "old", "2026-10-19T00:00:00Z", 1,
+                      5 * sal / 1000 - 5, sal))
+    for gid, d, pts in (("0022600001", "2026-10-15", 40), ("0022600002", "2026-10-17", 50)):
+        conn.execute("INSERT INTO player_games (game_id, player_id, team, season, season_type, "
+                     "game_date, min, pts, reb, ast, fg3m, stl, blk, tov) VALUES "
+                     "(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (gid, 529, "DDD", "2026-27", "Regular Season", d, 34, pts, 0, 0, 0, 0, 0, 0))
+    for i, own in ((29, 60.0), (28, 5.0), (0, 30.0)):
+        conn.execute("INSERT INTO dfs_ownership_proxy (run_id, player_id, own, band) VALUES "
+                     "('run1', ?, ?, 'Med')", (int(pid(i)), own))
+    conn.commit()
+
+
+def test_pool_research_columns(make, data_dir):
+    from courtside.stats import db as sdb
+    sdb.clear()
+    c = make(model=True)
+    conn = db.connect(data_dir.parent / "data0" / "courtside.db")
+    _add_grades(conn)
+    conn.close()
+    html = c.get(f"/dfs/{DAY}/{SLATE}?all=1").text
+    for h in (">6×+<", ">Under 3×<", ">Ours − field<", ">vs salary<"):
+        assert h in html, h
+    assert "approximated from the run&rsquo;s stored 5th to 95th percentiles" in html
+    assert 'data-tip="6×+: chance he scores at least 6× his salary' in html
+    v = dfs_view.build_page(db.connect(data_dir.parent / "data0" / "courtside.db"), DAY, SLATE,
+                            now=NOW, params={"all": "1"})
+    rows = {r["id"]: r for r in v["pool"]["rows"]}
+    assert v["pool"]["bb_method"] == "quantiles" and v["pool"]["lev_n"] == 3
+    # players[29] is in all 3 Top N lineups (100 %) at a 60 % proxy: +40; players[28] too: +95
+    assert rows[pid(29)]["lev"] == pytest.approx(40.0)
+    assert rows[pid(28)]["lev"] == pytest.approx(95.0)
+    assert rows[pid(0)]["lev"] == pytest.approx(-30.0)        # in none of them at 30 %
+    assert rows[pid(5)]["lev"] is None                        # no proxy row
+    assert "In 3 of 3 Top N lineups (100%)" in rows[pid(29)]["lev_tip"]
+    # boom / bust from the stored played quantiles (mean-14 ... mean+17)
+    r = rows[pid(29)]
+    up, dn = RS.boom_bust_quantiles(r["qs"], r["salary"])
+    assert r["boom"] == pytest.approx(up) and r["bust"] == pytest.approx(dn)
+    assert r["bb_src"] == "quantiles" and 0 <= r["bust"] < r["boom"] <= 1
+    assert rows[pid(4)]["boom"] is None                       # OUT
+    # DK points vs salary: 529 scored 40 and 50 DK; $10,250 implies 46.25
+    vpm = rows[pid(29)]["vpm"]
+    assert vpm["last_n"] == 2 and vpm["pm"] == pytest.approx(45.0 - 46.25)
+    assert "This season (2 games)" in rows[pid(29)]["vpm_tip"]
+    assert rows[pid(5)]["vpm"] is None                        # no box scores
+    # server-side sorts on the new columns
+    for key in ("boom", "bust", "lev", "vpm"):
+        assert c.get(f"/dfs/{DAY}/{SLATE}?sort={key}").status_code == 200
+    def pool_text(q: str) -> str:
+        html = c.get(f"/dfs/{DAY}/{SLATE}?{q}").text
+        return text_of(html[html.index('id="pool"'):])
+    t = pool_text("sort=lev&dir=desc")
+    assert t.index(players()[28]["name"]) < t.index(players()[29]["name"]) \
+        < t.index(players()[0]["name"])
+    t = pool_text("sort=lev&dir=asc")
+    assert t.index(players()[0]["name"]) < t.index(players()[29]["name"])
+    # still none of the banned words with the new columns and tooltips
+    for pat in BANNED:
+        assert not re.search(pat, t.lower()), pat
+
+
+def test_pool_research_absent_without_data(make):
+    html = make().get(f"/dfs/{DAY}/{SLATE}").text           # FPPG pool, no proxy, no grades
+    assert ">Boom<" not in html and ">Lev<" not in html and ">Value +/−<" not in html

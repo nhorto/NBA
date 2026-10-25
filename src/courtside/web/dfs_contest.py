@@ -260,7 +260,7 @@ def _portfolio_view(d: dict, contests: dict[str, dict], now: datetime, builds: B
     out["curve"] = curve_view(sm.get("curve"), calibrated, cal_slates)
     out["exposure"] = [{
         "name": r["name"], "team": r.get("team"), "positions": r.get("positions"),
-        "count": r["count"], "share": fmt.pct(r["share"]), "share_v": r["share"],
+        "player_id": r.get("player_id"), "count": r["count"], "share": fmt.pct(r["share"]), "share_v": r["share"],
         "cap": r.get("cap"), "band": r.get("own_band"), "locked": r.get("locked"),
         "salary_text": V.money(r.get("salary"))} for r in data.get("exposure") or []]
     lus = []
@@ -334,6 +334,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str, *, now:
                  "acts": {k[2:]: val for k, val in form.items() if k.startswith("p_")}}
     v["gamma_choices"] = tuple(g for g in GAMMA_CHOICES if g < 6) if is_sd else GAMMA_CHOICES
     v["players"] = _players(conn, slate, run) if run else []
+    v["nba"] = V.dk_to_nba(conn)          # DK id -> NBA id, for /player/<id> links only
     v["can_build"] = bool(contests) and run is not None and not v["slate"]["locked"]
     v["why_not"] = ("" if v["can_build"] else
                     "This slate has locked: DraftKings no longer takes new entries."

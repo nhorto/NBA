@@ -5,34 +5,48 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{% block title %}Courtside{% endblock %}</title>
 <meta name="description" content="{% block description %}Courtside: the NBA Morning Brief. Last night, what it meant, and what to expect tonight.{% endblock %}">
-<meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#f4f3ef" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0d0f12" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f1522">
 <link rel="preload" href="/static/fonts/Inter-var.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/static/fonts/NotoSerifDisplay-Bold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/static/style.css?v={{ asset_v }}">
+<link rel="stylesheet" href="/static/pro.css?v={{ asset_v }}">
+{% block head %}{% endblock %}
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<script>try{var t=localStorage.getItem("cs-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+<script>document.documentElement.classList.add("js")</script>
 </head>
-<body class="page-{{ page|default('x') }}">
+<body class="page-{{ page|default('x') }} {% block body_class %}{% endblock %}">
 <a class="skip" href="#main">Skip to content</a>
+{#- Site menu. `page` (set by each route) picks the active item; detail pages map onto their
+    section: brief/welcome/archive -> Today, game -> Games, team -> Teams, player -> Players. #}
+{% set nav_items = [("today", "/", "Today"), ("tonight", "/tonight", "Tonight"), ("games", "/games", "Games"),
+                    ("teams", "/teams", "Teams"), ("players", "/players", "Players"), ("leaders", "/leaders", "Leaders"),
+                    ("tools", "/finder", "Tools"), ("dfs", "/dfs", "DFS"), ("health", "/health", "Health")] %}
+{% set nav_on = {"brief": "today", "welcome": "today", "archive": "today", "game": "games",
+                 "team": "teams", "player": "players"}.get(page|default(''), page|default('')) %}
 <header class="topbar">
-  <div class="wrap topbar-in">
+  <div class="topbar-in">
     <a class="brand" href="/" aria-label="Courtside home">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14.5" fill="var(--accent)"/><path d="M16 1.5v29M1.5 16h29M6 5.5c4.5 4 4.5 17 0 21M26 5.5c-4.5 4-4.5 17 0 21" fill="none" stroke="var(--brand-seam)" stroke-width="1.6"/></svg>
       <span class="brand-word">Courtside</span>
     </a>
     <nav class="top-nav" aria-label="Site">
       {% block topnav %}{% endblock %}
-      <a href="/players" class="top-link{% if page == 'players' %} is-active{% endif %}">Players</a>
-      <a href="/dfs" class="top-link{% if page == 'dfs' %} is-active{% endif %}">DFS</a>
-      <a href="/archive" class="top-link top-link-x{% if page == 'archive' %} is-active{% endif %}">Archive</a>
-      <a href="/health" class="top-link{% if page == 'health' %} is-active{% endif %}"><span class="hide-xs">Model </span>Health</a>
-      <button class="theme-toggle" type="button" aria-label="Switch colour theme" title="Switch colour theme">
-        <svg class="ico-sun" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.6" fill="currentColor"/><g stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M10 1.8v2M10 16.2v2M1.8 10h2M16.2 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M4.2 15.8l1.4-1.4M14.4 5.6l1.4-1.4"/></g></svg>
-        <svg class="ico-moon" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.8 12.6A6.8 6.8 0 017.4 4.2a6.8 6.8 0 108.4 8.4z" fill="currentColor"/></svg>
-      </button>
+      {% for key, href, label in nav_items %}
+      <a href="{{ href }}"{% if nav_on == key %} aria-current="page"{% endif %} class="top-link{% if nav_on == key %} is-active{% endif %}">{{ label }}</a>
+      {% endfor %}
     </nav>
+    <form class="gsearch" role="search" action="/players" method="get" autocomplete="off">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12.8 12.8l4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <label class="sr" for="gsearch-q">Search players and teams</label>
+      <input id="gsearch-q" name="q" type="search" placeholder="Search players, teams" spellcheck="false"
+             role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="gsearch-list">
+      <kbd aria-hidden="true">/</kbd>
+      <ul id="gsearch-list" class="gsearch-list" role="listbox" aria-label="Search results" hidden></ul>
+    </form>
+    <button class="search-toggle" type="button" aria-label="Search players and teams" aria-expanded="false">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12.8 12.8l4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
   </div>
 </header>
 {% if health_banner %}
@@ -50,10 +64,11 @@
 <footer class="site-foot">
   <div class="wrap foot-in">
     {% block foot %}{% endblock %}
-    <nav class="foot-links" aria-label="Footer"><a href="/players">Players</a><a href="/dfs">DFS</a><a href="/archive">Archive</a><a href="/health">Model Health</a></nav>
+    <nav class="foot-links" aria-label="Footer"><a href="/">Today</a><a href="/tonight">Tonight</a><a href="/games">Games</a><a href="/teams">Teams</a><a href="/players">Players</a><a href="/leaders">Leaders</a><a href="/finder">Tools</a><a href="/dfs">DFS</a><a href="/archive">Archive</a><a href="/health">Model Health</a></nav>
     <p class="foot-brand"><span class="brand-word">Courtside</span> &middot; The NBA Morning Brief. Numbers come from structured game data; win probabilities are model estimates, not advice.</p>
   </div>
 </footer>
 <script src="/static/app.js?v={{ asset_v }}" defer></script>
+<script src="/static/stats.js?v={{ asset_v }}" defer></script>
 </body>
 </html>

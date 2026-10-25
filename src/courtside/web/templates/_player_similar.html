@@ -1,0 +1,48 @@
+{#- Similar players card on the player page (included by stats_player.html with context).
+    Data: pv.similar from stats/similar.py `similar(conn, pid, season)` (web/stats_players.py). -#}
+{%- set sm = pv.similar if pv is defined and pv else None -%}
+{%- if sm -%}
+{%- set me = sm.target -%}
+{% set sim_sub %}{{ sm.season }} regular season vs every player-season since 2000-01 &middot; <span class="pl-sim-how" tabindex="0" data-tip="{{ sm.method }}">How it works <span aria-hidden="true">&#9432;</span></span>{% endset %}
+{% call s.card("Similar players", sub=sim_sub, cls="span-12 pl-sim", flush=(sm.status == "ok"), id="similar") %}
+  {% if sm.status == "ok" %}
+  <table class="pl-sim-t">
+    <thead><tr>
+      <th class="l">#</th><th class="l">Player</th><th class="l">Season</th><th class="l">Team</th>
+      <th data-tip="Age on February 1 of that season">Age</th><th data-tip="Minutes per game">MPG</th>
+      <th>Pts/36</th><th>Reb/36</th><th>Ast/36</th>
+      <th data-tip="3-point attempts per field-goal attempt">3PA rate</th><th>TS%</th>
+      <th data-tip="Usage rate, minute-weighted">USG%</th>
+      <th class="l pl-sim-sc" data-tip="{{ sm.method }}">Similarity</th>
+    </tr></thead>
+    <tbody>
+      <tr class="pl-sim-me">
+        <td class="l dim">&ndash;</td><td class="l name">{{ p.name }} <span class="note">(him)</span></td>
+        <td class="l">{{ sm.season }}</td><td class="l">{{ me.team or DASH }}</td>
+        <td>{% if me.age is not none %}{{ "~" if me.age_est else "" }}{{ me.age|round(1) }}{% else %}{{ DASH }}{% endif %}</td>
+        <td>{{ me.mpg|num(1) }}</td><td>{{ me.pts36|num(1) }}</td><td>{{ me.reb36|num(1) }}</td><td>{{ me.ast36|num(1) }}</td>
+        <td>{{ me.par3|pct(1) }}</td><td>{{ me.ts|pct(1) }}</td><td>{{ me.usg|pct(1) }}</td>
+        <td class="l note">reference</td>
+      </tr>
+      {% for r in sm.rows %}
+      <tr data-tip="{{ r.name }}, {{ r.season }} ({{ r.team }}): {{ r.gp }} games, {{ r.pts|num(1) }} pts · {{ r.reb|num(1) }} reb · {{ r.ast|num(1) }} ast per game{% if r.gaps %}&#10;Biggest differences: {{ r.gaps|join(', ') }}{% endif %}">
+        <td class="l dim">{{ loop.index }}</td>
+        <td class="l name"><a class="link" href="/player/{{ r.player_id }}?season={{ r.season }}">{{ r.name }}</a></td>
+        <td class="l">{{ r.season }}</td>
+        <td class="l">{{ r.team }}</td>
+        <td>{% if r.age is not none %}{{ "~" if r.age_est else "" }}{{ r.age|round(1) }}{% else %}{{ DASH }}{% endif %}</td>
+        <td>{{ r.mpg|num(1) }}</td><td>{{ r.pts36|num(1) }}</td><td>{{ r.reb36|num(1) }}</td><td>{{ r.ast36|num(1) }}</td>
+        <td>{{ r.par3|pct(1) }}</td><td>{{ r.ts|pct(1) }}</td><td>{{ r.usg|pct(1) }}</td>
+        <td class="l pl-sim-sc">{{ s.hbar(r.score, 100, r.score|round(0)|int) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="note pl-foot pad">{% if sm.fallback_from %}<b>{{ sm.fallback_from }} has too few minutes yet, so this is his {{ sm.season }} profile.</b> {% endif %}Closest {{ sm.rows|length }} of {{ "{:,}".format(sm.pool) }} player-seasons with {{ "{:,.0f}".format(sm.pool_min) }}+ minutes (each player once, his closest season). 100 = identical profile; two random rotation players score about 35. ~ = age estimated from his first season.</div>
+  {% elif sm.status == "thin" %}
+  {{ s.empty("Too few minutes in " ~ sm.season ~ " yet.", " He has " ~ (me.min|round(0)|int) ~ " regular-season minutes; the comparison starts at " ~ (sm.target_min|int) ~ ". Pick an earlier season above.") }}
+  {% else %}
+  {{ s.empty("No regular-season games in " ~ sm.season ~ ".", " Pick another season above.") }}
+  {% endif %}
+{% endcall %}
+{%- endif -%}

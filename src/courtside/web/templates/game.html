@@ -2,6 +2,8 @@
 {% import "_macros.html" as m %}
 {% block title %}{{ g.away.code }} {% if g.away.score is not none %}{{ g.away.score }}{% endif %}, {{ g.home.code }} {% if g.home.score is not none %}{{ g.home.score }}{% endif %} &middot; Courtside{% endblock %}
 
+{% block head %}{% if box %}<link rel="stylesheet" href="/static/pro-games.css?v={{ asset_v }}">{% endif %}{% endblock %}
+
 {% block content %}
 <div class="wrap game-page">
   <nav class="crumbs" aria-label="Breadcrumb"><a href="/brief/{{ day }}">{{ m.icon("back") }}Brief for {{ day|medium_date }}</a></nav>
@@ -18,7 +20,7 @@
         <thead><tr><th scope="col"><span class="sr">Team</span></th>{% for p in g.periods %}<th class="num" scope="col">{{ p }}</th>{% endfor %}<th class="num" scope="col">T</th></tr></thead>
         <tbody>
           {% for s, ps in [(g.away, g.away_periods), (g.home, g.home_periods)] %}
-          <tr{% if s.winner %} class="is-win"{% endif %}><th scope="row">{{ m.dot(s) }}{{ s.code }}</th>{% for x in ps %}<td class="num">{{ x }}</td>{% endfor %}<td class="num strong">{{ s.score }}</td></tr>
+          <tr{% if s.winner %} class="is-win"{% endif %}><th scope="row">{{ m.dot(s) }}{{ m.tlink(s) }}</th>{% for x in ps %}<td class="num">{{ x }}</td>{% endfor %}<td class="num strong">{{ s.score }}</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -28,6 +30,8 @@
     {% if g.headline %}<h1 class="gh-head">{{ g.headline }}</h1>{% endif %}
     {% if g.story %}<p class="gh-story">{{ g.story }}</p>{% endif %}
   </header>
+
+  {% if box %}{% include "_game_box.html" %}{% endif %}
 
   {% if g.lead_chart %}
   <section class="card chart-card" aria-labelledby="flow-title">
@@ -86,7 +90,7 @@
       <tbody>
       {% for r in g.impact %}
       <tr>
-        <th scope="row"><span class="it-who">{{ m.dot(r.team) }}<span class="it-team">{{ r.team.code }}</span> {{ r.name }}</span>{% for tg in r.tags %}<span class="flag flag-plain flag-xs">{{ tg }}</span>{% endfor %}</th>
+        <th scope="row"><span class="it-who">{{ m.dot(r.team) }}<span class="it-team">{{ m.tlink(r.team) }}</span> {{ m.plink(r.player_id, r.name) }}</span>{% for tg in r.tags %}<span class="flag flag-plain flag-xs">{{ tg }}</span>{% endfor %}</th>
         <td class="num">{{ r.minutes|minutes }}</td>
         <td class="num strong">{{ r.pts }}</td>
         <td class="num">{{ r.reb }}</td>
@@ -128,7 +132,7 @@
       <div class="table-scroll">
       <table class="table clutch-table">
         <thead><tr><th scope="col">Player</th><th class="num" scope="col">PTS</th><th class="num" scope="col">FG</th><th class="num" scope="col">FT</th><th class="num" scope="col">AST</th><th class="num" scope="col">+/&minus;</th></tr></thead>
-        <tbody>{% for p in cl.players %}<tr><th scope="row">{{ m.dot(team(p.team)) }}<span class="it-team">{{ p.team }}</span> {{ p.name }}</th><td class="num strong">{{ p.pts }}</td><td class="num">{{ p.fg or DASH }}</td><td class="num">{{ p.ft or DASH }}</td><td class="num">{{ p.ast }}</td><td class="num">{{ p.plus_minus|signed_int }}</td></tr>{% endfor %}</tbody>
+        <tbody>{% for p in cl.players %}<tr><th scope="row">{{ m.dot(team(p.team)) }}<span class="it-team">{{ m.tlink(team(p.team)) }}</span> {{ m.plink(p.id, p.name) }}</th><td class="num strong">{{ p.pts }}</td><td class="num">{{ p.fg or DASH }}</td><td class="num">{{ p.ft or DASH }}</td><td class="num">{{ p.ast }}</td><td class="num">{{ p.plus_minus|signed_int }}</td></tr>{% endfor %}</tbody>
       </table>
       </div>
       {% endif %}

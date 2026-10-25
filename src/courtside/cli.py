@@ -96,6 +96,31 @@ def build_parser() -> argparse.ArgumentParser:
     rgu.add_argument("--playoffs", action="store_true",
                      help="also fetch playoff / play-in days (default: regular season only)")
 
+    sh = bf.add_parser("shots", help="shots table (shot charts) from the archived cdn "
+                                     "play-by-play; no network, resumable")
+    sh.add_argument("--season", action="append",
+                    help="season like 2025-26 (repeatable); default: every archived season")
+    sh.add_argument("--force", action="store_true", help="re-parse games already stored")
+    sh.add_argument("--limit", type=int, default=None, help="stop after N games (testing)")
+
+    bx = bf.add_parser("xfg", help="fit the shot_xfg expected-FG%% table from `shots` "
+                                   "(per season; no network, ~1 s a season)")
+    bx.add_argument("--season", action="append",
+                    help="season like 2025-26 (repeatable); default: every season in shots")
+
+    bs_ = bf.add_parser("stats", help="stats-site data for one season: shots, stints, starts, "
+                                      "shot_xfg from the archive, then player_matchups / "
+                                      "player_tracking / player_hustle per game, "
+                                      "player_tracking_ext per day and synergy/season_matchups "
+                                      "from stats.nba.com; resumable")
+    bs_.add_argument("--season", required=True, help="season, e.g. 2026-27")
+    bs_.add_argument("--refresh", action="store_true",
+                     help="re-fetch the season tables even if archived")
+    bs_.add_argument("--offline", action="store_true",
+                     help="only the archive parts (no network)")
+    bs_.add_argument("--limit", type=int, default=None,
+                     help="per kind: stop after N network fetches (testing)")
+
     wp = sub.add_parser("winprob", help="in-game win-probability model").add_subparsers(
         dest="wp_cmd", required=True)
     wt = wp.add_parser("train", help="fit on seasons before --test-season, test on it, write coefs")
@@ -444,6 +469,44 @@ def _backfill_preseason_cmd(args) -> int:
     return 1 if s["failed"] else 0
 
 
+def _backfill_shots_cmd(args) -> int:
+    from . import db
+    from .analytics import shots_store
+    s = shots_store.backfill(db.connect(), args.season, force=args.force, limit=args.limit,
+                             progress=True)
+    print(f"shots: {s['stored_games']} games stored ({s['shots']} shots), {s['skipped']} already "
+          f"stored, {len(s['empty'])} without field goals, {len(s['failed'])} failed; "
+          f"{s['archived']} archived, {s['seconds']}s")
+    for gid, err in list(s["failed"].items())[:20]:
+        print(f"  error: {gid}: {err}", file=sys.stderr)
+    return 1 if s["failed"] else 0
+
+
+def _backfill_xfg_cmd(args) -> int:
+    from . import db
+    from .analytics import xfg_store
+    conn = db.connect()
+    try:
+        for r in xfg_store.backfill(conn, args.season):
+            print(f"shot_xfg {r['season']}: {r['fga']} FGA, {r['cells']} cells, {r['rows']} rows")
+    finally:
+        conn.close()
+    return 0
+
+
+def _backfill_stats_cmd(args) -> int:
+    import json
+    from . import backfill_stats
+    try:
+        s = backfill_stats.run(args.season, refresh=args.refresh, limit=args.limit,
+                               offline=args.offline)
+    except ValueError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(s, indent=1, default=str))
+    return 0 if backfill_stats.ok(s) else 1
+
+
 def _backfill_players_cmd(args) -> int:
     from . import backfill, backfill_players as bp
     if not args.season_tables and not args.per_game:
@@ -545,6 +608,12 @@ def main(argv: list[str] | None = None) -> int:
         return _backfill_rotoguru_cmd(args)
     if args.cmd == "backfill" and args.what == "preseason":
         return _backfill_preseason_cmd(args)
+    if args.cmd == "backfill" and args.what == "shots":
+        return _backfill_shots_cmd(args)
+    if args.cmd == "backfill" and args.what == "stats":
+        return _backfill_stats_cmd(args)
+    if args.cmd == "backfill" and args.what == "xfg":
+        return _backfill_xfg_cmd(args)
     if args.cmd == "backfill":
         from . import backfill
         try:

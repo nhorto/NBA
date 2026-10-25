@@ -200,9 +200,17 @@ def build_page(conn: sqlite3.Connection | None, *, flash: dict | None = None,
             "net": _money(e.get("net"), True),
             "net_sign": ("pos" if (e.get("net") or 0) > 0 else "neg" if (e.get("net") or 0) < 0 else ""),
             "lineup": _lineup_label(conn, e.get("lineup_id")),
-            "players": ", ".join(s.get("name") or "" for s in e["slots"][:8]) if e["slots"] else ""})
+            "players": ", ".join(s.get("name") or "" for s in e["slots"][:8]) if e["slots"] else "",
+            # the same players with their NBA ids (stored on the entry), for /player/<id> links
+            "player_list": [{"name": s.get("name") or "", "nba_id": s.get("nba_player_id")}
+                            for s in e["slots"][:8]] if e["slots"] else [],
+            "rank": e.get("rank"), "points_v": e.get("points"), "fee_v": e.get("entry_fee"),
+            "payout_v": e.get("payout"), "net_v": e.get("net")})
     for c in ST.list_contests(conn):
         top = c["ownership"]["top"][:3]
+        own_ids = {r["name"]: r["player_id"] for r in _rows(            # NBA ids of the uploaded ownership rows
+            conn, "SELECT name, player_id FROM dfs_contest_ownership WHERE contest_id=? "
+                  "AND player_id IS NOT NULL", (c["contest_id"],))}
         vm["contests"].append({
             "contest_id": c["contest_id"], "name": c["name"] or f"Contest {c['contest_id']}",
             "day": fmt.medium_date(c["nba_day"]) if c["nba_day"] else "", "slate_id": c["slate_id"],
@@ -215,6 +223,8 @@ def build_page(conn: sqlite3.Connection | None, *, flash: dict | None = None,
                           "unknown: no payout table for this contest"),
             "paid": f"{c['paid_places']:,}" if c["paid_places"] else fmt.EM,
             "own_top": [f"{o['name']} {o['pct']:.1f}%" for o in top if o.get("pct") is not None],
+            "own_rows": [{"name": o["name"], "pct": o["pct"], "fpts": o.get("fpts"),
+                          "nba_id": own_ids.get(o["name"])} for o in top if o.get("pct") is not None],
             "own_sum": fmt.num(c["ownership"]["sum_pct"], 0) if c["ownership"]["sum_pct"] else "",
             "unmatched": [f"{u['name']}" for u in c["unmatched"][:12]],
             "n_unmatched": len(c["unmatched"]), "linked": bool(c["slate_id"]),

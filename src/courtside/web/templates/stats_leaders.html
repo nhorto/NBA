@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# League leaders (web/stats_leaders.py, queries stats/leaders.py + stats/teams.py). #}
+{% block title %}{{ label }} leaders &middot; {{ season }} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-teams.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page tm-page{% endblock %}
+{% macro fmtv(v, kind, mode) -%}
+{%- if kind == "pct" %}{{ v|pct(1) }}{% elif kind == "int" %}{{ v|int }}{% elif mode == "tot" %}{{ v|num(0) }}{% else %}{{ v|num(1) }}{% endif -%}
+{%- endmacro %}
+{% block content %}
+<div class="pro">
+  <div class="filters">
+    <h1 class="page-title">Leaders</h1>
+    <span class="lab">Stat</span>{{ s.seg("stat", stat_opts, stat, label="Stat") }}
+  </div>
+  <div class="filters">
+    <span class="lab">Season</span>{{ s.seg("season", season_opts, season, label="Season") }}
+    {{ s.seg("type", type_opts, type_value, label="Season type") }}
+    {{ s.seg("mode", mode_opts, mode, label="Per game, totals or per 36") }}
+    {{ s.seg("last", last_opts, last, label="Games") }}
+    {% if board and board.early %}<span class="note">Early season: leaders move a lot night to night.</span>{% endif %}
+    {% include "_stats_tools.html" %}
+  </div>
+  <div class="grid g-12">
+    {% set sub = season ~ " · " ~ type_label ~ (" · " ~ last_label if last != "all" else "") ~ (" · " ~ board.rule ~ " · " ~ board.qualified ~ " qualified" if board else "") %}
+    {% call s.card(label ~ ((" " ~ mode_label) if mode_label else ""), sub=sub, cls="span-7", flush=True, id="leaders") %}
+      {% if board and board.rows %}
+      <table class="tm-leaders">
+        <thead><tr>
+          <th>#</th><th class="l">Player</th><th class="l">Team</th><th class="tm-hide-sm">GP</th><th class="tm-hide-sm">Min</th>
+          <th class="tm-lead-h">{{ short }}</th>
+          {% for k, h in side_cols %}<th>{{ h }}</th>{% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for r in board.rows %}
+          <tr>
+            <td class="dim">{{ r.rank }}</td>
+            <td class="name">{{ s.player_link(r.player_id, r.name) }}</td>
+            <td class="l">{{ s.team_link(r.team) }}</td>
+            <td class="tm-hide-sm">{{ r.gp }}</td>
+            <td class="tm-hide-sm">{{ r.mpg|num(1) }}</td>
+            <td class="tm-lead">{{ s.hbar(r.value, board.max, fmtv(r.value, kind, mode)) }}</td>
+            {% for k, h in side_cols %}<td class="dim">{{ fmtv(r[k], "num", mode) }}</td>{% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="note tm-pad">{% if last != "all" %}{{ last_label }} = each player's last {{ last }} games played; the qualifier uses his whole season. {% endif %}{% if mode == "p36" %}Per 36 = per 36 minutes played; minutes stay per game. {% endif %}Top {{ board.rows|length }}. DK points use DraftKings Classic scoring (bonuses included).</p>
+      {% else %}
+      {{ s.empty("No qualified players yet.", " " ~ season ~ " " ~ type_label|lower ~ ": leaders appear once players meet the qualifier" ~ ((" (" ~ board.rule|lower ~ ")") if board else "") ~ ".") }}
+      {% endif %}
+    {% endcall %}
+
+    {% call s.card("Team leaders", sub="best team in each · " ~ season, cls="span-5", flush=True, id="team-leaders") %}
+      {% if tleaders %}
+      <table class="tm-tleaders">
+        <thead><tr><th class="l">Category</th><th class="l">Team</th><th>Value</th><th class="l">Next</th></tr></thead>
+        <tbody>
+        {% for c in tleaders %}{% set t = team(c.best.team) %}
+          <tr>
+            <td class="name">{{ c.label }}</td>
+            <td class="l"><span class="tm-sw" style="background:{{ t.primary }};box-shadow:inset 0 -3px 0 {{ t.secondary }}"></span><a class="link" href="/team/{{ t.code }}">{{ t.nickname }}</a></td>
+            <td class="hi">{% if c.kind == "pct" %}{{ c.best[c.key]|pct(1) }}{% elif c.kind == "signed" %}{{ c.best[c.key]|signed(1) }}{% else %}{{ c.best[c.key]|num(1) }}{% endif %}</td>
+            <td class="l dim">{% if c.next %}{{ s.team_link(c.next.team) }} {% if c.kind == "pct" %}{{ c.next[c.key]|pct(1) }}{% elif c.kind == "signed" %}{{ c.next[c.key]|signed(1) }}{% else %}{{ c.next[c.key]|num(1) }}{% endif %}{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="note tm-pad">Possession-weighted season ratings. Full table with every rank: <a class="link" href="/teams?season={{ season }}{{ '&type=playoffs' if type_value == 'playoffs' else '' }}">Teams</a>.</p>
+      {% else %}{{ s.empty("No " ~ type_label|lower ~ " games in " ~ season ~ " yet.") }}{% endif %}
+    {% endcall %}
+
+    {% include "_leaders_chances.html" ignore missing with context %}
+  </div>
+</div>
+{% endblock %}

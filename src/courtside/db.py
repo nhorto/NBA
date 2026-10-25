@@ -1001,6 +1001,56 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_injury_source_gamedate
         ON injury_snapshots(source, game_date, captured_at);
     """,
+    # 17: shot charts (analytics/shots_store.py): one row per field-goal attempt of the cdn
+    # play-by-play. x / y = xLegacy / yLegacy, tenths of a foot from the rim (y towards half
+    # court, x < 0 = the NBA's "left"); distance in feet; made 1/0; shot_type '2pt' | '3pt'
+    # (official ruling); clock 'M:SS' left in the period ('0:05.4' under a minute); zone is
+    # computed from x / y (Restricted Area, Paint (Non-RA), Mid-Range, Left Corner 3,
+    # Right Corner 3, Above the Break 3, Backcourt). game_date = the game's NBA day.
+    """
+    CREATE TABLE IF NOT EXISTS shots (
+        game_id TEXT NOT NULL, action_number INTEGER NOT NULL, player_id INTEGER, team TEXT,
+        season TEXT, season_type TEXT, game_date TEXT, period INTEGER, clock TEXT,
+        x REAL, y REAL, distance REAL, made INTEGER, shot_type TEXT, action_type TEXT,
+        sub_type TEXT, descriptor TEXT, zone TEXT,
+        PRIMARY KEY (game_id, action_number)
+    );
+    CREATE INDEX IF NOT EXISTS idx_shots_player_season ON shots(player_id, season);
+    CREATE INDEX IF NOT EXISTS idx_shots_team_season ON shots(team, season);
+    """,
+    # 18: opportunity stats (stats/opportunity.py).
+    # player_tracking_ext: per player-game fields of the stats.nba.com tracking dashboards
+    # (leaguedashptstats, one request per day x measure: Passing / Drives / Possessions; see
+    # analytics/tracking_ext_store.py). Potential assists live here: the box-score tracking feed
+    # has none and boxscorematchupsv3 leaves them at 0. Each measure fills only its own columns
+    # (NULL = that measure not collected for the game yet).
+    # shot_xfg: the per-season expected make probability per (zone, dist_band, action_type)
+    # (analytics/xfg_store.py), smoothed; dist_band '*' / action_type '*' rows are the pooled
+    # parents used as fallbacks.
+    """
+    CREATE TABLE IF NOT EXISTS player_tracking_ext (
+        game_id TEXT NOT NULL, player_id INTEGER NOT NULL, team TEXT, game_date TEXT,
+        season TEXT, season_type TEXT, minutes REAL,
+        passes_made INTEGER, passes_received INTEGER, ast INTEGER, ft_ast INTEGER,
+        secondary_ast INTEGER, pot_ast INTEGER, ast_pts_created INTEGER, ast_adj INTEGER,
+        drives INTEGER, drive_fgm INTEGER, drive_fga INTEGER, drive_ftm INTEGER,
+        drive_fta INTEGER, drive_pts INTEGER, drive_passes INTEGER, drive_ast INTEGER,
+        drive_tov INTEGER, drive_pf INTEGER,
+        touches INTEGER, front_ct_touches INTEGER, time_of_poss REAL, avg_sec_per_touch REAL,
+        avg_drib_per_touch REAL, elbow_touches INTEGER, post_touches INTEGER,
+        paint_touches INTEGER,
+        PRIMARY KEY (game_id, player_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_player_tracking_ext_player
+        ON player_tracking_ext(player_id, season);
+    CREATE INDEX IF NOT EXISTS idx_player_tracking_ext_date ON player_tracking_ext(game_date);
+
+    CREATE TABLE IF NOT EXISTS shot_xfg (
+        season TEXT NOT NULL, zone TEXT NOT NULL, dist_band TEXT NOT NULL,
+        action_type TEXT NOT NULL, fga INTEGER, fgm INTEGER, xfg REAL,
+        PRIMARY KEY (season, zone, dist_band, action_type)
+    );
+    """,
 ]
 
 GAME_COLUMNS = ("espn_id", "season", "nba_day", "tipoff_utc", "home", "away",

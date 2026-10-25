@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# Team page (web/stats_teams.py, queries stats/teams.py + stats/leaders.py). #}
+{% block title %}{{ t.name }} &middot; {{ season }} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-teams.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page tm-page{% endblock %}
+{% block content %}
+{%- set q = "?season=" ~ season ~ extra -%}
+<div class="pro">
+  <div class="crumbs"><a href="/teams{{ q if (season != seasons[0] or extra) else '' }}">Teams</a> &rsaquo; <span>{{ t.name }}</span></div>
+  <div class="card">
+    {% set meta %}
+      {%- if row -%}
+      <b>{{ row.w }}&ndash;{{ row.l }}</b>{% if stype != 'Regular Season' %} {{ type_label|lower }}{% endif %}
+      {%- if place and place.div %} &middot; <a class="tm-place" href="/teams?season={{ season }}{{ extra }}&amp;view=div">{{ place.div|ordinal }} in {{ place.division }}</a>{% endif %}
+      {%- if place and place.conf %} &middot; <a class="tm-place" href="/teams?season={{ season }}{{ extra }}&amp;view=conf">{{ place.conf|ordinal }} in the {{ place.conference }}</a>{% endif %}
+      &middot; Home {{ row.home|record }} &middot; Road {{ row.road|record }} &middot; Last 10 {{ row.l10|record }}{% if row.streak %} &middot; {{ row.streak }}{% endif %}
+      {%- else -%}{{ season }} &middot; {{ type_label }}: no games yet{%- endif -%}
+      {%- if coach %} &middot; Coach {{ coach }}{% endif %}
+      {%- if row and row.gp < 10 %} &middot; <span class="note">{{ row.gp }} game{{ '' if row.gp == 1 else 's' }} played</span>{% endif %}
+    {% endset %}
+    {% call s.hero(t.name, meta=meta, badge_team=t.code) %}
+      {{ s.season_seg(season, base="/team/" ~ t.code, extra=extra, options=seasons) }}
+      {{ s.seg("type", type_opts, type_value, label="Season type") }}
+      {{ s.seg("gt", gt_opts, "x" if gt else "all", label="Garbage time") }}
+      {{ s.seg("view", [{"value": "team", "label": "Team", "href": "/team/" ~ t.code ~ q}, {"value": "league", "label": "League table", "href": "/teams" ~ q}], "team", label="View") }}
+      <a class="pill" href="/compare?t={{ t.code }}&amp;season={{ season }}{{ extra }}" data-tip="Compare the {{ t.nickname }} side by side with another team">&#8644; <b>Compare</b></a>
+    {% endcall %}
+    <div class="tiles">
+      {% for tl in tile_vals %}
+        {%- set v = tl.value -%}
+        {{ s.tile_pct(tl.label, (v|pct(1) if tl.kind == 'pct' else (v|signed(1) if tl.kind == 'signed' else v|num(1))) if v is not none else None, rank=tl.rank, n=tl.n, pct=tl.pct, of=(tl.n ~ " teams"), sub="excl. garbage time" if tl.gt else None) }}
+      {% endfor %}
+    </div>
+    {% if gt and gt_info %}
+    {% if gt_info.games %}
+    <p class="note pct-note tm-gt-note"><b>Excl. garbage time:</b> off / def / net rating and pace from play-by-play stints ({{ "{:,}".format(gt_info.games) }} games league-wide{% if gt_info.share is not none %}; {{ gt_info.share|pct(1) }} of {{ t.code }} possessions were garbage time{% endif %}), ranked among {{ gt_info.n }} teams. Box-score tiles include every minute. {{ gt_def }}</p>
+    {% else %}
+    {{ s.empty("Garbage-time filter: not collected yet.", " It needs play-by-play stints, and " ~ season ~ " has none yet. Box-score tiles include every minute.") }}
+    {% endif %}
+    {% endif %}
+  </div>
+  <div class="gap"></div>
+
+  {% if not row %}
+  {% call s.card("This season", cls="span-12") %}{{ s.empty("No " ~ type_label|lower ~ " games for the " ~ t.nickname ~ " in " ~ season ~ " yet.", " Pick another season above.") }}{% endcall %}
+  <div class="gap"></div>
+  {% endif %}
+
+  <div class="grid g-12">
+    {% if row %}
+    {% set roster_sub %}{{ season }} · per game · games for {{ t.code }} only · click a column to sort {{ s.seg("rpct", [("rk", "Values"), ("pct", "+ Percentiles")], "rk", remember=True, label="League percentiles") }}{% endset %}
+    {% call s.card("Roster", sub=roster_sub, cls="span-8", flush=True) %}
+      {% if roster %}
+      <table data-sortable>
+        <thead><tr>
+          <th class="l">Player</th><th>GP</th><th data-sorted="desc">Min</th><th>Pts</th><th>Reb</th><th>Ast</th><th>Stl</th><th>Blk</th><th>3PM</th>
+          <th>FG%</th><th>TS%</th><th data-tip="Usage rate, minute-weighted">USG%</th><th data-tip="Plus-minus per game">+/&minus;</th><th data-tip="DraftKings points per game">DK</th>
+        </tr></thead>
+        <tbody>
+        {% for p in roster %}
+          <tr>
+            <td class="name">{{ s.player_link(p.player_id, p.name) }}</td>
+            {%- set pp = roster_pcts.get(p.player_id) or {} %}
+            {{ s.ntd(p.gp, kind="int") }}{{ s.ntd(p.min) }}{{ s.ntd_pct(p.pts, cls="hi", pct=pp.pts, group="rpct") }}{{ s.ntd_pct(p.reb, pct=pp.reb, group="rpct") }}{{ s.ntd_pct(p.ast, pct=pp.ast, group="rpct") }}
+            {{ s.ntd_pct(p.stl, pct=pp.stl, group="rpct") }}{{ s.ntd_pct(p.blk, pct=pp.blk, group="rpct") }}{{ s.ntd_pct(p.fg3m, pct=pp.fg3m, group="rpct") }}
+            {{ s.ntd(p.fg, kind="pct") }}{{ s.ntd_pct(p.ts, kind="pct", pct=pp.ts, group="rpct") }}{{ s.ntd(p.usg, kind="pct") }}
+            {{ s.ntd(p.pm, kind="signed") }}{{ s.ntd_pct(p.dk, cls="hi", pct=pp.dk, group="rpct") }}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ s.empty() }}{% endif %}
+    {% endcall %}
+
+    {% call s.card("Defense vs position", sub="DK pts allowed / game", cls="span-4", id="dvp") %}
+      {% if dvp %}
+      <table class="tm-dvp">
+        <thead><tr><th class="l">Position</th><th>Season</th><th>Last 10</th><th class="l"></th></tr></thead>
+        <tbody>
+        {% for it in dvp.rows %}
+          <tr>
+            <td class="l"><b>{{ it.bucket }}</b> <span class="note">{{ it.label }}</span></td>
+            <td><span class="tm-dv">{{ it.v|num(1) }}</span>{{ s.rank_chip(it.rk, dvp.n, title="Allows the " ~ (it.rk|ordinal) ~ " most of " ~ dvp.n) }}</td>
+            <td><span class="tm-dv sm">{{ it.v10|num(1) }}</span>{{ s.rank_chip(it.rk10, dvp.n, title="Last 10: allows the " ~ (it.rk10|ordinal) ~ " most") }}</td>
+            <td class="l note">{{ it.word }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><td class="l">All</td><td>{{ dvp.tot|num(1) }}{{ s.rank_chip(dvp.tot_rk, dvp.n) }}</td><td></td><td></td></tr></tfoot>
+      </table>
+      <p class="note tm-dvp-note"><b>1st = allows the most DK points</b>, the best DFS matchup; last = the toughest. {{ dvp.gp }} game{{ '' if dvp.gp == 1 else 's' }}, opponents' DK points by position, per game. Positions: {{ dvp.basis }}{% if dvp.coverage is not none and dvp.coverage < 0.995 %}; {{ dvp.coverage|pct(0) }} of opponent minutes have one{% endif %}.</p>
+      {% else %}{{ s.empty() }}{% endif %}
+    {% endcall %}
+
+    {% set st = stints %}
+    {% set st_sub = ((st.games ~ " of " ~ st.team_gp ~ " games · ") if st and st.games and st.games < st.team_gp else "") ~ ("excl. garbage time · " if gt else "") %}
+    {% call s.card("On / off", sub=st_sub ~ "net rating per 100 possessions", cls="span-6", flush=True) %}
+      {% if st and st.games and st.onoff %}
+      <table data-sortable class="tm-onoff">
+        <thead><tr>
+          <th class="l">Player</th><th data-sorted="desc">Min</th><th data-tip="Possessions on the floor">Poss</th>
+          <th data-tip="Net rating with him on the floor">On</th><th data-tip="Net rating with him off the floor">Off</th>
+          <th data-tip="On minus off">On &minus; off</th>
+        </tr></thead>
+        <tbody>
+        {% for p in st.onoff %}
+          <tr>
+            <td class="name">{{ s.player_link(p.player_id, p.name) }}</td>
+            {{ s.ntd(p.min, nd=0) }}{{ s.ntd(p.on_poss, nd=0) }}
+            {{ s.ntd(p.on_net, kind="signed") }}{{ s.ntd(p.off_net, kind="signed", cls="dim") }}
+            <td data-v="{{ '' if p.diff is none else p.diff }}">{% if p.diff is not none %}{{ s.diverge(p.diff, 20) }} <span class="tm-dnum">{{ p.diff|signed(1) }}</span>{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="note tm-pad">Team overall {{ st.team.net|signed(1) }} ({{ st.team.ortg|num(1) }} / {{ st.team.drtg|num(1) }}){% if gt %}, excl. garbage time{% endif %}. Top {{ st.onoff|length }} by minutes; off = the team with him on the bench.</p>
+      {% else %}{{ s.empty("Not collected yet.", " On/off comes from play-by-play lineups (stints); " ~ season ~ " is still being backfilled.") }}{% endif %}
+    {% endcall %}
+
+    {% call s.card("Top 5-man lineups", sub=st_sub ~ "by possessions" ~ ((" · min " ~ st.min_poss ~ " poss") if st else ""), cls="span-6", flush=True) %}
+      {% if st and st.games and st.lineups %}
+      <table data-sortable class="tm-lineups">
+        <thead><tr><th class="l">Lineup</th><th data-sorted="desc">Poss</th><th>Min</th><th>ORtg</th><th>DRtg</th><th>Net</th></tr></thead>
+        <tbody>
+        {% for u in st.lineups %}
+          <tr>
+            <td class="l tm-five">{% for pid in u.ids %}<a class="link" href="/player/{{ pid }}" title="{{ u.names[loop.index0] }}">{{ u.names[loop.index0]|last_name }}</a>{% if not loop.last %}<span class="dim"> &middot; </span>{% endif %}{% endfor %}</td>
+            {{ s.ntd(u.poss, nd=0) }}{{ s.ntd(u.min, nd=0) }}{{ s.ntd(u.ortg) }}{{ s.ntd(u.drtg) }}{{ s.ntd(u.net, kind="signed", cls="hi") }}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% elif st and st.games %}{{ s.empty("No lineup has " ~ st.min_poss ~ " possessions yet.") }}
+      {% else %}{{ s.empty("Not collected yet.", " 5-man units come from play-by-play lineups (stints); " ~ season ~ " is still being backfilled.") }}{% endif %}
+      <p class="note tm-pad"><a class="link" href="/lineups?team={{ t.code }}&amp;season={{ season }}{{ '&amp;type=playoffs' if stype == 'Playoffs' else '' }}">Explore lineups &rarr;</a></p>
+    {% endcall %}
+    {% endif %}
+
+    {% if row %}
+    {% call s.card("Recent results", sub="last " ~ results|length ~ " · newest first", cls="span-8" if upcoming else "span-12", flush=True) %}
+      <table class="tm-results">
+        <thead><tr><th class="l">Date</th><th class="l">Opponent</th><th class="l">Result</th><th>Score</th><th class="l"></th></tr></thead>
+        <tbody>
+        {% for g in results %}
+          <tr>
+            <td class="l dim">{{ g.date|medium_date }}</td>
+            <td class="l">{{ 'vs' if g.home else '@' }} {{ s.team_link(g.opp, full=True) }}</td>
+            <td class="l"><b class="{{ 'tm-w' if g.wl == 'W' else 'tm-l' }}">{{ g.wl }}</b></td>
+            <td>{{ g.pts }}&ndash;{{ g.opp_pts }}</td>
+            <td class="l"><a class="link" href="/game/{{ g.game_id }}">Box score &rsaquo;</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endcall %}
+    {% endif %}
+
+    {% if upcoming %}
+    {% call s.card("Upcoming", sub=season ~ " schedule", cls="span-4" if row else "span-12", flush=True) %}
+      <table class="tm-results">
+        <tbody>
+        {% for g in upcoming %}
+          <tr>
+            <td class="l dim">{{ g.day|medium_date }}</td>
+            <td class="l">{{ 'vs' if g.home else '@' }} {{ s.team_link(g.opp, full=True) }}</td>
+            <td class="dim"><a class="link" href="/game/{{ g.game_id }}">{{ g.tipoff|tipoff or 'TBD' }}</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endcall %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

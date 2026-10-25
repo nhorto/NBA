@@ -10,8 +10,9 @@ Routes
   /dfs/<day>/<slate_id>/export.csv      ?mode=topn|cash &n=10 &fmt=id|name_id   (DK upload CSV)
   /dfs/<day>/<slate_id>/lineup.txt      ?mode=topn|cash &rank=1                 (copyable text)
 
-Pool query params: sort=proj|value|salary|pplay|big|name, dir=asc|desc, pos=PG|SG|SF|PF|C, q=<name>,
-hide=out, all=1. Top N: n=1..50 (default 10).
+Pool query params: sort=proj|value|salary|pplay|big|boom|bust|lev|vpm|name, dir=asc|desc,
+pos=PG|SG|SF|PF|C, q=<name>, hide=out, all=1. Top N: n=1..50 (default 10).
+Research columns (boom %, bust %, leverage, DK points vs salary): `stats/dfs_research.py`.
 
 Data contract (see docs/PLAYERS.md §6) for what the page reads and tolerates:
   dfs_slates / dfs_salaries   slate list, games, lock time, pool (latest capture per slate)
@@ -50,6 +51,7 @@ from ..proj.dfs import late_news_tag as dfs_late
 from ..proj.dfs import portfolio as dfs_portfolio
 from ..proj.dfs import why as dfs_why
 from ..proj.dfs import xfactor as dfs_xfactor
+from ..stats import dfs_research as RS
 from . import fmt
 
 TAG_ORDER = {"main": 0, "early": 1, "late": 2, "turbo": 3, "showdown": 9}
@@ -58,7 +60,7 @@ TAG_LABEL = {"main": "Main", "early": "Early", "late": "Late", "turbo": "Turbo",
 RUN_LABEL = {"lock45": "45-minute run", "lock10": "10-minute run", "swap": "Late-swap run",
              "manual": "Manual run", "topn": "Manual run", "cash": "Manual run"}
 POS_FILTERS = ("PG", "SG", "SF", "PF", "C")
-SORTS = ("proj", "value", "salary", "pplay", "big", "name")
+SORTS = ("proj", "value", "salary", "pplay", "big", "boom", "bust", "lev", "vpm", "name")
 POOL_DEFAULT_ROWS = 40
 TOPN_DEFAULT, TOPN_MAX = 10, 50
 STATUS_LABEL = {"OUT": "Out", "O": "Out", "Q": "Q", "GTD": "GTD", "D": "D"}
@@ -343,7 +345,8 @@ def load_projections(conn: sqlite3.Connection, run: dict | None, game_ids: list[
     ids = [p["id"] for p in by_pid.values()]
     for chunk in _chunks(ids):
         q = ",".join("?" * len(chunk))
-        for s in _rows(conn, "SELECT projection_id, stat, cond, mean, sd, q10, q90 FROM "
+        for s in _rows(conn, "SELECT projection_id, stat, cond, mean, sd, q05, q10, q25, q50, "
+                             "q75, q90, q95 FROM "
                              f"player_projection_stats WHERE projection_id IN ({q})", chunk):
             stats.setdefault(s["projection_id"], {})[(s["stat"], s["cond"])] = dict(s)
     for pid, p in by_pid.items():
@@ -357,6 +360,7 @@ def load_projections(conn: sqlite3.Connection, run: dict | None, game_ids: list[
             "q90": _num((dk_pl or dk_all or {}).get("q90")),
             "min": _num((mn or {}).get("mean")),
             "p_play": _num(p["p_play"]),
+            "qs": [_num((dk_pl or dk_all or {}).get(c)) for c in RS.Q_COLS],
             "inputs": _json(p["inputs_json"], {}) or {}}
     first = prows[0] if prows else None
     if first is not None:
@@ -428,7 +432,7 @@ def _pool_view(pool: list[dict], proj: dict, nba_ids: dict[str, int]) -> list[di
         out = d["status"] in ("OUT", "O")
         if pr is not None:
             d.update(proj=pr["mean"], q10=pr["q10"], q90=pr["q90"], min_mean=pr["min"],
-                     p_play=pr["p_play"], inputs=pr["inputs"], src="model")
+                     p_play=pr["p_play"], inputs=pr["inputs"], src="model", qs=pr.get("qs"))
         elif model:
             d.update(proj=None, q10=None, q90=None, min_mean=None, p_play=None, inputs={},
                      src="none")
@@ -484,10 +488,102 @@ def _attach_late_news(conn: sqlite3.Connection, rows: list[dict], proj: dict,
     return n
 
 
+def _attach_research(conn: sqlite3.Connection, rows: list[dict], proj: dict, run: dict | None,
+                     topn_rows: list[dict], topn_run: dict | None, nba: Mapping[str, int],
+                     day: str) -> dict:
+    """Add the research columns (`stats/dfs_research.py`) to the pool rows: ``boom`` /
+    ``bust`` (chance if he plays; from the projection run's sims, else its stored quantiles),
+    ``lev`` (Top N share minus estimated popularity, percentage points) and ``vpm`` (last-10
+    DK points minus the salary-implied DK points). Returns what the page says about them.
+    Never fails the page."""
+    info = {"bb_method": None, "lev_n": 0, "lev_run": None, "fit": None}
+    for r in rows:
+        r.update(boom=None, bust=None, bb_src=None, lev=None, lev_share=None, lev_own=None,
+                 vpm=None)
+    live = [r for r in rows if r["status"] not in ("OUT", "O")]
+    # boom / bust
+    try:
+        sal = {r["id"]: float(r["salary"]) for r in live if r.get("salary")}
+        sims = {}
+        for rid in dict.fromkeys(x for x in (proj.get("run_id"), (run or {}).get("run_id")) if x):
+            sims = RS.sim_boom_bust(conn, rid, sal)
+            if sims:
+                break
+        n_sims = n_q = 0
+        for r in live:
+            hit = sims.get(r["id"]) if r.get("src") == "model" else None
+            if hit is not None and hit[0] is not None:
+                r.update(boom=hit[0], bust=hit[1], bb_src="sims")
+                n_sims += 1
+            elif r.get("src") == "model" and r.get("qs"):
+                up, dn = RS.boom_bust_quantiles(r["qs"], r.get("salary"))
+                if up is not None:
+                    r.update(boom=up, bust=dn, bb_src="quantiles")
+                    n_q += 1
+        info["bb_method"] = ("sims" if n_sims and not n_q else "quantiles" if n_q and not n_sims
+                             else "mixed" if n_q else None)
+    except Exception:  # noqa: BLE001 - optional columns must not break the page
+        pass
+    # leverage: Top N share minus the run's popularity proxy
+    try:
+        shares, n_lu = RS.lineup_shares(lu["slots"] for lu in topn_rows)
+        if n_lu:
+            own, own_run = RS.ownership(conn, [(topn_run or {}).get("run_id"),
+                                               proj.get("run_id"), (run or {}).get("run_id")])
+            if own:
+                info.update(lev_n=n_lu, lev_run=own_run)
+                for r in live:
+                    o = own.get(r["id"])
+                    sh = shares.get(r["id"], 0.0)
+                    r.update(lev=RS.leverage(sh, o), lev_share=sh, lev_own=o)
+    except Exception:  # noqa: BLE001
+        pass
+    # DK points vs salary
+    try:
+        d = fmt.parse_day(day)
+        if d is not None:
+            lines = RS.salary_lines(conn, day)
+            from ..stats import seasons as SS
+            line = lines.get(SS.season_for(d))
+            if line:
+                info["fit"] = {**line, "season": SS.season_for(d)}
+                ids = {r["id"]: nba.get(r["id"]) for r in rows}
+                recent = RS.recent_dk(conn, [i for i in ids.values() if i], d)
+                for r in rows:
+                    nid = ids.get(r["id"])
+                    r["vpm"] = RS.value_vs_salary(recent.get(nid) if nid else None, line,
+                                                  r.get("salary"))
+    except Exception:  # noqa: BLE001
+        pass
+    for r in rows:
+        r["lev_tip"] = "" if r.get("lev") is None else (
+            f"In {r['lev_share'] * info['lev_n']:.0f} of {info['lev_n']} Top N lineups "
+            f"({100 * r['lev_share']:.0f}%) minus an estimated {r['lev_own']:.1f}% popularity "
+            f"= {fmt.signed(r['lev'], 1)} pts")
+        v = r.get("vpm")
+        if v:
+            prev = f", {v['last_prev']} from last season" if v["last_prev"] else ""
+            tip = (f"Last {v['last_n']} games{prev}: {v['last_mean']:.1f} DK points a game vs "
+                   f"{v['expected']:.1f} expected at {money(r.get('salary'))} "
+                   f"= {fmt.signed(v['pm'], 1)}.")
+            if v["season_pm"] is not None:
+                tip += (f" This season ({v['season_n']} game{'s' if v['season_n'] != 1 else ''})"
+                        f": {v['season_mean']:.1f} a game = {fmt.signed(v['season_pm'], 1)}.")
+            else:
+                tip += " No games this season yet."
+            r["vpm_tip"] = tip
+        else:
+            r["vpm_tip"] = ""
+    return info
+
+
 def _sort_pool(rows: list[dict], sort: str, desc: bool) -> list[dict]:
     key = {"proj": lambda r: r["proj"], "value": lambda r: r["value"],
            "salary": lambda r: r["salary"], "pplay": lambda r: r["p_play"],
-           "big": lambda r: r.get("big_p"), "name": lambda r: _norm_name(r["name"])}[sort]
+           "big": lambda r: r.get("big_p"), "boom": lambda r: r.get("boom"),
+           "bust": lambda r: r.get("bust"), "lev": lambda r: r.get("lev"),
+           "vpm": lambda r: (r.get("vpm") or {}).get("pm"),
+           "name": lambda r: _norm_name(r["name"])}[sort]
     have = [r for r in rows if key(r) is not None]
     miss = [r for r in rows if key(r) is None]
     have.sort(key=lambda r: (key(r), r["salary"], r["name"]), reverse=desc)
@@ -552,7 +648,8 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
     params = dict(params or {})
     v: dict[str, Any] = {"day": day, "day_label": fmt.long_date(day) or day, "slate": None,
                          "slates": [], "state": "ok", "prev_day": None, "next_day": None,
-                         "late": None, "cash": None, "topn": [], "pool": None, "contests": 0}
+                         "late": None, "cash": None, "topn": [], "pool": None, "contests": 0,
+                         "nba": {}}
     days = day_list(conn) if conn is not None else []
     v["prev_day"] = next((d for d in reversed(days) if d < day), None)
     v["next_day"] = next((d for d in days if d > day), None)
@@ -591,6 +688,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
     run, failed = pick_run(conn, runs)
     proj = load_projections(conn, run, [str(g) for g in chosen["game_ids"]])
     nba_ids = dk_to_nba(conn) if proj["by_nba_id"] else {}
+    v["nba"] = nba_ids or dk_to_nba(conn)      # DK id -> NBA id, for /player/<id> links only
     rows = _pool_view(pool, proj, nba_ids)
     by_id = {r["id"]: r for r in rows}
     xf_n = _attach_xfactor(conn, rows, proj, run) if not is_showdown else 0
@@ -668,6 +766,8 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
     topn = [_enrich_lineup(r, by_id, first_ids if i else None, topn_news, pool_for_why, vmax)
             for i, r in enumerate(topn_rows[:n])]
     v["topn_note"] = source_note(topn_run)
+    research = _attach_research(conn, rows, proj, run, topn_rows, topn_run, v["nba"], day) \
+        if not is_showdown else {"bb_method": None, "lev_n": 0, "lev_run": None, "fit": None}
     for i, lu in enumerate(topn):
         if i:
             best = topn[0]
@@ -727,6 +827,37 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
     has_pplay = any(r.get("p_play") is not None for r in rows)
     has_starter = any(r.get("starter") is not None for r in rows)
     has_big = any(r.get("big_p") is not None for r in rows)
+    has_boom = any(r.get("boom") is not None for r in rows)
+    has_lev = any(r.get("lev") is not None for r in rows)
+    has_vpm = any(r.get("vpm") for r in rows)
+    eg_sal = 4500
+    b_hi, b_lo = RS.marks(eg_sal)
+    bb_how = {"sims": "Share of the run’s simulations in which he plays (raw shares; the "
+                      "big-night chance is the recalibrated version that also counts missed "
+                      "games).",
+              "quantiles": "Approximated from the run’s stored 5th to 95th percentiles if he "
+                           "plays: linear between them, an exponential tail beyond them. The "
+                           "simulation file is not on this server.",
+              "mixed": "From the run’s simulations where available, else approximated from its "
+                       "stored percentiles."}.get(research["bb_method"] or "", "")
+    fit = research.get("fit")
+    tips = {
+        "boom": (f"6×+: chance he scores at least {RS.BOOM_K:g}× his salary in thousands in "
+                 f"DK points (for example {b_hi:g} at $4,500), if he plays. {bb_how}"),
+        "bust": (f"Under 3×: chance he scores under {RS.BUST_K:g}× his salary in thousands in DK "
+                 f"points (for example {b_lo:g} at $4,500), if he plays. {bb_how}"),
+        "lev": (f"Ours − field: his share of this run’s {research['lev_n']} Top N lineups minus his "
+                "estimated popularity (a proxy, not real ownership), in percentage points. "
+                "Positive: he is in more of our Top N lineups than the field is expected to "
+                "play him."),
+        "vpm": ("DK points vs salary: his average DK points in his last "
+                f"{RS.LAST_N} games (this season and last) minus the DK points his salary "
+                "implies. The salary line is a straight-line fit of DK points on salary across "
+                + (f"{fit['n']:,} graded DraftKings Classic player-games in {fit['season']}"
+                   f" ({fit['a']:.1f} + {1000 * fit['b']:.2f} per $1,000)" if fit else
+                   "this season’s graded DraftKings Classic player-games")
+                + ". Hover a cell for this season’s figure."),
+    }
     base = f"/dfs/{day}/{sid}"
     defaults = {"sort": "proj", "dir": "desc"}
     cur = {"sort": sort, "dir": direction, "pos": pos, "q": q,
@@ -749,15 +880,26 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
                               ("pplay", "P(play)", "Sort by chance to play"),
                               ("big", "Big-night chance",
                                f"Sort by chance of {dfs_xfactor.BIG_K:g}x salary/1000 DK points "
-                               "or more")):
+                               "or more"),
+                              ("boom", "6×+", "Sort by chance of 6× his salary or more"),
+                              ("bust", "Under 3×", "Sort by chance of under 3× his salary"),
+                              ("lev", "Ours − field", "Sort by our lineup share minus estimated popularity"),
+                              ("vpm", "vs salary", "Sort by DK points vs salary")):
         if key == "pplay" and not has_pplay:
             continue
         if key == "big" and not has_big:
             continue
+        if key in ("boom", "bust") and not has_boom:
+            continue
+        if key == "lev" and not has_lev:
+            continue
+        if key == "vpm" and not has_vpm:
+            continue
         active = sort == key
         nxt = ("asc" if direction == "desc" else "desc") if active else \
             ("asc" if key == "name" else "desc")
-        heads.append({"key": key, "label": label, "title": title, "url": url(sort=key, dir=nxt),
+        heads.append({"key": key, "label": label, "title": title, "tip": tips.get(key),
+                      "url": url(sort=key, dir=nxt),
                       "aria": ("descending" if direction == "desc" else "ascending")
                       if active else "none",
                       "arrow": ("▼" if direction == "desc" else "▲") if active else ""})
@@ -772,7 +914,9 @@ def build_page(conn: sqlite3.Connection | None, day: str, slate_id: str | None, 
         else "", "less_url": url(all="") if show_all and total > POOL_DEFAULT_ROWS else "",
         "heads": heads, "sort": sort, "dir": direction, "pos": pos, "q": q, "hide_out": hide_out,
         "has_range": has_model_range, "has_pplay": has_pplay, "has_starter": has_starter,
-        "has_big": has_big, "xf_count": xf_n,
+        "has_big": has_big, "xf_count": xf_n, "has_boom": has_boom, "has_lev": has_lev,
+        "has_vpm": has_vpm, "bb_method": research["bb_method"], "lev_n": research["lev_n"],
+        "boom_k": f"{RS.BOOM_K:g}", "bust_k": f"{RS.BUST_K:g}", "vpm_n": RS.LAST_N,
         "xf_v2": dfs_xfactor.xf_v2(),
         "xf_label": dfs_xfactor.LABEL_V2 if dfs_xfactor.xf_v2() else dfs_xfactor.LABEL,
         "xf_lev_min": f"{dfs_xfactor.LEV_MIN:g}",

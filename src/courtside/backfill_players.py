@@ -49,6 +49,7 @@ TABLE_ORDER = tuple(TABLE_FLOOR)
 BLOCK_WAITS = (120, 300, 600, 900, 900, 900, 900, 900, 900, 900)   # seconds; ~2.6 h in total
 MAX_CONSECUTIVE_FAILS = 10
 RECENT_DAYS = 2    # an empty payload for a game this recent may just be "not processed yet"
+# (an empty payload of a current-season game is never archived: see _run_kind)
 
 
 # ------------------------------------------------------------------------ logging
@@ -350,6 +351,8 @@ def _run_kind(conn, kind, seasons, guard, fetch, summary, limit, reparse, log_ev
     t0 = time.monotonic()
     fetched_here = 0
     recent_cut = (today - timedelta(days=RECENT_DAYS)).isoformat()
+    from .trends.common import season_of
+    current = season_of(today)
     for gid, day, season in games:
         path = have.get(gid)
         try:
@@ -364,7 +367,9 @@ def _run_kind(conn, kind, seasons, guard, fetch, summary, limit, reparse, log_ev
                     continue
                 payload = guard.call(fetch, kind, gid)
                 fetched_here += 1
-                if parse(payload) or day < recent_cut:   # empty + fresh game: retry on a rerun
+                # empty + fresh game, or empty in the current season (tracking lags days early in
+                # a season): not archived, so a rerun retries it
+                if parse(payload) or (day < recent_cut and season != current):
                     archive.save_raw(SOURCE, kind, day, gid, payload)
                 counts["fetched"] += 1
             rows = parse(payload)

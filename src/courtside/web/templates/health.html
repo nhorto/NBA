@@ -1,6 +1,9 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_stats.html" as s %}
 {% set st = h.status %}
+{#- verdict / tone words from health.py -> the chip tone classes in pro-health.css (colour + icon + text) -#}
+{% set TONE = {"ahead": "good", "ok": "good", "pos": "good", "level": "even", "behind": "warn", "mild": "warn", "warn": "warn",
+               "bad": "bad", "crit": "bad", "neg": "bad", "info": "info", "none": "none", "plain": "none"} %}
 {% macro legend(items) -%}
 <ul class="hm-legend" aria-label="Chart key">
   {% for it in items %}<li><i class="hm-sw {{ it.cls }}"></i>{{ it.label }}</li>{% endfor %}
@@ -9,335 +12,374 @@
 {% macro pair(c) -%}
 <div class="chart-box">{{ c.wide|safe }}{% if c.narrow %}{{ c.narrow|safe }}{% endif %}</div>
 {%- endmacro %}
+{% macro sec(id, title, meta="") -%}
+<h2 class="hh-h" id="{{ id }}">{{ title }}{% if meta %} <span class="meta">{{ meta }}</span>{% endif %}</h2>
+{%- endmacro %}
 {% block title %}Model Health &middot; Courtside{% endblock %}
 {% block description %}How the Courtside models are performing: accuracy and log-loss against the betting market, calibration, bias, feature drift, alerts and data checks.{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-health.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page hh-page{% endblock %}
 
 {% block content %}
-<section class="hm-hero wrap" aria-labelledby="hm-title">
-  <div class="hm-hero-main">
-    <div class="mast-kicker">
-      <span class="kicker">Model Health</span>
-      {% if h.as_of %}<time datetime="{{ h.as_of }}">As of {{ h.as_of|long_date }}</time>{% endif %}
-    </div>
-    <p class="hm-status is-{{ st.state }}"><span class="hm-light" aria-hidden="true"></span><span>{{ st.word }}</span></p>
-    <nav class="hm-tabs" aria-label="Health sections">
-      <a href="/health" aria-current="page" class="is-active">Games</a><a href="/health/dfs">DFS</a>
-    </nav>
-    <h1 class="headline hm-headline" id="hm-title">{{ st.headline }}</h1>
-    <p class="hm-sub">{{ st.sub }}</p>
-    <dl class="stats">
-      <div><dt>Alerts</dt><dd>{{ h.alerts.open|length }}{% if h.alerts.critical %}<small> {{ h.alerts.critical }} critical</small>{% endif %}</dd></div>
-      <div><dt>Checks</dt><dd>{% if h.checks.n %}{{ h.checks.counts.fail + h.checks.counts.warn }}<small> failing</small>{% else %}<span class="muted">{{ DASH }}</span>{% endif %}</dd></div>
-      <div><dt>Games</dt><dd>{% if h.games_scored %}{{ h.games_scored }}{% else %}<span class="muted">{{ DASH }}</span>{% endif %}</dd></div>
-      <div><dt>Drift</dt><dd>{% if h.drift %}{{ "%.2f"|format(h.drift.max_psi) }}<small> PSI</small>{% else %}<span class="muted">{{ DASH }}</span>{% endif %}</dd></div>
-    </dl>
-  </div>
-
-  <aside class="s60 card hm-champs" aria-labelledby="champ-title">
-    <h2 class="s60-title" id="champ-title"><span class="hm-crown" aria-hidden="true"></span>Champion models</h2>
-    {% if h.champions %}
-    <ul class="champ-list">
-      {% for c in h.champions %}
-      <li>
-        <div class="champ-top"><b>{{ c.label }}</b><span class="champ-ver">{{ c.vshort }}</span></div>
-        <p class="champ-meta">{{ c.when_word }}{% if c.when %} {{ c.when }}{% endif %}{% if c.sha %} &middot; code <code>{{ c.sha }}</code>{% if c.dirty %} <span class="champ-dirty" title="Built from a working tree with uncommitted changes">+ edits</span>{% endif %}{% endif %}</p>
-      </li>
-      {% endfor %}
-    </ul>
-    {% if h.shadows %}<p class="champ-shadow">{{ h.shadows|length }} in shadow: {% for s in h.shadows %}{{ s.label }} <span class="champ-ver">{{ s.vshort }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-    {% else %}
-    <p class="champ-empty">No versions are registered yet, so predictions are not tied to a model version. They will appear here once the model registry is set up.</p>
-    {% endif %}
-  </aside>
-</section>
-
-{% if h.stale_days %}
-<div class="wrap"><p class="caveat hm-caveat">The newest metrics snapshot is from {{ h.as_of|medium_date }} ({{ h.stale_days }} days ago). Everything below describes that day; no newer games have been scored (offseason, or the monitor hasn&rsquo;t run).</p></div>
-{% endif %}
-
-<nav class="secnav" aria-label="Sections">
-  <div class="wrap secnav-in">
-    <a href="#scoreboard">Scoreboard</a>
-    <a href="#trends">Trends</a>
-    <a href="#calibration">Calibration</a>
-    <a href="#bias">Over/under</a>
-    <a href="#drift">Drift</a>
-    <a href="#alerts">Alerts</a>
-    <a href="#checks">Data checks</a>
-    <a href="#history">History</a>
-  </div>
-</nav>
-
-{# ================================================================ SCOREBOARD #}
-<section class="section wrap" id="scoreboard" aria-labelledby="scoreboard-title">
-  {% set meta %}{% if h.models %}Season and last 100 games{% endif %}{% endset %}
-  {{ m.sec_head("scoreboard", "01", "Scoreboard", meta) }}
-  {% if h.models %}
-  <p class="sec-lede">Log-loss and Brier score grade the probabilities (lower is better). &ldquo;vs market&rdquo; is the difference in log-loss on the same games, with its standard error (SE); negative means we beat the line.</p>
-  {% if h.games_scored and h.games_scored < 100 %}<p class="caveat">Only {{ h.games_scored }} games are scored so far. Small samples are noisy, so read the gaps against their error bars.</p>{% endif %}
-  <div class="grid grid-2 hm-models">
-    {% for md in h.models %}
-    <article class="card hm-model{% if md.id == 'market' %} is-market{% endif %}" aria-label="{{ md.name }}">
-      <header class="hm-model-head">
-        <h3 class="hm-model-name">{{ md.name }}</h3>
-        <div class="hm-tags">
-          {% if md.role %}<span class="tag{% if md.role == 'Champion' %} tag-hl{% endif %}">{{ md.role }}</span>{% endif %}
-          {% if md.version %}<span class="champ-ver">{{ md.version }}</span>{% endif %}
+<div class="pro hh">
+  {# ============================================================ HERO #}
+  <div class="grid g-12 hh-top">
+    <section class="card hh-hero span-7" aria-labelledby="hm-title">
+      <div class="hh-hero-main">
+        <div class="hh-hero-row">
+          <p class="hh-status is-{{ st.state }}"><span class="hh-light" aria-hidden="true"></span><span>{{ st.word }}</span></p>
+          {{ s.seg("tab", [{"value": "games", "label": "Games", "href": "/health"}, {"value": "dfs", "label": "DFS", "href": "/health/dfs"}], "games", label="Health sections") }}
+          {% if h.as_of %}<time class="hh-asof" datetime="{{ h.as_of }}">As of {{ h.as_of|long_date }}</time>{% endif %}
         </div>
-        {% if md.desc %}<p class="hm-model-desc">{{ md.desc }}</p>{% endif %}
-      </header>
-      {% set s = md.season %}{% set l = md.last100 %}
-      <table class="table hm-stats">
-        <thead><tr><th scope="col"><span class="sr">Measure</span></th><th class="num" scope="col">Season</th><th class="num" scope="col">Last 100</th></tr></thead>
+        <h1 id="hm-title">{{ st.headline }}</h1>
+        <p class="hh-sub">{{ st.sub }}</p>
+      </div>
+      <div class="tiles">
+        {{ s.tile("Alerts", h.alerts.open|length, sub=(h.alerts.critical ~ " critical") if h.alerts.critical else "none critical", tip="Open alerts across the game models and DFS.") }}
+        {{ s.tile("Checks failing", (h.checks.counts.fail + h.checks.counts.warn) if h.checks.n else none, sub=((h.checks.counts.fail ~ " fail, " ~ h.checks.counts.warn ~ " warn") if h.checks.n else none), tip="Data checks whose latest run warned or failed.") }}
+        {{ s.tile("Games scored", h.games_scored or none, tip="Finished games with a stored prediction this season.") }}
+        {{ s.tile("Drift (max PSI)", ("%.2f"|format(h.drift.max_psi)) if h.drift else none, sub="stable below 0.25", tip="Largest population stability index across features.") }}
+      </div>
+    </section>
+
+    <aside class="card span-5" aria-labelledby="champ-title">
+      <h3 id="champ-title">Champion models{% if h.shadows %}<span class="sub">{{ h.shadows|length }} in shadow</span>{% endif %}</h3>
+      {% if h.champions %}
+      <div class="scroll">
+      <table class="hh-champ">
+        <caption class="sr">Champion model versions</caption>
+        <thead><tr><th class="l" scope="col">Model</th><th class="l" scope="col">Version</th><th class="l" scope="col">Registered</th></tr></thead>
         <tbody>
-          <tr><th scope="row">Games</th><td class="num">{{ s.n if s else DASH }}</td><td class="num">{{ l.n if l else DASH }}</td></tr>
-          <tr><th scope="row">Log-loss</th><td class="num strong">{{ s.ll if s else DASH }}</td><td class="num strong">{{ l.ll if l else DASH }}</td></tr>
-          <tr><th scope="row">Brier</th><td class="num">{{ s.br if s else DASH }}</td><td class="num">{{ l.br if l else DASH }}</td></tr>
-          <tr><th scope="row">Accuracy</th><td class="num">{{ s.acc if s else DASH }}</td><td class="num">{{ l.acc if l else DASH }}</td></tr>
-          {% if md.id != 'market' %}
-          <tr><th scope="row">vs market</th><td class="num">{{ (s.vs|safe) if s else DASH }}</td><td class="num">{{ (l.vs|safe) if l else DASH }}</td></tr>
-          {% endif %}
+        {% for c in h.champions %}
+        <tr>
+          <th scope="row">{{ c.label }}</th>
+          <td class="l"><span class="champ-ver">{{ c.vshort }}</span></td>
+          <td class="l wrap">{{ c.when_word }}{% if c.when %} {{ c.when }}{% endif %}{% if c.sha %}<span class="psub">code <code>{{ c.sha }}</code>{% if c.dirty %} <span class="champ-dirty" title="Built from a working tree with uncommitted changes">+ edits</span>{% endif %}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
         </tbody>
       </table>
-      {% if md.id == 'market' %}
-      <p class="hm-verdict is-none">The benchmark. Every other model is compared with it on the same games.</p>
-      {% else %}
-      <div class="hm-verdicts">
-        {% for w, lab in ((s, "Season"), (l, "Last 100")) %}
-        {% if w %}<p class="hm-verdict is-{{ w.vs_market.tone }}"><span class="hm-vk">{{ lab }}</span>{{ w.vs_market.text }}</p>{% endif %}
-        {% endfor %}
       </div>
+      {% if h.shadows %}<p class="hh-shadow">In shadow: {% for sh in h.shadows %}{{ sh.label }} <span class="champ-ver">{{ sh.vshort }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+      {% else %}
+      <p class="hh-empty-p">No versions are registered yet, so predictions are not tied to a model version. They will appear here once the model registry is set up.</p>
       {% endif %}
-    </article>
-    {% endfor %}
+    </aside>
   </div>
-  {% else %}
-  {{ m.empty("No scored games yet", "The scoreboard fills in once the first predicted games finish. Early in a season there is nothing to grade.") }}
-  {% endif %}
-</section>
 
-{# ================================================================ TRENDS #}
-<section class="section wrap" id="trends" aria-labelledby="trends-title">
-  {{ m.sec_head("trends", "02", "Performance over time", "Rolling last 100 games") }}
+  {% if h.stale_days %}
+  <p class="hh-caveat">The newest metrics snapshot is from {{ h.as_of|medium_date }} ({{ h.stale_days }} days ago). Everything below describes that day; no newer games have been scored (offseason, or the monitor hasn&rsquo;t run).</p>
+  {% endif %}
+
+  <div class="secnav">
+    {{ s.seg("sections", [{"value": "scoreboard", "label": "Scoreboard", "href": "#scoreboard"}, {"value": "trends", "label": "Trends", "href": "#trends"},
+      {"value": "calibration", "label": "Calibration", "href": "#calibration"}, {"value": "bias", "label": "Over/under", "href": "#bias"},
+      {"value": "drift", "label": "Drift", "href": "#drift"}, {"value": "alerts", "label": "Alerts", "href": "#alerts"},
+      {"value": "checks", "label": "Data checks", "href": "#checks"}, {"value": "history", "label": "History", "href": "#history"}], none, label="Sections") }}
+  </div>
+
+  {# ============================================================ SCOREBOARD #}
+  <section aria-labelledby="scoreboard">
+  {{ sec("scoreboard", "Scoreboard", "Season and last 100 games" if h.models else "") }}
+  {% if h.models %}
+  <p class="hh-lede">Log-loss and Brier score grade the probabilities (lower is better). &ldquo;vs market&rdquo; is the difference in log-loss on the same games, with its standard error (SE); negative means we beat the line.</p>
+  {% if h.games_scored and h.games_scored < 100 %}<p class="hh-sm-caveat tx-warn">Only {{ h.games_scored }} games are scored so far. Small samples are noisy, so read the gaps against their error bars.</p>{% endif %}
+  {% call s.card("Models vs the market", sub="lower log-loss and Brier is better", flush=True) %}
+  <table>
+    <caption class="sr">Per-model scoreboard against the betting market</caption>
+    <thead>
+      <tr><th rowspan="2" class="l" scope="col">Model</th><th rowspan="2" class="l" scope="col">Role</th><th colspan="5" class="grp sep" scope="colgroup">Season</th><th colspan="5" class="grp sep" scope="colgroup">Last 100</th></tr>
+      <tr><th class="sep" scope="col">Games</th><th scope="col">Log-loss</th><th scope="col">Brier</th><th scope="col">Acc.</th><th scope="col">vs market</th>
+          <th class="sep" scope="col">Games</th><th scope="col">Log-loss</th><th scope="col">Brier</th><th scope="col">Acc.</th><th scope="col">vs market</th></tr>
+    </thead>
+    <tbody>
+    {% for md in h.models %}
+      {% set a = md.season %}{% set b = md.last100 %}
+      <tr{% if md.id == 'market' %} class="is-market"{% endif %} aria-label="{{ md.name }}">
+        <th scope="row"{% if md.desc %} data-tip="{{ md.desc }}"{% endif %}>{{ md.name }}{% if md.version %}<span class="psub champ-ver-line"><span class="champ-ver">{{ md.version }}</span></span>{% endif %}</th>
+        <td class="l">{% if md.role %}<span class="hh-chip {{ 't-info' if md.role == 'Champion' else 't-none' }}">{{ md.role }}</span>{% elif md.id == 'market' %}<span class="dim">Benchmark</span>{% endif %}</td>
+        <td class="sep">{{ a.n if a else DASH }}</td><td class="strong">{{ a.ll if a else DASH }}</td><td>{{ a.br if a else DASH }}</td><td>{{ a.acc if a else DASH }}</td>
+        <td>{% if md.id == 'market' %}<span class="dim">{{ DASH }}</span>{% else %}{{ (a.vs|safe) if a else DASH }}{% endif %}</td>
+        <td class="sep">{{ b.n if b else DASH }}</td><td class="strong">{{ b.ll if b else DASH }}</td><td>{{ b.br if b else DASH }}</td><td>{{ b.acc if b else DASH }}</td>
+        <td>{% if md.id == 'market' %}<span class="dim">{{ DASH }}</span>{% else %}{{ (b.vs|safe) if b else DASH }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+  {% call s.card("Verdict against the market", sub="same games, log-loss difference", flush=True) %}
+  <table>
+    <caption class="sr">Verdict for each model against the market</caption>
+    <thead><tr><th class="l" scope="col">Model</th><th class="l" scope="col">Season</th><th class="l" scope="col">Last 100</th></tr></thead>
+    <tbody>
+    {% for md in h.models %}
+      <tr>
+        <th scope="row">{{ md.name }}</th>
+        {% if md.id == 'market' %}
+        <td class="l wrap dim" colspan="2" style="min-width:210px">The benchmark. Every other model is compared with it on the same games.</td>
+        {% else %}
+        {% for w in (md.season, md.last100) %}
+        <td class="l wrap" style="min-width:210px;width:42%">{% if w %}<span class="hh-chip t-{{ TONE.get(w.vs_market.tone, 'none') }}">{{ {"ahead": "Ahead", "behind": "Behind", "level": "Level", "none": "Unclear"}.get(w.vs_market.tone, "Unclear") }}</span> {{ w.vs_market.text }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+        {% endfor %}
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endcall %}
+  {% else %}
+  {{ s.empty("No scored games yet", "The scoreboard fills in once the first predicted games finish. Early in a season there is nothing to grade.") }}
+  {% endif %}
+  </section>
+
+  {# ============================================================ TRENDS #}
+  <section aria-labelledby="trends">
+  {{ sec("trends", "Performance over time", "Rolling last 100 games") }}
   {% if h.perf %}
-  <p class="sec-lede">Each point is the average over the previous 100 scored games, drawn once at least {{ h.min_plot_n }} are in. The market line is the bar to clear.</p>
-  <div class="grid grid-2">
-    <div class="card">
-      <div class="card-head-row"><h3 class="card-title">Log-loss</h3><span class="muted card-note">lower is better</span></div>
+  <p class="hh-lede">Each point is the average over the previous 100 scored games, drawn once at least {{ h.min_plot_n }} are in. The market line is the bar to clear.</p>
+  <div class="grid g-12">
+    {% call s.card("Log-loss", sub="lower is better", cls="span-6") %}
       {{ legend(h.legend) }}
       {{ pair(h.perf) }}
-    </div>
-    <div class="card">
-      <div class="card-head-row"><h3 class="card-title">Accuracy</h3><span class="muted card-note">share of winners picked</span></div>
+    {% endcall %}
+    {% call s.card("Accuracy", sub="share of winners picked", cls="span-6") %}
       {{ legend(h.legend) }}
-      {% if h.acc %}{{ pair(h.acc) }}{% else %}{{ m.empty("Not enough points yet") }}{% endif %}
-    </div>
+      {% if h.acc %}{{ pair(h.acc) }}{% else %}{{ s.empty("Not enough points yet") }}{% endif %}
+    {% endcall %}
   </div>
   {% else %}
-  {{ m.empty("Charts start after about " ~ h.min_plot_n ~ " scored games", "Rolling performance needs a few weeks of results before a line means anything.") }}
+  {{ s.empty("Charts start after about " ~ h.min_plot_n ~ " scored games", "Rolling performance needs a few weeks of results before a line means anything.") }}
   {% endif %}
-</section>
+  </section>
 
-{# ================================================================ CALIBRATION #}
-<section class="section wrap" id="calibration" aria-labelledby="calibration-title">
-  {{ m.sec_head("calibration", "03", "Calibration", "Season to date") }}
+  {# ============================================================ CALIBRATION #}
+  <section aria-labelledby="calibration">
+  {{ sec("calibration", "Calibration", "Season to date") }}
   {% set cals = h.calibration|rejectattr("market")|list %}
   {% set mkt_cal = h.calibration|selectattr("market")|list %}
   {% macro calcard(cb) %}
-    <article class="card hm-cal">
-      <header class="hm-cal-head">
-        <h3 class="hm-model-name hm-cal-name">{{ cb.name }}</h3>
-        <span class="hm-verdict-chip is-{{ cb.verdict.tone }}">{{ cb.verdict.label }}</span>
-      </header>
-      <p class="hm-cal-note">{{ cb.verdict.note }}</p>
+    <section class="card" aria-label="{{ cb.name }} calibration">
+      <h3>{{ cb.name }}<span class="sub"><span class="hh-chip t-{{ TONE.get(cb.verdict.tone, 'none') }}">{{ cb.verdict.label }}</span></span></h3>
+      <div class="body">
+      <p class="hh-cal-note">{{ cb.verdict.note }}</p>
       {% if cb.svg %}<div class="chart-box">{{ cb.svg|safe }}</div>
-      {% else %}{{ m.empty("Chart appears after about 20 games", "Only " ~ cb.n ~ " scored so far.") }}{% endif %}
-      <dl class="hm-kv">
+      {% else %}{{ s.empty("Chart appears after about 20 games", "Only " ~ cb.n ~ " scored so far.") }}{% endif %}
+      <dl class="hh-kv">
         <div><dt>Slope <small>1.00 is perfect</small></dt><dd>{{ cb.slope_text }}{% if cb.slope_se %} <small>±{{ cb.slope_se }}</small>{% endif %}</dd></div>
         <div><dt>Spiegelhalter z <small>within ±2.5 is normal</small></dt><dd>{{ cb.z_text }}</dd></div>
         <div><dt>Calibration error <small>ECE, lower is better</small></dt><dd>{{ cb.ece }}</dd></div>
         <div><dt>Games scored</dt><dd>{{ cb.n }}</dd></div>
       </dl>
-    </article>
+      </div>
+    </section>
   {% endmacro %}
   {% if cals or mkt_cal %}
-  <p class="sec-lede">When we say 70%, does it happen about 70% of the time? Dots on the diagonal mean yes; bigger dots are bins with more games. Slope below 1 means the probabilities are too extreme (overconfident), above 1 too timid. A positive z means overconfident.</p>
-  <div class="grid hm-cal-grid">
+  <p class="hh-lede">When we say 70%, does it happen about 70% of the time? Dots on the diagonal mean yes; bigger dots are bins with more games. Slope below 1 means the probabilities are too extreme (overconfident), above 1 too timid. A positive z means overconfident.</p>
+  <div class="hh-cal-grid">
     {% for cb in cals %}{{ calcard(cb) }}{% endfor %}
   </div>
   {% if mkt_cal %}
-  <details class="more see-all hm-mkt-cal">
+  <details class="card hh-more" style="margin-top:14px">
     <summary>The market&rsquo;s own calibration, for comparison</summary>
-    <div class="hm-cal-grid grid">{% for cb in mkt_cal %}{{ calcard(cb) }}{% endfor %}</div>
+    <div class="body"><div class="hh-cal-grid">{% for cb in mkt_cal %}{{ calcard(cb) }}{% endfor %}</div></div>
   </details>
   {% endif %}
   {% else %}
-  {{ m.empty("Calibration needs results first", "The reliability diagram is drawn from the season’s scored games.") }}
+  {{ s.empty("Calibration needs results first", "The reliability diagram is drawn from the season’s scored games.") }}
   {% endif %}
-</section>
+  </section>
 
-{# ================================================================ BIAS #}
-<section class="section wrap" id="bias" aria-labelledby="bias-title">
-  {{ m.sec_head("bias", "04", "Over- and under-prediction", "Predicted minus actual") }}
+  {# ============================================================ BIAS #}
+  <section aria-labelledby="bias">
+  {{ sec("bias", "Over- and under-prediction", "Predicted minus actual") }}
   {% if h.bias.cards %}
-  <p class="sec-lede">Is a model systematically too high or too low? The dot is the season average; the shaded band is &plusmn;2 standard errors, so a band that excludes the centre line is a real lean rather than noise. The hollow dot is the last 100 games.</p>
-  <ul class="gauge-key" aria-label="Key">
-    <li><i class="g-dot"></i>Season</li><li><i class="g-dot is-last"></i>Last 100</li><li><i class="g-band-sw"></i>&plusmn;2 SE band</li>
-  </ul>
-  <div class="grid grid-2 hm-bias-grid">
+  <p class="hh-lede">Is a model systematically too high or too low? The dot is the season average; the shaded band is &plusmn;2 standard errors, so a band that excludes the centre line is a real lean rather than noise. The hollow dot is the last 100 games.</p>
+  <div class="grid g-12">
     {% for cd in h.bias.cards %}
-    <article class="card hm-bias{% if cd.market %} is-market{% endif %}" aria-label="{{ cd.name }}">
-      <header class="card-head-row"><h3 class="card-title">{{ cd.name }}</h3><span class="muted card-note">{{ cd.n }} games</span></header>
-      <ul class="bias-list">
-        {% for r in cd.rows %}
-        <li class="bias-row">
-          <div class="bias-top"><span class="bias-k">{{ r.title }}</span><span class="bias-v is-{{ r.tone }}">{{ r.value }} pts{% if r.band_text %} <small>{{ r.band_text }}</small>{% endif %}</span></div>
-          <div class="gauge" role="img" aria-label="{{ r.title }}: {{ r.value }} points, {{ r.phrase }}">
-            {% if r.band %}<i class="g-band is-{{ r.tone }}" style="left:{{ r.band.left }}%;width:{{ r.band.width }}%"></i>{% endif %}
-            <i class="g-zero"></i>
-            {% if r.last_pos is not none %}<i class="g-dot is-last is-{{ r.last_tone }}" style="left:{{ r.last_pos }}%"></i>{% endif %}
-            {% if r.season_pos is not none %}<i class="g-dot is-{{ r.tone }}" style="left:{{ r.season_pos }}%"></i>{% endif %}
-          </div>
-          <div class="gauge-scale"><span>&minus;{{ r.scale }} under</span><span>over +{{ r.scale }}</span></div>
-          <p class="bias-note"><strong>{{ r.phrase }}.</strong>{% if r.detail %} {{ r.detail }}.{% endif %}{% if r.last_text %} <span class="muted">Last 100: <b class="is-{{ r.last_tone }}">{{ r.last_text }} pts</b>{% if r.last_flag %} ({{ r.last_flag }}){% endif %}.</span>{% endif %}</p>
-        </li>
-        {% endfor %}
-      </ul>
-    </article>
+    {% call s.card(cd.name, sub=(cd.n ~ " games"), cls="span-6", flush=True) %}
+    <table aria-label="{{ cd.name }}">
+      <caption class="sr">{{ cd.name }}: bias by measure</caption>
+      <thead><tr><th class="l" scope="col">Measure</th><th class="l" scope="col">Season vs last 100</th><th scope="col">Season</th><th scope="col">Last 100</th><th class="l" scope="col">Read</th></tr></thead>
+      <tbody>
+      {% for r in cd.rows %}
+        <tr{% if cd.market %} class="is-market"{% endif %}>
+          <th scope="row">{{ r.title }}</th>
+          <td class="l">
+            <div class="gauge" role="img" aria-label="{{ r.title }}: {{ r.value }} points, {{ r.phrase }}">
+              {% if r.band %}<i class="g-band is-{{ r.tone }}" style="left:{{ r.band.left }}%;width:{{ r.band.width }}%"></i>{% endif %}
+              <i class="g-zero"></i>
+              {% if r.last_pos is not none %}<i class="g-dot is-last is-{{ r.last_tone }}" style="left:{{ r.last_pos }}%"></i>{% endif %}
+              {% if r.season_pos is not none %}<i class="g-dot is-{{ r.tone }}" style="left:{{ r.season_pos }}%"></i>{% endif %}
+            </div>
+            <div class="gauge-scale"><span>&minus;{{ r.scale }} under</span><span>over +{{ r.scale }}</span></div>
+          </td>
+          <td class="strong"><span class="hh-chip t-{{ TONE.get(r.tone, 'none') }}">{{ r.value }} pts</span>{% if r.band_text %}<span class="psub">{{ r.band_text }}</span>{% endif %}</td>
+          <td>{% if r.last_text %}<span class="hh-chip t-{{ TONE.get(r.last_tone, 'none') }}">{{ r.last_text }} pts</span>{% if r.last_flag %}<span class="psub">{{ r.last_flag }}</span>{% endif %}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+          <td class="read"><b>{{ r.phrase }}.</b>{% if r.detail %} {{ r.detail }}.{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endcall %}
     {% endfor %}
   </div>
+  <ul class="gauge-key card" aria-label="Key" style="margin-top:14px">
+    <li><i class="g-dot"></i>Season</li><li><i class="g-dot is-last"></i>Last 100</li><li><i class="g-band-sw"></i>&plusmn;2 SE band</li>
+  </ul>
   {% if h.bias_charts %}
-  <h3 class="sub-plain">Over time, last 100 games</h3>
-  <div class="card">
+  <div class="gap"></div>
+  {% call s.card("Bias over time", sub="last 100 games, predicted minus actual") %}
     {{ legend(h.legend) }}
     <div class="hm-small-grid">
       {% for bc in h.bias_charts %}
-      <figure class="hm-small"><figcaption class="mini-head">{{ bc.title }} <span class="muted">({{ bc.unit }})</span></figcaption><div class="chart-box">{{ bc.svg|safe }}</div></figure>
+      <figure class="hm-small"><figcaption>{{ bc.title }} <span class="dim">({{ bc.unit }})</span></figcaption><div class="chart-box">{{ bc.svg|safe }}</div></figure>
       {% endfor %}
     </div>
-    <p class="footnote">Above zero means the model predicted more than happened (over-predicting). Home win rate is in percentage points.</p>
-  </div>
+    <p class="note" style="margin:10px 0 0">Above zero means the model predicted more than happened (over-predicting). Home win rate is in percentage points.</p>
+  {% endcall %}
   {% endif %}
   {% else %}
-  {{ m.empty("Bias needs results first", "Over- and under-prediction is measured on scored games: win rate, margin and total.") }}
+  {{ s.empty("Bias needs results first", "Over- and under-prediction is measured on scored games: win rate, margin and total.") }}
   {% endif %}
-</section>
+  </section>
 
-{# ================================================================ DRIFT #}
-<section class="section wrap" id="drift" aria-labelledby="drift-title">
-  {% set dmeta %}{% if h.drift %}{{ h.drift.as_of|medium_date }}{% endif %}{% endset %}
-  {{ m.sec_head("drift", "05", "Feature drift", dmeta) }}
+  {# ============================================================ DRIFT #}
+  <section aria-labelledby="drift">
+  {{ sec("drift", "Feature drift", h.drift.as_of|medium_date if h.drift else "") }}
   {% if h.drift %}
-  <p class="sec-lede">Population stability index (PSI) compares what the models are seeing now with their reference ({{ h.drift.ref }}). Under 0.25 is stable; 0.25 to 0.5 has shifted; above 0.5 is a major shift.</p>
-  <div class="card">
+  <p class="hh-lede">Population stability index (PSI) compares what the models are seeing now with their reference ({{ h.drift.ref }}). Under 0.25 is stable; 0.25 to 0.5 has shifted; above 0.5 is a major shift.</p>
+  {% call s.card("Feature drift (PSI)", sub=(("Based on " ~ h.drift.n ~ " recent games") if h.drift.n else "")) %}
     <div class="psi" style="--xw:{{ h.drift.x_warn }}%;--xc:{{ h.drift.x_crit }}%">
-      <div class="psi-head" aria-hidden="true"><span></span><span class="psi-axis"><i class="psi-t" style="left:{{ h.drift.x_warn }}%">0.25</i><i class="psi-t" style="left:{{ h.drift.x_crit }}%">0.5</i></span><span></span></div>
-      <ul class="psi-list">
+      <div class="psi-head" aria-hidden="true"><span></span><span class="psi-axis"><i class="psi-t" style="left:{{ h.drift.x_warn }}%">0.25</i><i class="psi-t" style="left:{{ h.drift.x_crit }}%">0.5</i></span><span></span><span></span></div>
+      <div role="list">
         {% for f in h.drift.features %}
-        <li class="psi-row is-{{ f.tone }}"><span class="psi-k">{{ f.label }}</span><span class="psi-bar" title="{{ f.label }}: PSI {{ f.text }}"><i style="width:{{ f.w }}%"></i></span><span class="psi-v">{{ f.text }}</span></li>
+        <div class="psi-row is-{{ f.tone }}" role="listitem"><span class="psi-k">{{ f.label }}</span><span class="psi-bar" title="{{ f.label }}: PSI {{ f.text }}"><i style="width:{{ f.w }}%"></i></span><span class="psi-v">{{ f.text }}</span><span class="psi-s hh-chip t-{{ TONE.get(f.tone, 'none') }}">{{ {"ok": "Stable", "warn": "Shifted", "crit": "Major shift"}.get(f.tone, f.tone) }}</span></div>
         {% endfor %}
-      </ul>
-    </div>
-    <p class="footnote">{% if h.drift.n %}Based on {{ h.drift.n }} recent games. {% endif %}{% if h.drift.flagged %}{{ h.drift.flagged }} of {{ h.drift.features|length }} features {{ "has" if h.drift.flagged == 1 else "have" }} shifted.{% else %}All features are stable.{% endif %}</p>
-  </div>
-  {% else %}
-  {{ m.empty("No drift snapshot yet", "Drift needs about 100 recent predictions to compare against the training reference.") }}
-  {% endif %}
-</section>
-
-{# ================================================================ ALERTS #}
-<section class="section wrap" id="alerts" aria-labelledby="alerts-title">
-  {% set ameta %}{% if h.alerts.open %}{{ h.alerts.open|length }} open{% endif %}{% endset %}
-  {{ m.sec_head("alerts", "06", "Alerts", ameta) }}
-  {% macro alert_row(a, done=False) %}
-    <li class="alert-row is-{{ a.severity }}">
-      <span class="pill pill-{{ a.sev_cls }}">{{ a.sev_label }}</span>
-      <div class="alert-main">
-        <p class="alert-msg">{{ a.message }}</p>
-        <p class="alert-meta">{{ a.kind }}{% if done %} &middot; resolved {{ a.resolved }}{% elif a.since %} &middot; since {{ a.since }}{% endif %}</p>
       </div>
-    </li>
+    </div>
+    <p class="note" style="margin:10px 0 0">{% if h.drift.flagged %}{{ h.drift.flagged }} of {{ h.drift.features|length }} features {{ "has" if h.drift.flagged == 1 else "have" }} shifted.{% else %}All features are stable.{% endif %}</p>
+  {% endcall %}
+  {% else %}
+  {{ s.empty("No drift snapshot yet", "Drift needs about 100 recent predictions to compare against the training reference.") }}
+  {% endif %}
+  </section>
+
+  {# ============================================================ ALERTS #}
+  <section aria-labelledby="alerts">
+  {{ sec("alerts", "Alerts", (h.alerts.open|length ~ " open") if h.alerts.open else "") }}
+  {% macro alert_table(rows, done=False) %}
+  <table>
+    <caption class="sr">{{ "Resolved alerts" if done else "Open alerts" }}</caption>
+    <thead><tr><th class="l" scope="col">Severity</th><th class="l" scope="col">Alert</th><th class="l" scope="col">Type</th><th class="l" scope="col">{{ "Resolved" if done else "Since" }}</th></tr></thead>
+    <tbody>
+    {% for a in rows %}
+      <tr>
+        <td class="l"><span class="pill pill-{{ a.sev_cls }}">{{ a.sev_label }}</span></td>
+        <td class="msg">{{ a.message }}</td>
+        <td class="l dim">{{ a.kind }}</td>
+        <td class="l dim">{{ (a.resolved if done else a.since) or DASH }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
   {% endmacro %}
   {% if h.alerts.open %}
-  <ul class="card alert-list">{% for a in h.alerts.open %}{{ alert_row(a) }}{% endfor %}</ul>
+  {% call s.card("Open alerts", sub=(h.alerts.critical ~ " critical") if h.alerts.critical else "", flush=True) %}{{ alert_table(h.alerts.open) }}{% endcall %}
   {% else %}
-  {{ m.empty("No open alerts", "Nothing is outside its expected range right now.") }}
+  {{ s.empty("No open alerts", "Nothing is outside its expected range right now.") }}
   {% endif %}
   {% if h.alerts.resolved %}
-  <details class="more see-all">
+  <details class="card hh-more" style="margin-top:14px">
     <summary>Recently resolved <span class="count">{{ h.alerts.resolved|length }}</span></summary>
-    <ul class="card alert-list alert-done">{% for a in h.alerts.resolved %}{{ alert_row(a, True) }}{% endfor %}</ul>
+    <div class="scroll">{{ alert_table(h.alerts.resolved, True) }}</div>
   </details>
   {% endif %}
-</section>
+  </section>
 
-{# ================================================================ DATA CHECKS #}
-<section class="section wrap" id="checks" aria-labelledby="checks-title">
+  {# ============================================================ DATA CHECKS #}
+  <section aria-labelledby="checks">
   {% set cmeta %}{% if h.checks.n %}{{ h.checks.counts.ok }} ok{% if h.checks.counts.warn %} &middot; {{ h.checks.counts.warn }} warn{% endif %}{% if h.checks.counts.fail %} &middot; {{ h.checks.counts.fail }} failing{% endif %}{% endif %}{% endset %}
-  {{ m.sec_head("checks", "07", "Data checks", cmeta) }}
+  {{ sec("checks", "Data checks", cmeta|trim) }}
   {% if h.checks.groups %}
-  <div class="grid grid-2 hm-checks">
+  <div class="grid g-12">
     {% for g in h.checks.groups %}
-    <div class="card">
-      <div class="card-head-row"><h3 class="card-title">{{ g.label }}</h3><span class="muted card-note">latest run {{ g.ran }}</span></div>
-      <ul class="chk-list">
-        {% for i in g.rows %}
-        <li class="chk is-{{ i.status }}">
-          <span class="pill pill-{{ i.pill_cls }}">{{ i.pill }}</span>
-          <div class="chk-main"><b title="{{ i.name }}">{{ i.title }}</b>{% if i.detail %}<p class="chk-detail">{{ i.detail }}</p>{% endif %}</div>
-          <span class="chk-val" title="value / threshold">{% if i.value %}{{ i.value }}{% if i.threshold %}<small> / {{ i.threshold }}</small>{% endif %}{% endif %}</span>
-        </li>
-        {% endfor %}
-      </ul>
-    </div>
+    {% call s.card(g.label, sub=("latest run " ~ g.ran), cls="span-6", flush=True) %}
+    <table>
+      <caption class="sr">{{ g.label }} checks</caption>
+      <thead><tr><th class="l" scope="col">Status</th><th class="l" scope="col">Check</th><th scope="col" data-tip="value / threshold">Value</th></tr></thead>
+      <tbody>
+      {% for i in g.rows %}
+        <tr>
+          <td class="l"><span class="pill pill-{{ i.pill_cls }}">{{ i.pill }}</span></td>
+          <td class="msg" style="min-width:200px"><b title="{{ i.name }}">{{ i.title }}</b>{% if i.detail %}<span class="psub" style="overflow-wrap:anywhere">{{ i.detail }}</span>{% endif %}</td>
+          <td title="value / threshold">{% if i.value %}{{ i.value }}{% if i.threshold %}<small> / {{ i.threshold }}</small>{% endif %}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endcall %}
     {% endfor %}
   </div>
-  <details class="more see-all">
+  <details class="card hh-more" style="margin-top:14px">
     <summary>Check history</summary>
-    <div class="card hm-hist">
-      <p class="card-sub">Oldest to newest, up to 14 runs per check. Hover a dot for the date.</p>
+    <p class="hh-foot">Oldest to newest, up to 14 runs per check. Hover a dot for the date.</p>
+    <div class="scroll">
+    <table>
+      <caption class="sr">Check history</caption>
+      <thead><tr><th class="l" scope="col">Check</th><th class="l" scope="col">Latest</th><th class="l" scope="col">Last runs</th></tr></thead>
       {% for g in h.checks.groups %}
-      <h4 class="mini-head">{{ g.label }}</h4>
-      <ul class="hist-list">
+      <tbody>
+        <tr><td class="l section-h" colspan="3" style="font-weight:700;color:var(--text-secondary);background:var(--surface-2)">{{ g.label }}</td></tr>
         {% for i in g.rows %}
-        <li><span class="hist-k">{{ i.title }}</span><span class="hist-strip" role="img" aria-label="{{ i.history|length }} runs, latest {{ i.pill }}">{% for hh in i.history %}<i class="is-{{ hh.status }}" title="{{ hh.when }}: {{ hh.status }}"></i>{% endfor %}</span></li>
+        <tr>
+          <th scope="row">{{ i.title }}</th>
+          <td class="l"><span class="pill pill-{{ i.pill_cls }}">{{ i.pill }}</span></td>
+          <td class="l"><span class="hist-strip" role="img" aria-label="{{ i.history|length }} runs, latest {{ i.pill }}">{% for hh in i.history %}<i class="is-{{ hh.status }}" title="{{ hh.when }}: {{ hh.status }}"></i>{% endfor %}</span></td>
+        </tr>
         {% endfor %}
-      </ul>
+      </tbody>
       {% endfor %}
+    </table>
     </div>
   </details>
   {% else %}
-  {{ m.empty("No data checks recorded yet", "Checks run after every collect job: odds coverage, injury reports, box scores, prediction coverage and more.") }}
+  {{ s.empty("No data checks recorded yet", "Checks run after every collect job: odds coverage, injury reports, box scores, prediction coverage and more.") }}
   {% endif %}
-</section>
+  </section>
 
-{# ================================================================ HISTORY #}
-<section class="section wrap" id="history" aria-labelledby="history-title">
-  {{ m.sec_head("history", "08", "Model history", "From the registry") }}
-  {% macro tl_item(e) %}
-      <li class="tl-item is-{{ e.tone }}">
-        <span class="tl-dot" aria-hidden="true"></span>
-        <div class="tl-body">
-          <p class="tl-head"><span class="pill pill-t-{{ e.tone }}">{{ e.action }}</span>{% if e.model %} <b>{{ e.model }}</b>{% endif %} <span class="champ-ver">{{ e.version_id }}</span>{% if e.sha %} <code>{{ e.sha }}</code>{% if e.dirty %} <span class="champ-dirty" title="Built from a working tree with uncommitted changes">+ edits</span>{% endif %}{% endif %}</p>
-          {% if e.reason %}<p class="tl-reason">{{ e.reason }}</p>{% endif %}
-          <p class="tl-when">{{ e.when }}</p>
-        </div>
-      </li>
+  {# ============================================================ HISTORY #}
+  <section aria-labelledby="history">
+  {{ sec("history", "Model history", "From the registry") }}
+  {% macro hist_table(rows) %}
+  <table>
+    <caption class="sr">Model registry changes</caption>
+    <thead><tr><th class="l" scope="col">When</th><th class="l" scope="col">Change</th><th class="l" scope="col">Model</th><th class="l" scope="col">Version</th><th class="l" scope="col">Why</th></tr></thead>
+    <tbody>
+    {% for e in rows %}
+      <tr>
+        <td class="l dim">{{ e.when }}</td>
+        <td class="l"><span class="pill pill-t-{{ e.tone }}">{{ e.action }}</span></td>
+        <td class="l"><b>{{ e.model or DASH }}</b></td>
+        <td class="l"><span class="champ-ver">{{ e.version_id }}</span>{% if e.sha %} <code>{{ e.sha }}</code>{% if e.dirty %} <span class="champ-dirty" title="Built from a working tree with uncommitted changes">+ edits</span>{% endif %}{% endif %}</td>
+        <td class="msg" style="min-width:240px">{{ e.reason or DASH }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
   {% endmacro %}
   {% if h.history %}
-  <div class="card">
-    <ol class="tl">{% for e in h.history[:8] %}{{ tl_item(e) }}{% endfor %}</ol>
-    {% if h.history|length > 8 %}
-    <details class="more see-all">
-      <summary>Older changes <span class="count">{{ h.history|length - 8 }}</span></summary>
-      <ol class="tl">{% for e in h.history[8:] %}{{ tl_item(e) }}{% endfor %}</ol>
-    </details>
-    {% endif %}
-  </div>
-  {% else %}
-  {{ m.empty("No model changes recorded", "Every registration, shadow run, promotion and rollback is logged here with its reason. Nothing has changed since the registry started.") }}
+  {% call s.card("Registrations, shadow runs, promotions and rollbacks", sub=(h.history|length ~ " events"), flush=True) %}{{ hist_table(h.history[:8]) }}{% endcall %}
+  {% if h.history|length > 8 %}
+  <details class="card hh-more" style="margin-top:14px">
+    <summary>Older changes <span class="count">{{ h.history|length - 8 }}</span></summary>
+    <div class="scroll">{{ hist_table(h.history[8:]) }}</div>
+  </details>
   {% endif %}
-</section>
+  {% else %}
+  {{ s.empty("No model changes recorded", "Every registration, shadow run, promotion and rollback is logged here with its reason. Nothing has changed since the registry started.") }}
+  {% endif %}
+  </section>
+</div>
 {% endblock %}
 
 {% block foot %}

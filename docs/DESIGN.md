@@ -94,6 +94,7 @@ Later migrations will add normalized box score, play-by-play, and prediction tab
 
 - `pregame`: 10:00, 13:30 (after the 11am–1pm game-day injury resubmission), 17:00, 18:30, 20:00, and 22:00 (the last two catch late-tip lines and injury statuses). Each run refreshes the schedule (cached daily), upserts today's games, and snapshots ESPN odds, cdn.nba.com odds, ESPN injuries, and the official injury report.
 - `postgame`: 03:00 and 09:00. For each game on the previous NBA day that isn't fully archived yet, fetch the cdn.nba.com boxscore and playbyplay plus the ESPN summary, and mark the game final. The job is idempotent.
+  After archiving, postgame runs (each step isolated, in this order): `game_facts`; `stints` and `shots` (parsed from the archived play-by-play, no network); `matchups` (stats.nba.com `boxscorematchupsv3` → `player_matchups`, one request per finished game, plus a week of catch-up in the current season; an empty "not processed yet" payload is retried by the next run); `refresh_gamelogs`; `season_tables` (current season only, at most once per NBA day and only after a day with finished games: `synergy_playtypes` 40 requests + `season_matchups` 1 request per season type, Playoffs added April–June); then DFS / shadow / prop grading, rate state, player why and the Brief. A stats.nba.com block (403 / HTML / 429 / timeout) stops that step at once and marks the run failed; the 09:00 run and the next night resume. See `docs/STATS_SITE.md` "Data".
 
 ## Roadmap
 

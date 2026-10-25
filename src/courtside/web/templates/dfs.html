@@ -1,36 +1,46 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_stats.html" as st %}
 {% set s = v.slate %}
+{% set nba = v.nba or {} %}
 {% set slots_word = "six" if s and s.is_showdown else "eight" %}
 {# a probability as a range: the estimate +/- 3 pp of field-sampling error, rounded outward #}
 {% macro pband(p) -%}
 {%- set pm = (p * 1000)|round -%}
 {%- if p < 0.01 %}below 1%{% elif p > 0.99 %}above 99%{% else %}~{{ "%d"|format([(pm - 30) // 10, 0]|max) }}{{ DASH }}{{ "%d"|format([-((-(pm + 30)) // 10), 100]|min) }}%{% endif -%}
 {%- endmacro %}
-{% macro pill(label, cls) -%}<span class="pill pill-{{ cls }}">{{ label }}</span>{%- endmacro %}
+{# DraftKings status: colour AND the label text (Out, Q, GTD, D) #}
+{% macro stat(label, cls) -%}<span class="dx-st dx-st-{{ cls }}">{{ label }}</span>{%- endmacro %}
+{# player name: links to /player/<NBA id> when player_ids maps the DK id #}
+{% macro pn(name, dk_id) -%}
+{%- set nid = nba.get(dk_id|string) if dk_id is not none else none -%}
+{%- if nid %}<a class="link" href="/player/{{ nid }}"><span class="dfs-name">{{ name }}</span></a>{% else %}<span class="dfs-name">{{ name }}</span>{% endif -%}
+{%- endmacro %}
+{% macro tl(code) -%}
+{%- if code and team(code).city %}<a class="team-tag" href="/team/{{ team(code).code }}" title="{{ team(code).name }}">{{ code }}</a>{% elif code %}<span class="team-tag">{{ code }}</span>{% endif -%}
+{%- endmacro %}
 
 {# 8 slots: semantic table. bars=True draws each player's p10-p90 range under his name #}
 {% macro lineup_table(lu, caption, bars=True) -%}
-<div class="table-scroll dfs-scroll">
-<table class="table dfs-lu">
+<div class="scroll dx-scroll">
+<table class="dx-lu">
   <caption class="sr">{{ caption }}</caption>
-  <thead><tr><th scope="col">Slot</th><th scope="col">Player</th><th scope="col" class="num">Salary</th><th scope="col" class="num">Proj</th></tr></thead>
+  <thead><tr><th scope="col" class="l">Slot</th><th scope="col" class="l">Player</th><th scope="col">Salary</th><th scope="col">Proj</th></tr></thead>
   <tbody>
   {% for p in lu.slots %}
   <tr>
-    <th scope="row" class="dfs-slot">{{ p.slot }}</th>
-    <td class="dfs-who"><div class="dfs-who-in">
-      <span class="dfs-name">{{ p.name }}</span>
-      {% if p.team %}<span class="team-tag">{{ p.team }}</span>{% endif %}
-      {% if p.status_label %}{{ pill(p.status_label, p.status_class) }}{% endif %}
-      {% if bars and p.bar %}<span class="dfs-bar">{{ p.bar }}<span class="dfs-bar-n">{{ p.q10|num(0) }}{{ DASH }}{{ p.q90|num(0) }}</span></span>{% endif %}
+    <th scope="row" class="dx-slot">{{ p.slot }}</th>
+    <td class="l dx-who"><div class="dx-who-in">
+      {{ pn(p.name, p.player_id) }}
+      {% if p.team %}{{ tl(p.team) }}{% endif %}
+      {% if p.status_label %}{{ stat(p.status_label, p.status_class) }}{% endif %}
+      {% if bars and p.bar %}<span class="dx-bar">{{ p.bar }}<span class="dx-bar-n">{{ p.q10|num(0) }}{{ DASH }}{{ p.q90|num(0) }}</span></span>{% endif %}
     </div></td>
     <td class="num">{{ p.salary_text or DASH }}</td>
     <td class="num">{{ p.mean|num(1) }}</td>
   </tr>
   {% endfor %}
   </tbody>
-  <tfoot><tr><th scope="row" colspan="2">Total</th><td class="num">{{ lu.salary_text }}</td><td class="num">{{ lu.mean|num(1) }}</td></tr></tfoot>
+  <tfoot><tr><th scope="row" colspan="2" class="l">Total</th><td class="num">{{ lu.salary_text }}</td><td class="num">{{ lu.mean|num(1) }}</td></tr></tfoot>
 </table>
 </div>
 {%- endmacro %}
@@ -38,11 +48,11 @@
 {% macro why_block(lu, idp) -%}
 {% set w = lu.why %}
 {% if w.reasons or w.flags or w.summary %}
-<div class="dfs-why" aria-labelledby="why-{{ idp }}">
-  <h4 class="mini-head" id="why-{{ idp }}">Why this lineup</h4>
-  {% if w.reasons %}<ul class="dfs-reasons">{% for t in w.reasons %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
-  {% if w.summary %}<p class="dfs-sum">{{ w.summary }}.</p>{% endif %}
-  {% if w.flags %}<ul class="dfs-flags" aria-label="Availability notes">{% for t in w.flags %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
+<div class="dx-why" aria-labelledby="why-{{ idp }}">
+  <h4 class="dx-mini" id="why-{{ idp }}">Why this lineup</h4>
+  {% if w.reasons %}<ul class="dx-reasons">{% for t in w.reasons %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
+  {% if w.summary %}<p class="dx-sum">{{ w.summary }}.</p>{% endif %}
+  {% if w.flags %}<ul class="dx-flags" aria-label="Availability notes">{% for t in w.flags %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
 </div>
 {% endif %}
 {%- endmacro %}
@@ -51,167 +61,190 @@
 {% macro simdet(lu) -%}
 {% if lu.p_cash is not none and not v.payout_calibrated %}
 <details class="dfs-simdet">
-  <summary>Details <span class="muted">(simulated vs a modelled field, uncalibrated)</span></summary>
+  <summary>Details <span class="dim">(simulated vs a modelled field, uncalibrated)</span></summary>
   <p>Chance to cash in the slate&rsquo;s largest captured double-up: <b>{{ pband(lu.p_cash) }}</b>. This is simulated against a modelled field built from public information (a proxy), and the range includes &plusmn;3 points of field-sampling error. On the first slate with real standings, our lineups finished in the money less often than this estimate said, so treat it as high until more uploaded standings calibrate it.</p>
 </details>
 {% endif %}
 {%- endmacro %}
 
 {% macro copy_block(lu, idp, text_url) -%}
-<div class="dfs-copy">
-  <button type="button" class="btn btn-sm" data-copy="#copy-{{ idp }}" hidden>Copy lineup</button>
-  <a class="btn btn-sm btn-ghost" href="{{ text_url }}">Text</a>
-</div>
-<pre class="dfs-pre sr" aria-hidden="true" id="copy-{{ idp }}">{{ lu.text }}</pre>
+<button type="button" class="btn btn-sm btn-ghost" data-copy="#copy-{{ idp }}" hidden>Copy lineup</button>
+<a class="btn btn-sm btn-ghost" href="{{ text_url }}">Text</a>
+<pre class="dx-pre sr" aria-hidden="true" id="copy-{{ idp }}">{{ lu.text }}</pre>
 {%- endmacro %}
 
 {% block title %}DFS &middot; {{ v.day|medium_date }} &middot; Courtside{% endblock %}
 {% block description %}DraftKings NBA slate: projected player pool, a cash lineup, Top N lineups and why each was built. Projections are simulated.{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-dfs.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page dfs-page{% endblock %}
 
 {% block content %}
-<section class="wrap dfs-hero" aria-labelledby="dfs-title">
-  <div class="mast-kicker">
-    <span class="kicker">DFS</span>
-    <time datetime="{{ v.day }}">{{ v.day_label }}</time>
-  </div>
-  <h1 class="dfs-h1" id="dfs-title">DraftKings NBA slates</h1>
-  <nav class="daynav dfs-daynav" aria-label="Day">
-    {% if v.prev_day %}<a class="daynav-a" href="/dfs/{{ v.prev_day }}">{{ m.icon("back") }} {{ v.prev_day|short_date }}</a>{% else %}<span></span>{% endif %}
-    {% if v.next_day %}<a class="daynav-a" href="/dfs/{{ v.next_day }}">{{ v.next_day|short_date }} {{ m.icon("arrow") }}</a>{% else %}<span></span>{% endif %}
-  </nav>
-  <nav class="rs-links" aria-label="DFS tools">
-    <a href="/dfs/results">Real results</a><a href="/dfs/weekly">Weekly report</a><a href="/health/dfs">DFS health</a><a href="/players/{{ v.day }}">Player cards</a>
-  </nav>
+<div class="pro dfs">
+  <div class="crumbs"><a href="/dfs">DFS</a> &rsaquo; <span>{{ v.day|medium_date }}</span></div>
 
-  {% if v.slates %}
-  <nav class="dfs-tabs" aria-label="Slates">
-    {% for t in v.slates %}
-    <a href="{{ t.url }}" class="dfs-tab{% if t.active %} is-active{% endif %}"{% if t.active %} aria-current="page"{% endif %}><b>{{ t.label }}</b><span>{{ t.sub }}</span></a>
-    {% endfor %}
-  </nav>
-  {% endif %}
-</section>
+  {# ---------------------------------------------------------------- hero + slate tabs #}
+  <section class="card dx-hero" aria-labelledby="dx-title">
+    <div class="hero">
+      <div class="hero-badge" aria-hidden="true">DK</div>
+      <div>
+        <h1 id="dx-title">DraftKings NBA slates</h1>
+        <div class="meta"><time datetime="{{ v.day }}">{{ v.day_label }}</time></div>
+      </div>
+      <div class="right">
+        <nav class="seg" aria-label="Day">
+          {% if v.prev_day %}<a href="/dfs/{{ v.prev_day }}">&lsaquo; {{ v.prev_day|short_date }}</a>{% endif %}
+          <a class="on" aria-current="page" href="/dfs/{{ v.day }}">{{ v.day|short_date }}</a>
+          {% if v.next_day %}<a href="/dfs/{{ v.next_day }}">{{ v.next_day|short_date }} &rsaquo;</a>{% endif %}
+        </nav>
+      </div>
+    </div>
+    <nav class="dx-tools" aria-label="DFS tools">
+      <a href="/dfs/results">Real results</a><a href="/dfs/weekly">Weekly report</a><a href="/health/dfs">DFS health</a><a href="/tonight/{{ v.day }}">Player cards</a>
+    </nav>
+    {% if v.slates %}
+    <nav class="dx-tabs" aria-label="Slates">
+      {% for t in v.slates %}
+      <a href="{{ t.url }}" class="dx-tab{% if t.active %} is-active{% endif %}"{% if t.active %} aria-current="page"{% endif %}><b>{{ t.label }}</b><span>{{ t.sub }}</span></a>
+      {% endfor %}
+    </nav>
+    {% endif %}
+  </section>
 
 {% if v.state == "no_slates" %}
-<div class="wrap dfs-body">
-  {{ m.empty("No DraftKings slate for " ~ v.day_label, "Slates are captured from the DraftKings lobby on game days. Check back closer to tip-off, or open a day that has one.") }}
-  <p class="footnote">{% if v.prev_day %}<a href="/dfs/{{ v.prev_day }}">Previous slate day: {{ v.prev_day|medium_date }}</a>{% endif %}{% if v.prev_day and v.next_day %} &middot; {% endif %}{% if v.next_day %}<a href="/dfs/{{ v.next_day }}">Next slate day: {{ v.next_day|medium_date }}</a>{% endif %}</p>
-</div>
-{% else %}
-
-<div class="wrap dfs-body">
-  <section class="card dfs-head" aria-label="Slate details">
-    <div class="dfs-head-top">
-      <p class="dfs-lock">{% if s.lock_text %}<time datetime="{{ s.lock_iso }}">{{ s.lock_text }}</time>{% else %}Lock time not listed{% endif %}</p>
-      <p class="dfs-badges">
-        {% if s.proj.beta %}<span class="tag tag-beta" title="This page is showing a fallback or pre-release projection source">Beta</span>{% endif %}
-        <span class="dfs-proj">{{ s.proj.label }}</span>
-      </p>
+  <section class="card">
+    <h3>No slate</h3>
+    <div class="body">
+      {{ st.empty("No DraftKings slate for " ~ v.day_label, "Slates are captured from the DraftKings lobby on game days. Check back closer to tip-off, or open a day that has one.") }}
+      <p class="note dx-gap">{% if v.prev_day %}<a class="link" href="/dfs/{{ v.prev_day }}">Previous slate day: {{ v.prev_day|medium_date }}</a>{% endif %}{% if v.prev_day and v.next_day %} &middot; {% endif %}{% if v.next_day %}<a class="link" href="/dfs/{{ v.next_day }}">Next slate day: {{ v.next_day|medium_date }}</a>{% endif %}</p>
     </div>
-    <ul class="chips dfs-games" aria-label="Games on this slate">
-      {% for g in s.games %}<li class="chip">{{ g.label }}{% if g.time %}<span class="chip-sub">{{ g.time|replace(" ET", "") }}</span>{% endif %}</li>{% endfor %}
-    </ul>
-    <p class="dfs-meta">
-      {% if s.last_run %}<span>{{ s.last_run.text }}</span>{% else %}<span>No run yet</span>{% endif %}
-      {% if s.captured_text %}<span>{{ s.captured_text }}</span>{% endif %}
-    </p>
-    {% if not s.is_showdown %}<p class="dfs-swap-act"><a class="btn btn-sm btn-ghost" href="/dfs/{{ v.day }}/{{ s.id }}/swap">Late swap</a><span class="muted">Re-solve the open slots once games have started; upload your DK entries file for your own lineups.</span></p>{% endif %}
-    {% if s.is_showdown %}<div class="dfs-sd-guide" role="note">
-      <p><strong>Showdown is one game.</strong> Every lineup rides on the same game script, and the Top {{ v.n }} below, ranked by projection alone, often differ by a single player, so they tend to win or lose together. For more than one entry, the contest builder picks a set for a specific contest from our joint simulations of this game, scored against a modelled field (a proxy, not real entries). It aims at the simulated payout, which in Showdown sits mostly in the top few places, so its sets spread across more captains and cash somewhat less often than the Top {{ v.n }}.</p>
-      {% if v.contests %}<p><a class="btn btn-sm" href="/dfs/{{ v.day }}/{{ s.id }}/contest">Open the contest builder</a></p>{% else %}<p class="muted">The contest builder opens once this slate&rsquo;s contests are captured.</p>{% endif %}
-    </div>{% endif %}
-    {% if s.failed_note %}<p class="caveat dfs-note">{{ s.failed_note }}</p>{% endif %}
-    {% if s.stale_note %}<p class="caveat dfs-note">{{ s.stale_note }}</p>{% endif %}
+  </section>
+{% else %}
+  {% set act = v.slates|selectattr("active")|first %}
+  {# ---------------------------------------------------------------- slate details #}
+  <section class="card dx-head" aria-label="Slate details">
+    <h3>{{ act.label if act else "Slate" }}
+      <span class="sub">{% if s.proj.beta %}<span class="dx-st dx-st-questionable" title="This page is showing a fallback or pre-release projection source">Beta</span> {% endif %}<span class="dx-proj">{{ s.proj.label }}</span></span></h3>
+    <div class="tiles">
+      <div class="tile dx-lock-tile">
+        <p class="dx-lock">{% if s.lock_text %}<time datetime="{{ s.lock_iso }}">{{ s.lock_text }}</time>{% else %}Lock time not listed{% endif %}</p>
+        <p class="note">{% if s.last_run %}<span>{{ s.last_run.text }}</span>{% else %}<span>No run yet</span>{% endif %}{% if s.captured_text %} &middot; <span>{{ s.captured_text }}</span>{% endif %}</p>
+      </div>
+      {{ st.tile("Games", s.games|length) }}
+      {{ st.tile("Players", v.pool.all_total if v.pool else 0) }}
+      {{ st.tile("Lineups", v.topn_total) }}
+      {{ st.tile("Contests", v.contests) }}
+    </div>
+    <div class="body">
+      <ul class="dx-games" aria-label="Games on this slate">
+        {% for g in s.games %}<li class="dx-chip">{{ g.label }}{% if g.time %}<span class="dim">{{ g.time|replace(" ET", "") }}</span>{% endif %}</li>{% endfor %}
+      </ul>
+      {% if not s.is_showdown %}<p class="dx-swap-act"><a class="btn btn-sm btn-ghost" href="/dfs/{{ v.day }}/{{ s.id }}/swap">Late swap</a><span class="dim">Re-solve the open slots once games have started; upload your DK entries file for your own lineups.</span></p>{% endif %}
+      {% if s.is_showdown %}<div class="dfs-sd-guide" role="note">
+        <p><strong>Showdown is one game.</strong> Every lineup rides on the same game script, and the Top {{ v.n }} below, ranked by projection alone, often differ by a single player, so they tend to win or lose together. For more than one entry, the contest builder picks a set for a specific contest from our joint simulations of this game, scored against a modelled field (a proxy, not real entries). It aims at the simulated payout, which in Showdown sits mostly in the top few places, so its sets spread across more captains and cash somewhat less often than the Top {{ v.n }}.</p>
+        {% if v.contests %}<p><a class="btn btn-sm" href="/dfs/{{ v.day }}/{{ s.id }}/contest">Open the contest builder</a></p>{% else %}<p class="dim">The contest builder opens once this slate&rsquo;s contests are captured.</p>{% endif %}
+      </div>{% endif %}
+      {% if s.failed_note %}<p class="dx-callout is-warn"><span class="dx-ico" aria-hidden="true">!</span>{{ s.failed_note }}</p>{% endif %}
+      {% if s.stale_note %}<p class="dx-callout is-warn"><span class="dx-ico" aria-hidden="true">!</span>{{ s.stale_note }}</p>{% endif %}
+    </div>
   </section>
 
   {% if v.late %}
-  <section class="dfs-late" role="status" aria-label="Late news">
-    <p class="dfs-late-head"><span class="hm-banner-dot" aria-hidden="true"></span><strong>{{ v.late.head }}</strong></p>
-    <ul class="dfs-late-list">
-      {% for p in v.late.players %}<li><b>{{ p.name }}</b>{% if p.team %} <span class="team-tag">{{ p.team }}</span>{% endif %}{% if p.reason %}: {{ p.reason }}{% endif %}</li>{% endfor %}
-    </ul>
-    {% if v.late.k and not s.is_showdown %}<p class="dfs-late-act"><a href="/dfs/{{ v.day }}/{{ s.id }}/swap?scope=news">Re-optimize unlocked slots</a></p>{% endif %}
+  <section class="card dx-late" role="status" aria-label="Late news">
+    <h3><span class="dx-ico" aria-hidden="true">!</span><span class="dx-late-k">Late news</span> {{ v.late.head }}</h3>
+    <div class="body">
+      <ul class="dx-late-list">
+        {% for p in v.late.players %}<li>{{ pn(p.name, p.id) }}{% if p.team %} {{ tl(p.team) }}{% endif %}{% if p.reason %}: {{ p.reason }}{% endif %}</li>{% endfor %}
+      </ul>
+      {% if v.late.k and not s.is_showdown %}<p class="dx-late-act"><a class="btn btn-sm" href="/dfs/{{ v.day }}/{{ s.id }}/swap?scope=news">Re-optimize unlocked slots</a></p>{% endif %}
+    </div>
   </section>
   {% endif %}
-</div>
 
-<nav class="secnav" aria-label="Sections">
-  <div class="wrap secnav-in">
+  <nav class="secnav" aria-label="Sections">
+    <span class="seg">
     {% if s.is_showdown %}<a href="#contest">Contest builder</a>{% endif %}
     <a href="#cash">Cash</a>
     <a href="#topn">Top {{ v.n }}</a>
     <a href="#pool">Player pool</a>
     {% if not s.is_showdown %}<a href="#contest">Contests</a>{% endif %}
-  </div>
-</nav>
+    </span>
+  </nav>
 
-<div class="wrap dfs-body">
+  <div class="grid g-12">
   {# ------------------------------------------------------------ cash #}
-  <section class="section" id="cash" aria-labelledby="cash-title">
-    {{ m.sec_head("cash", "1", "Cash lineup", ("Captain plus five, $50,000 cap" if s.is_showdown else "Eight slots, $50,000 cap")) if not v.cash_fallback else m.sec_head("cash", "1", "Highest-projection lineup", "Cash build arrives with the next run") }}
+  <section class="card span-5 dx-cash" id="cash" aria-labelledby="cash-title">
+    {% if not v.cash_fallback %}
+    <h3 id="cash-title">Cash lineup <span class="sub">{{ "Captain plus five, $50,000 cap" if s.is_showdown else "Eight slots, $50,000 cap" }}</span></h3>
+    {% else %}
+    <h3 id="cash-title">Highest-projection lineup <span class="sub">Cash build arrives with the next run</span></h3>
+    {% endif %}
     {% if v.cash %}
     {% set lu = v.cash %}
-    {% if v.cash_note %}<p class="footnote dfs-srcnote">{{ v.cash_note }}.</p>{% endif %}
-    <article class="card dfs-cash">
-      <div class="dfs-lu-top">
-        <p class="dfs-big"><span class="dfs-big-n">{{ lu.mean|num(1) }}</span><span class="dfs-big-k">projected DK points</span></p>
-        <p class="dfs-lu-meta">
-          <span>{{ lu.salary_text }} of $50,000</span>
-          {% if lu.p10 is not none and lu.p90 is not none %}<span class="dfs-range">Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }} (10th to 90th percentile, simulated)</span>{% if lu.bar %}<span class="dfs-lu-bar">{{ lu.bar }}</span>{% endif %}{% endif %}
-          {% if lu.p_cash is not none and v.payout_calibrated %}<span>Simulated chance to cash {{ pband(lu.p_cash) }} <small class="muted">(largest captured double-up, vs a modelled field: a proxy; the range includes &plusmn;3 points of field-sampling error)</small></span>{% endif %}
-          {% if lu.late %}<span class="flag flag-neg">Late news: {{ lu.late|join(", ") }}</span>{% endif %}
-        </p>
-      </div>
-      {{ lineup_table(lu, "Cash lineup, " ~ slots_word ~ " roster slots") }}
+    {% if v.cash_note %}<p class="note dx-pad">{{ v.cash_note }}.</p>{% endif %}
+    <div class="tiles">
+      <div class="tile"><div class="lab">projected DK points</div><div class="val"><span class="num-big">{{ lu.mean|num(1) }}</span></div></div>
+      <div class="tile"><div class="lab">Salary</div><div class="val"><span class="num-big sm">{{ lu.salary_text }}</span></div><div class="note">of $50,000</div></div>
+      {% if lu.p10 is not none and lu.p90 is not none %}
+      <div class="tile dx-range"><div class="lab">Range</div><div class="val"><span class="num-big sm">{{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }}</span>{% if lu.bar %}<span class="dfs-lu-bar">{{ lu.bar }}</span>{% endif %}</div><div class="note">(10th to 90th percentile, simulated)</div></div>
+      {% endif %}
+    </div>
+    {% if (lu.p_cash is not none and v.payout_calibrated) or lu.late %}
+    <p class="dx-lu-meta">
+      {% if lu.p_cash is not none and v.payout_calibrated %}<span>Simulated chance to cash {{ pband(lu.p_cash) }} <small class="dim">(largest captured double-up, vs a modelled field: a proxy; the range includes &plusmn;3 points of field-sampling error)</small></span>{% endif %}
+      {% if lu.late %}<span class="dx-st dx-st-out"><span aria-hidden="true">! </span>Late news: {{ lu.late|join(", ") }}</span>{% endif %}
+    </p>
+    {% endif %}
+    {{ lineup_table(lu, "Cash lineup, " ~ slots_word ~ " roster slots") }}
+    <div class="body">
       {{ why_block(lu, "cash") }}
       {{ simdet(lu) }}
-      <div class="dfs-actions">
+      <div class="dx-actions">
         <a class="btn" href="{{ v.export.cash }}" download>Download DK CSV</a>
         {{ copy_block(lu, "cash", v.export.base ~ "/lineup.txt?mode=cash") }}
       </div>
-    </article>
+    </div>
     {% else %}
-    {{ m.empty("No lineups yet", v.empty_msg) }}
+    <div class="body">{{ st.empty("No lineups yet", v.empty_msg) }}</div>
     {% endif %}
   </section>
 
   {# ------------------------------------------------------------ top n #}
-  <section class="section" id="topn" aria-labelledby="topn-title">
-    {{ m.sec_head("topn", "2", "Top " ~ (v.topn|length if v.topn else v.n) ~ " lineups", "Ranked by projection") }}
-    {% if v.topn and s.is_showdown %}<p class="footnote dfs-srcnote">Ranked one lineup at a time by projected points. Fine for a single entry; for several entries in one Showdown contest, see the <a href="{{ '#contest' if not v.contests else '/dfs/' ~ v.day ~ '/' ~ s.id ~ '/contest' }}">contest builder</a>.</p>{% endif %}
+  <section class="card span-7 dx-topcard" id="topn" aria-labelledby="topn-title">
+    <h3 id="topn-title">Top {{ v.topn|length if v.topn else v.n }} lineups <span class="sub">Ranked by projection</span></h3>
     {% if v.topn %}
-    {% if v.topn_note %}<p class="footnote dfs-srcnote">{{ v.topn_note }}.</p>{% endif %}
-    <div class="dfs-topn-bar">
-      <p class="muted dfs-topn-note">Chips show who is in and out against #1.{% if v.has_lineup_ranges %} Range is the 10th to 90th percentile of simulated lineup points.{% endif %}</p>
+    <div class="dx-toolbar">
+      <p class="note">Chips show who is in and out against #1.{% if v.has_lineup_ranges %} Range is the 10th to 90th percentile of simulated lineup points.{% endif %}</p>
       <a class="btn btn-sm" href="{{ v.export.topn }}" download>Download all as DK CSV</a>
     </div>
-    <ol class="dfs-topn">
+    {% if s.is_showdown %}<p class="note dx-pad">Ranked one lineup at a time by projected points. Fine for a single entry; for several entries in one Showdown contest, see the <a class="link" href="{{ '#contest' if not v.contests else '/dfs/' ~ v.day ~ '/' ~ s.id ~ '/contest' }}">contest builder</a>.</p>{% endif %}
+    {% if v.topn_note %}<p class="note dx-pad">{{ v.topn_note }}.</p>{% endif %}
+    <ol class="dx-topn">
       {% for lu in v.topn %}
       <li>
-        <details class="card dfs-card" id="lu-{{ lu.rank }}">
+        <details class="dx-card" id="lu-{{ lu.rank }}">
           <summary>
-            <span class="dfs-rank">#{{ lu.rank }}</span>
-            <span class="dfs-sum-main">
-              <span class="dfs-sum-line"><b class="num">{{ lu.mean|num(1) }}</b> proj
-                {% if lu.p10 is not none and lu.p90 is not none %}<span class="muted">&middot; Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }}</span>{% endif %}
-                <span class="muted">&middot; {{ lu.salary_text }}</span>
-                {% if lu.d_mean is not none %}<span class="muted">&middot; {{ lu.d_mean|signed(1) }} vs #1</span>{% endif %}
-                {% if lu.late %}<span class="flag flag-neg flag-xs">Late news</span>{% endif %}
+            <span class="dx-rank">#{{ lu.rank }}</span>
+            <span class="dx-sum-main">
+              <span class="dx-sum-line"><b class="num">{{ lu.mean|num(1) }}</b> proj
+                {% if lu.p10 is not none and lu.p90 is not none %}<span class="dim">&middot; Range {{ lu.p10|num(0) }}{{ DASH }}{{ lu.p90|num(0) }}</span>{% endif %}
+                <span class="dim">&middot; {{ lu.salary_text }}</span>
+                {% if lu.d_mean is not none %}<span class="dim">&middot; {{ lu.d_mean|signed(1) }} vs #1</span>{% endif %}
+                {% if lu.late %}<span class="dx-st dx-st-out"><span aria-hidden="true">! </span>Late news</span>{% endif %}
               </span>
               {% if lu.bar %}<span class="dfs-sum-bar">{{ lu.bar }}</span>{% endif %}
               {% if lu.chips_in or lu.chips_out %}
-              <span class="dfs-diff">
-                {% for n in lu.chips_in %}<span class="chip chip-in"><span class="sr">In: </span>+ {{ n|last_name }}</span>{% endfor %}
-                {% for n in lu.chips_out %}<span class="chip chip-out"><span class="sr">Out: </span>{{ MINUS }} {{ n|last_name }}</span>{% endfor %}
+              <span class="dx-diff">
+                {% for n in lu.chips_in %}<span class="dx-chip chip-in"><span class="sr">In: </span>+ {{ n|last_name }}</span>{% endfor %}
+                {% for n in lu.chips_out %}<span class="dx-chip chip-out"><span class="sr">Out: </span>{{ MINUS }} {{ n|last_name }}</span>{% endfor %}
               </span>
-              {% elif loop.first %}<span class="muted dfs-sum-sub">Highest projection</span>{% endif %}
+              {% elif loop.first %}<span class="dim dx-sum-sub">Highest projection</span>{% endif %}
             </span>
           </summary>
-          <div class="dfs-card-body">
+          <div class="dx-card-body">
             {{ lineup_table(lu, "Top N lineup " ~ lu.rank ~ ", " ~ slots_word ~ " roster slots", bars=False) }}
             {{ why_block(lu, "t" ~ lu.rank) }}
             {{ simdet(lu) }}
-            <div class="dfs-actions">
+            <div class="dx-actions">
               {{ copy_block(lu, "t" ~ lu.rank, v.export.base ~ "/lineup.txt?mode=topn&rank=" ~ lu.rank) }}
             </div>
           </div>
@@ -220,83 +253,86 @@
       {% endfor %}
     </ol>
     {% if v.topn_total > v.topn|length and v.n < 50 %}
-    <p class="footnote"><a href="{{ v.export.base }}?n={{ [v.n + 10, 50]|min }}#topn">Show more lineups</a> ({{ v.topn|length }} of {{ v.topn_total }} shown)</p>
+    <p class="note dx-pad"><a class="link" href="{{ v.export.base }}?n={{ [v.n + 10, 50]|min }}#topn">Show more lineups</a> ({{ v.topn|length }} of {{ v.topn_total }} shown)</p>
     {% endif %}
     {% else %}
-    {{ m.empty("No lineups yet", v.empty_msg) }}
+    <div class="body">{{ st.empty("No lineups yet", v.empty_msg) }}</div>
     {% endif %}
   </section>
+  </div>
 
   {# ------------------------------------------------------------ pool #}
   {% set pl = v.pool %}
-  <section class="section" id="pool" aria-labelledby="pool-title">
-    {{ m.sec_head("pool", "3", "Player pool", pl.all_total ~ " players" ~ (" · FPPG, not a projection" if pl.source == "fppg" else "")) }}
-    {% if pl.source == "fppg" %}<p class="caveat">Projected points here are DraftKings&rsquo; season FPPG. Our projections replace them when the model runs.</p>{% endif %}
-    <form class="dfs-find" method="get" action="{{ pl.action }}#pool" role="search">
-      {% for k, val in pl.hidden.items() %}<input type="hidden" name="{{ k }}" value="{{ val }}">{% endfor %}
-      <label class="sr" for="pool-q">Find a player or team</label>
-      <input id="pool-q" class="dfs-input" type="search" name="q" value="{{ pl.q }}" placeholder="Find a player or team" autocomplete="off" enterkeyhint="search">
-      <button class="btn btn-sm" type="submit">Find</button>
-    </form>
-    <div class="dfs-filters">
-      <ul class="dfs-posf" aria-label="Filter by position">
-        {% for c in pl.pos_chips %}<li><a href="{{ c.url }}" class="dfs-pos{% if c.active %} is-active{% endif %}"{% if c.active %} aria-current="true"{% endif %}>{{ c.label }}</a></li>{% endfor %}
-      </ul>
-      <a class="dfs-pos{% if pl.hide_out %} is-active{% endif %}" href="{{ pl.hide_url }}"{% if pl.hide_out %} aria-current="true"{% endif %}>Hide out</a>
+  <section class="card dx-poolcard" id="pool" aria-labelledby="pool-title">
+    <h3 id="pool-title">Player pool <span class="sub">{{ pl.all_total ~ " players" ~ (" · FPPG, not a projection" if pl.source == "fppg" else "") }}</span></h3>
+    {% if pl.source == "fppg" %}<p class="dx-callout is-warn dx-in"><span class="dx-ico" aria-hidden="true">!</span>Projected points here are DraftKings&rsquo; season FPPG. Our projections replace them when the model runs.</p>{% endif %}
+    <div class="dx-toolbar">
+      <form class="dx-find" method="get" action="{{ pl.action }}#pool" role="search">
+        {% for k, val in pl.hidden.items() %}<input type="hidden" name="{{ k }}" value="{{ val }}">{% endfor %}
+        <label class="sr" for="pool-q">Find a player or team</label>
+        <input id="pool-q" class="dx-input" type="search" name="q" value="{{ pl.q }}" placeholder="Find a player or team" autocomplete="off" enterkeyhint="search">
+        <button class="btn btn-sm" type="submit">Find</button>
+      </form>
+      <span class="seg" role="group" aria-label="Filter by position">
+        {% for c in pl.pos_chips %}<a href="{{ c.url }}"{% if c.active %} class="on" aria-current="true"{% endif %}>{{ c.label }}</a>{% endfor %}
+      </span>
+      <span class="seg" role="group" aria-label="Status"><a href="{{ pl.hide_url }}"{% if pl.hide_out %} class="on" aria-current="true"{% endif %}>Hide out</a></span>
     </div>
     {% if pl.rows %}
-    <div class="card dfs-poolcard">
-      <div class="table-scroll dfs-scroll">
-      <table class="table dfs-pool">
-        <caption class="sr">Player pool, {{ pl.shown }} of {{ pl.total }} players, sorted by {{ pl.sort }} {{ pl.dir }}</caption>
-        <thead>
-          <tr>
-          {% for h in pl.heads %}
-            <th scope="col" aria-sort="{{ h.aria }}"{% if h.key != "name" %} class="num"{% endif %}><a href="{{ h.url }}" title="{{ h.title }}" class="dfs-sort">{{ h.label }}{% if h.arrow %}<span aria-hidden="true"> {{ h.arrow }}</span>{% endif %}</a></th>
-          {% endfor %}
-          {% if pl.has_range %}<th scope="col" class="hide-sm">Range</th>{% endif %}
-          </tr>
-        </thead>
-        <tbody>
-        {% for r in pl.rows %}
-          <tr>
-            <th scope="row" class="dfs-pname">
-              <span class="dfs-name">{{ r.name }}</span>{% if r.starter %}<span class="dfs-tick" title="Starter"><span aria-hidden="true">&#10003;</span><span class="sr"> starter</span></span>{% endif %}
-              {% if r.status_label %} {{ pill(r.status_label, r.status_class) }}{% endif %}
-              {% if r.xf %} <span class="tag tag-hl dfs-xf" title="{{ r.xf_title or pl.xf_label }}">X factor<span class="sr">: {{ r.xf_title or pl.xf_label }}</span></span>{% endif %}
-              {% if r.ln %} <span class="tag tag-hl dfs-ln" title="{{ r.ln_label }}">Teammate out<span class="sr">: {{ r.ln_label }}</span></span>{% endif %}
-              <span class="dfs-psub">{{ r.team }} &middot; {{ r.positions|join("/") }}{% if r.opp %} &middot; {{ r.opp }}{% endif %}</span>
-            </th>
-            <td class="num">{{ r.salary_text }}</td>
-            <td class="num">{% if r.proj is not none %}{{ r.proj|num(1) }}{% else %}<span class="muted">{{ DASH }}</span>{% endif %}</td>
-            <td class="num">{% if r.value is not none %}{{ r.value|num(1) }}{% else %}<span class="muted">{{ DASH }}</span>{% endif %}</td>
-            {% if pl.has_pplay %}<td class="num">{% if r.p_play is not none %}{{ r.p_play|pct }}{% else %}<span class="muted">{{ DASH }}</span>{% endif %}</td>{% endif %}
-            {% if pl.has_big %}<td class="num">{% if r.big_text %}{{ r.big_text }}{% else %}<span class="muted">{{ DASH }}</span>{% endif %}</td>{% endif %}
-            {% if pl.has_range %}<td class="hide-sm">{{ r.bar }}</td>{% endif %}
-          </tr>
+    <div class="scroll dx-scroll">
+    <table class="dx-pool">
+      <caption class="sr">Player pool, {{ pl.shown }} of {{ pl.total }} players, sorted by {{ pl.sort }} {{ pl.dir }}</caption>
+      <thead>
+        <tr>
+        {% for h in pl.heads %}
+          <th scope="col" aria-sort="{{ h.aria }}"{% if h.key == "name" %} class="l"{% endif %}><a href="{{ h.url }}"{% if h.tip %} data-tip="{{ h.tip }}" aria-label="{{ h.label }}: {{ h.title }}"{% else %} title="{{ h.title }}"{% endif %} class="dx-sort{% if h.arrow %} is-on{% endif %}">{{ h.label }}{% if h.arrow %}<span aria-hidden="true"> {{ h.arrow }}</span>{% endif %}</a></th>
         {% endfor %}
-        </tbody>
-      </table>
-      </div>
-      <p class="dfs-more">Showing {{ pl.shown }} of {{ pl.total }}{% if pl.more_url %} &middot; <a href="{{ pl.more_url }}">Show all</a>{% endif %}{% if pl.less_url %} &middot; <a href="{{ pl.less_url }}">Show fewer</a>{% endif %}</p>
+        {% if pl.has_range %}<th scope="col" class="l hide-sm">Range</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in pl.rows %}
+        <tr{% if r.status in ("OUT", "O") %} class="is-out"{% endif %}>
+          <th scope="row" class="dx-pname">
+            {{ pn(r.name, r.id) }}{% if r.starter %}<span class="dx-tick" title="Starter"><span aria-hidden="true">&#10003;</span><span class="sr"> starter</span></span>{% endif %}
+            {% if r.status_label %} {{ stat(r.status_label, r.status_class) }}{% endif %}
+            {% if r.xf %} <span class="dx-tag dx-xf" data-tip="{{ r.xf_title or pl.xf_label }}">X factor<span class="sr">: {{ r.xf_title or pl.xf_label }}</span></span>{% endif %}
+            {% if r.ln %} <span class="dx-tag dx-ln" data-tip="{{ r.ln_label }}">Teammate out<span class="sr">: {{ r.ln_label }}</span></span>{% endif %}
+            <span class="dx-psub">{{ tl(r.team) }} &middot; {{ r.positions|join("/") }}{% if r.opp %} &middot; {{ r.opp }}{% endif %}</span>
+          </th>
+          <td class="num">{{ r.salary_text }}</td>
+          <td class="num">{% if r.proj is not none %}{{ r.proj|num(1) }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+          <td class="num">{% if r.value is not none %}{{ r.value|num(1) }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+          {% if pl.has_pplay %}<td class="num">{% if r.p_play is not none %}{{ r.p_play|pct }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>{% endif %}
+          {% if pl.has_big %}<td class="num">{% if r.big_text %}{{ r.big_text }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>{% endif %}
+          {% if pl.has_boom %}<td class="num"{% if r.bb_src == "quantiles" %} data-tip="Approximated from the stored percentiles"{% endif %}>{% if r.boom is not none %}{{ r.boom|pct(0) if r.boom >= 0.005 else "<1%" }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+          <td class="num">{% if r.bust is not none %}{{ r.bust|pct(0) if r.bust >= 0.005 else "<1%" }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>{% endif %}
+          {% if pl.has_lev %}<td class="num dx-lev{% if r.lev is not none %} {{ 'is-pos' if r.lev >= 0.5 else ('is-neg' if r.lev <= -0.5 else '') }}{% endif %}"{% if r.lev_tip %} data-tip="{{ r.lev_tip }}"{% endif %}>{% if r.lev is not none %}{{ r.lev|signed(1) }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>{% endif %}
+          {% if pl.has_vpm %}<td class="num dx-vpm{% if r.vpm %} {{ 'is-pos' if r.vpm.pm >= 0.5 else ('is-neg' if r.vpm.pm <= -0.5 else '') }}{% endif %}"{% if r.vpm_tip %} data-tip="{{ r.vpm_tip }}"{% endif %}>{% if r.vpm %}{{ r.vpm.pm|signed(1) }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>{% endif %}
+          {% if pl.has_range %}<td class="l hide-sm">{{ r.bar }}</td>{% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
     </div>
+    <p class="note dx-pad dx-more">Showing {{ pl.shown }} of {{ pl.total }}{% if pl.more_url %} &middot; <a class="link" href="{{ pl.more_url }}">Show all</a>{% endif %}{% if pl.less_url %} &middot; <a class="link" href="{{ pl.less_url }}">Show fewer</a>{% endif %}</p>
     {% else %}
-    {{ m.empty("No players match", "Clear the filters to see the full pool." if pl.all_total else "The pool for this slate has not been captured yet.") }}
+    <div class="body">{{ st.empty("No players match", "Clear the filters to see the full pool." if pl.all_total else "The pool for this slate has not been captured yet.") }}</div>
     {% endif %}
-    <p class="footnote">Per $1k is projected points divided by salary in thousands. P(play) is the model&rsquo;s chance he plays. Range is the 10th to 90th percentile if he plays. Q, GTD and Out are DraftKings&rsquo; listed statuses. A tick marks a starter.{% if pl.ln_count %} Teammate out marks a teammate of a starter or rotation player listed Doubtful or Out on the injury report in the last {{ pl.ln_window }} minutes before lock, whose projection rose since the run before that news: {{ pl.ln_count }} on this slate. The estimated popularity is a proxy and may not have caught up with the news.{% endif %}{% if pl.has_big %} Big-night chance is how often he scores at least {{ pl.big_k }}&times; his salary in thousands in DK points in our simulations (for example {{ pl.big_eg }} at $4,500), counting the games he may miss, adjusted for how our upper ranges have run in past seasons.{% if pl.xf_v2 %} X factor marks anyone with at least an 85 % chance to suit up who shows up in the best 1 % of entries in our simulated contests far more often than in the modelled field as a whole: at least {{ pl.xf_lev_min }}&times; as often (shrunk toward 1 when he is rarely drafted), in at least {{ pl.xf_share_min }} of those best entries, in under 10 % of all entries, and not among the slate&rsquo;s 10 best public projections per $1k, at most 5 per slate{% if pl.xf_count %}: {{ pl.xf_count }} on this slate{% endif %}. The field and its popularity are estimates (a proxy, not real ownership), drawn four times with different popularity guesses. The tag&rsquo;s pop-up text gives his numbers and, where our simulations have one, how his big-night chance moves with a teammate out.{% else %} X factor marks a bench or role player who is likely to play, has at least a {{ pl.xf_min }} big-night chance and a low estimated popularity (a proxy, not real ownership), and is not among the slate&rsquo;s 10 best projections per $1k, which tend to be popular{% if pl.xf_count %}: {{ pl.xf_count }} on this slate{% endif %}.{% endif %} These are estimates, not advice.{% endif %}</p>
+    <p class="note dx-pad dx-foot-in">Per $1k is projected points divided by salary in thousands. P(play) is the model&rsquo;s chance he plays. Range is the 10th to 90th percentile if he plays. Q, GTD and Out are DraftKings&rsquo; listed statuses. A tick marks a starter.{% if pl.ln_count %} Teammate out marks a teammate of a starter or rotation player listed Doubtful or Out on the injury report in the last {{ pl.ln_window }} minutes before lock, whose projection rose since the run before that news: {{ pl.ln_count }} on this slate. The estimated popularity is a proxy and may not have caught up with the news.{% endif %}{% if pl.has_big %} Big-night chance is how often he scores at least {{ pl.big_k }}&times; his salary in thousands in DK points in our simulations (for example {{ pl.big_eg }} at $4,500), counting the games he may miss, adjusted for how our upper ranges have run in past seasons.{% if pl.xf_v2 %} X factor marks anyone with at least an 85 % chance to suit up who shows up in the best 1 % of entries in our simulated contests far more often than in the modelled field as a whole: at least {{ pl.xf_lev_min }}&times; as often (shrunk toward 1 when he is rarely drafted), in at least {{ pl.xf_share_min }} of those best entries, in under 10 % of all entries, and not among the slate&rsquo;s 10 best public projections per $1k, at most 5 per slate{% if pl.xf_count %}: {{ pl.xf_count }} on this slate{% endif %}. The field and its popularity are estimates (a proxy, not real ownership), drawn four times with different popularity guesses. The tag&rsquo;s pop-up text gives his numbers and, where our simulations have one, how his big-night chance moves with a teammate out.{% else %} X factor marks a bench or role player who is likely to play, has at least a {{ pl.xf_min }} big-night chance and a low estimated popularity (a proxy, not real ownership), and is not among the slate&rsquo;s 10 best projections per $1k, which tend to be popular{% if pl.xf_count %}: {{ pl.xf_count }} on this slate{% endif %}.{% endif %} These are estimates, not advice.{% endif %}{% if pl.has_boom %} 6&times;+ and Under 3&times; are the chances he scores at least {{ pl.boom_k }}&times; / under {{ pl.bust_k }}&times; his salary in thousands in DK points if he plays, {% if pl.bb_method == "sims" %}from the run&rsquo;s simulations{% else %}approximated from the run&rsquo;s stored 5th to 95th percentiles (linear between them, an exponential tail beyond), because the simulation file is not on this server{% endif %}.{% endif %}{% if pl.has_lev %} Ours &minus; field is his share of this run&rsquo;s {{ pl.lev_n }} Top N lineups minus his estimated popularity (a proxy), in percentage points.{% endif %}{% if pl.has_vpm %} vs salary is his DK points a game in his last {{ pl.vpm_n }} games minus what his salary implies on this season&rsquo;s salary line; hover a cell for the details and this season&rsquo;s figure.{% endif %}</p>
   </section>
 
   {# ------------------------------------------------------------ contests #}
-  <section class="section" id="contest" aria-labelledby="contest-title">
-    {{ m.sec_head("contest", "4", "Contest builder", (v.contests ~ " contest" ~ ("s" if v.contests != 1 else "") ~ " captured") if v.contests else "") }}
-    <div class="card dfs-soon">
+  <section class="card" id="contest" aria-labelledby="contest-title">
+    <h3 id="contest-title">Contest builder{% if v.contests %} <span class="sub">{{ v.contests ~ " contest" ~ ("s" if v.contests != 1 else "") ~ " captured" }}</span>{% endif %}</h3>
+    <div class="body dx-contest-cta">
       <p>Pick one of this slate&rsquo;s contests, choose how many entries, and get a diversified lineup set with its simulated payout against a modelled field.{% if s.is_showdown %} In Showdown this is the place to build several entries: the set is chosen on simulations of the whole game, so it accounts for lineups that would sink together.{% endif %}</p>
       {% if v.contests %}<p><a class="btn btn-sm" href="/dfs/{{ v.day }}/{{ v.slate.id }}/contest">Open the contest builder</a></p>
-      {% else %}<p class="muted">No contests captured for this slate yet.</p>{% endif %}
+      {% else %}<p class="dim">No contests captured for this slate yet.</p>{% endif %}
     </div>
   </section>
 
-  <p class="footnote dfs-foot">Projections and ranges are simulated, not results. Lineups are information, not advice, and real results can land well outside any range. Downloads are plain CSV files you upload to DraftKings yourself; Courtside never signs in or enters contests.</p>
-</div>
+  <p class="note dx-foot">Projections and ranges are simulated, not results. Lineups are information, not advice, and real results can land well outside any range. Downloads are plain CSV files you upload to DraftKings yourself; Courtside never signs in or enters contests.</p>
 {% endif %}
+</div>
 {% endblock %}

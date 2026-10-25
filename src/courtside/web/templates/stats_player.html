@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# Player page (web/stats_players.py, queries stats/players.py). Mockup: #s-player. #}
+{% block title %}{{ p.name }} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-players.css?v={{ asset_v }}">
+<script src="/static/pro-players.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block body_class %}pro-page pl-page{% endblock %}
+{% macro pctv(x, nd=1) %}{{ x|pct(nd) if x is not none else DASH }}{% endmacro %}
+{% macro diffcell(d, nd=1, kind="num") -%}
+{%- if d is none %}<td class="dim">{{ DASH }}</td>{% else -%}
+<td class="{{ 'up' if d > 0 else ('dn' if d < 0 else 'dim') }}" data-v="{{ d }}">{{ (d * 100)|signed(nd) if kind == "pct" else d|signed(nd) }}</td>
+{%- endif %}
+{%- endmacro %}
+{% block content %}
+{% set t = team(p.team) if p.team else None %}
+<div class="pro">
+  <div class="crumbs"><a href="/players">Players</a> &rsaquo; <span>{{ p.name }}</span></div>
+
+  {# ---------------------------------------------------------------- hero + tiles #}
+  <div class="card pl-hero">
+    {%- set meta = [] -%}
+    {%- if t %}{% set _ = meta.append(t.name) %}{% endif -%}
+    {%- if p.position %}{% set _ = meta.append(p.position) %}{% endif -%}
+    {%- if p.jersey %}{% set _ = meta.append("#" ~ p.jersey) %}{% endif -%}
+    {%- if p.height %}{% set _ = meta.append(p.height) %}{% endif -%}
+    {%- if p.weight %}{% set _ = meta.append(p.weight ~ " lb") %}{% endif -%}
+    {%- if p.country %}{% set _ = meta.append(p.country) %}{% endif -%}
+    {%- if p.draft %}{% set _ = meta.append(p.draft) %}{% endif -%}
+    <div class="hero">
+      <div class="hero-badge pl-badge"{% if t %} style="--c1:{{ t.primary }};--c2:{{ t.secondary }}"{% endif %} aria-hidden="true">{{ p.initials }}</div>
+      <div>
+        <h1>{{ p.name }}</h1>
+        <div class="meta">{{ meta|join(" · ") }}</div>
+      </div>
+      <div class="right">
+        {% if p.salary %}<span class="pill" data-tip="Latest DraftKings classic salary ({{ p.salary.nba_day|medium_date }} slate){% if p.salary.positions %}&#10;DK position {{ p.salary.positions }}{% endif %}">DK salary <b>{{ p.salary.salary|dollars }}</b></span>{% endif %}
+        {% if p.next %}<span class="pill" data-tip="{{ p.next.nba_day|long_date }}{% if p.next.tipoff_utc %} · {{ p.next.tipoff_utc|tipoff }}{% endif %}">Next <b>{{ "vs" if p.next.is_home else "@" }} {{ p.next.opp }} · {{ p.next.nba_day|weekday }}{% if p.next.tipoff_utc %} {{ p.next.tipoff_utc|tipoff }}{% endif %}</b></span>{% endif %}
+        {% if p.status %}<span class="pill pl-status pl-st-{{ (p.status.status or '')|lower }}" data-tip="{{ p.status.reason|injury_reason or p.status.reason or '' }}{% if p.status.captured_at %}&#10;{{ p.status.source }} report, {{ p.status.captured_at|stamp }}{% endif %}">Status <b>{{ p.status.status }}</b></span>{% endif %}
+        {% if t %}<span class="pill">Team <b>{{ s.team_link(p.team) }}</b></span>{% endif %}
+        <a class="pill" href="/compare?p={{ p.player_id }}&amp;season={{ season }}{% if stype == 'Playoffs' %}&amp;type=playoffs{% endif %}" data-tip="Compare him side by side with up to 3 other players">&#8644; <b>Compare</b></a>
+      </div>
+    </div>
+    <div class="pl-switch">
+      <span class="lab">Season</span>{{ s.seg("season", season_opts, season, label="Season") }}
+      {{ s.seg("stype", type_opts, stype, label="Season type") }}
+      {% if line %}<span class="note">{{ line.gp }} game{{ "" if line.gp == 1 else "s" }} · ranks among {{ line.n }} players with {{ line.min_gp|round(0)|int }}+ games</span>
+      {% else %}<span class="note">No {{ type_label|lower }} games in {{ season }}.</span>{% endif %}
+    </div>
+    <div class="tiles">
+      {% for tl in tiles %}
+      {%- set val = (tl.value|pct(1) if tl.key == "ts" else tl.value|num(1)) if tl.value is not none else none -%}
+      {%- set sub = (prev_season ~ ": " ~ (tl.prev|pct(1) if tl.key == "ts" else tl.prev|num(1))) if tl.prev is not none and prev_line is not none and season != prev_season else none -%}
+      {{ s.tile_pct(tl.label, val, rank=tl.rank, n=tl.n, pct=tl.pct, sub=sub, of=(tl.n ~ " qualified players")) }}
+      {% endfor %}
+    </div>
+  </div>
+  <div class="gap"></div>
+
+  <div class="grid g-12">
+    {# -------------------------------------------------------------- projection #}
+    {% set pj = proj %}
+    {% call s.card("Our projection", sub=(("tonight · " ~ (pj.game.nba_day|medium_date)) if pj and pj.mode == "tonight" else ("last game, graded" if pj else None)), cls="span-4") %}
+      {% if pj %}
+      <div class="note pl-proj-when">{{ "vs" if pj.game.is_home else "@" }} {{ pj.game.opp }} · {{ pj.game.nba_day|medium_date }} · projected before tip{% if pj.run_kind %} ({{ pj.run_kind }} run{% if pj.run_at %}, {{ pj.run_at|stamp }}{% endif %}){% endif %}</div>
+      <div class="rangecard">
+        <div>
+          <div class="lab">DK points</div>
+          <div class="num-big">{{ pj.dk|num(1) }}</div>
+          {% if pj.mode == "graded" %}<div class="note">actual <b class="pl-ink">{{ pj.actual_dk|num(2) }}</b></div>
+          {% elif pj.salary or p.salary %}{% set sal = pj.salary or p.salary.salary %}<div class="note">{{ sal|dollars }} · {{ (pj.dk / sal * 1000)|num(1) }}x value</div>{% endif %}
+        </div>
+        {% if pj.lo is not none and pj.hi is not none %}
+        {{ s.range_bar(pj.lo, pj.hi, pj.dk, actual=pj.actual_dk if pj.mode == "graded" else None, tip="80% range " ~ (pj.lo|num(1)) ~ "–" ~ (pj.hi|num(1)) ~ " · projection " ~ (pj.dk|num(1)) ~ ((" · actual " ~ (pj.actual_dk|num(2))) if pj.mode == "graded" else "")) }}
+        {% else %}<div class="note">No range stored for this run.</div>{% endif %}
+      </div>
+      {{ s.legend([("#1c3b63", "80% range"), ("var(--accent)", "projection")] + ([("dot:var(--accent-2)", "actual")] if pj.mode == "graded" else [])) }}
+      <table class="pl-proj-t">
+        <thead><tr><th class="l">Stat</th><th>Projected</th>{% if pj.mode == "graded" %}<th>Actual</th><th>Diff</th>{% else %}<th>80% range</th>{% endif %}</tr></thead>
+        <tbody>
+        {% for r in pj.rows %}
+        <tr><td class="l">{{ r.label }}</td><td>{{ r.proj|num(1) }}</td>
+          {% if pj.mode == "graded" %}<td>{{ r.actual|num(0) }}</td>{{ diffcell(r.diff) }}
+          {% else %}<td class="dim">{% if r.lo is not none %}{{ r.lo|num(0) }}–{{ r.hi|num(0) }}{% else %}{{ DASH }}{% endif %}</td>{% endif %}</tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="note pl-foot">{% if pj.mode == "graded" %}On a game day this card shows tonight&rsquo;s projection before tip.{% else %}Minutes and DK points carry an 80% range; the other stats are averages when he plays.{% endif %}{% if pj.p_play is not none and pj.p_play < 0.97 %} Chance he plays: {{ pj.p_play|pct(0) }}.{% endif %}</div>
+      {% else %}
+      {{ s.empty("No projection yet.", "Projections start with this season's DFS runs; this card fills on his next slate.") }}
+      {% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- season by season #}
+    {% call s.card("Season by season", sub="per game · chip = league rank · bar = league percentile", cls="span-8", flush=True) %}
+      {% if lines %}
+      <table data-sortable class="pl-seasons">
+        <thead><tr><th class="l" data-nosort>Season</th><th data-nosort>GP</th><th data-nosort>Min</th><th data-nosort>Pts</th><th data-nosort>Reb</th><th data-nosort>Ast</th><th data-nosort>Stl</th><th data-nosort>Blk</th><th data-nosort>3PM</th><th data-nosort>TO</th><th data-nosort>TS%</th><th data-nosort>DK</th></tr></thead>
+        <tbody>
+        {% for ln in lines %}
+        <tr{% if ln.season == season and ln.season_type == stype %} class="pl-cur"{% endif %}>
+          <td class="l name">{{ ln.season }}{% if ln.season_type == "Playoffs" %} <span class="note">PO</span>{% endif %}</td>
+          <td data-tip="{{ 'Ranked' if ln.qualified else 'Not ranked' }}: {{ ln.min_gp|round(0)|int }}+ games needed">{{ ln.gp }}</td>
+          {{ s.ntd(ln.min) }}
+          {%- set lp = ln.pcts or {} %}{% set of = ln.n ~ " qualified players" %}
+          {{ s.ntd_pct(ln.pts, rank=ln.ranks.pts, n=ln.n, pct=lp.get("pts"), of=of) }}
+          {{ s.ntd_pct(ln.reb, rank=ln.ranks.reb, n=ln.n, pct=lp.get("reb"), of=of) }}
+          {{ s.ntd_pct(ln.ast, rank=ln.ranks.ast, n=ln.n, pct=lp.get("ast"), of=of) }}
+          {{ s.ntd_pct(ln.stl, rank=ln.ranks.stl, n=ln.n, pct=lp.get("stl"), of=of) }}
+          {{ s.ntd_pct(ln.blk, rank=ln.ranks.blk, n=ln.n, pct=lp.get("blk"), of=of) }}
+          {{ s.ntd_pct(ln.fg3m, rank=ln.ranks.fg3m, n=ln.n, pct=lp.get("fg3m"), of=of) }}
+          {{ s.ntd(ln.tov) }}
+          {{ s.ntd_pct(ln.ts, kind="pct", rank=ln.ranks.ts, n=ln.n, pct=lp.get("ts"), of=of) }}
+          {{ s.ntd_pct(ln.dk, cls="hi", rank=ln.ranks.dk, n=ln.n, pct=lp.get("dk"), of=of) }}
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ s.empty("No games in the last three seasons.") }}{% endif %}
+    {% endcall %}
+
+    {# ============================================================== research tools
+       (stats/player_tools.py; filters drive the chart and the game log) #}
+    {% set R = rs %}
+    {% set filt_sub %}{% if R.filters %}<b class="pl-ink">{{ R.n_filtered }}</b> of {{ R.n_all }} games match · <a class="link" href="{{ R.clear }}">Clear all</a>{% else %}{{ R.n_all }} games, last 3 seasons · apply to the chart and the game log{% endif %}{% endset %}
+    {% call s.card("Filters", sub=filt_sub, cls="span-12 pl2-filters", id="filters") %}
+      <div class="pl2-groups">
+        {% for g in R.groups %}
+        <div class="pl2-group"><span class="lab">{{ g.label }}</span>{% for c in g.chips %}<a class="pl2-chip{% if c.on %} on{% endif %}" href="{{ c.href }}"{% if c.on %} aria-current="true" title="Remove this filter"{% endif %}>{{ c.label }}{% if c.on %} <span aria-hidden="true">&times;</span>{% endif %}</a>{% endfor %}</div>
+        {% endfor %}
+        <form class="pl2-group pl2-selects" action="/player/{{ p.player_id }}#filters" method="get">
+          {%- for k, v in R.hidden.items() if k not in ("opp", "tm", "tmode", "line") %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+          <label class="lab" for="pl2-opp">Opponent</label>
+          <select id="pl2-opp" name="opp" onchange="this.form.submit()"><option value="">Any</option>{% for code in R.opps %}<option value="{{ code }}"{% if R.filters.opp == code %} selected{% endif %}>{{ code }}</option>{% endfor %}</select>
+          <label class="lab" for="pl2-tm">Teammate</label>
+          <select id="pl2-tm" name="tm" onchange="this.form.submit()"><option value="">Any</option>{% for m in R.mates %}<option value="{{ m.player_id }}"{% if R.filters.tm == m.player_id %} selected{% endif %}>{{ m.name }} ({{ m.games }} together{% if not m.current %}, {{ m.team }} {{ m.season }}{% endif %})</option>{% endfor %}</select>
+          <select name="tmode" aria-label="With or without the teammate" onchange="this.form.submit()"><option value="with"{% if R.filters.tmode != "without" %} selected{% endif %}>playing</option><option value="without"{% if R.filters.tmode == "without" %} selected{% endif %}>not playing</option></select>
+          <noscript><button type="submit" class="pl-btn">Apply</button></noscript>
+        </form>
+      </div>
+      {% if R.active %}<div class="pl2-active"><span class="lab">Active</span>{% for a in R.active %}<a class="pl2-chip on" href="{{ a.href }}" title="Remove this filter">{{ a.label }} <span aria-hidden="true">&times;</span></a>{% endfor %}</div>{% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- recent games chart #}
+    {% set C = R.chart %}
+    {% set trend_sub %}{{ s.seg("stat", R.stat_opts, C.stat, label="Stat") }} {{ s.seg("win", R.win_opts, C.win, label="Games") }}{% endset %}
+    {% call s.card("Recent games", sub=trend_sub, cls="span-8 pl2-trend", id="trend") %}
+      {% if C.n %}
+      <p class="pl2-summary" id="pl2-summary" aria-live="polite">{{ C.summary }}</p>
+      <form class="pl2-lineform" action="/player/{{ p.player_id }}#trend" method="get">
+        {%- for k, v in R.hidden.items() if k != "line" %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        <label class="lab" for="pl2-line-n">Line</label>
+        <input type="number" id="pl2-line-n" name="line" value="{{ C.line }}" min="0" max="{{ C.ymax }}" step="0.5" inputmode="decimal">
+        <input type="range" id="pl2-line-r" value="{{ C.line }}" min="0" max="{{ C.ymax }}" step="0.5" aria-label="Reference line ({{ C.label }})">
+        <button type="submit" class="pl-btn pl2-nojs">Set</button>
+        <a class="pl2-reset" href="{{ R.stat_opts|selectattr('value', 'eq', C.stat)|map(attribute='href')|first }}" data-line="{{ C.default }}" data-tip="His {{ R.season_games and season or 'recent' }} average, rounded to x.5">Season avg {{ C.default|num(1) }}</a>
+      </form>
+      <div class="pl2-chart-wrap">
+      <svg class="pl2-chart{% if C.wide %} wide{% endif %}" viewBox="0 0 {{ C.width }} {{ C.height }}" style="min-width:{{ [C.width * 0.62, 460]|min|round|int }}px" role="img" aria-label="{{ C.label }} per game, {{ C.n }} games; reference line {{ C.line }}">
+        <g class="pl2-grid">{% for t in C.ticks %}<line x1="{{ C.left }}" x2="{{ C.right }}" y1="{{ t.y }}" y2="{{ t.y }}"/><text x="{{ C.left - 6 }}" y="{{ t.y + 3.5 }}">{{ t.v|num(0) if t.v == t.v|round else t.v|num(1) }}</text>{% endfor %}</g>
+        <g class="pl2-bars">
+        {%- for b in C.bars %}
+          <g class="pl2-bar{% if b.hit %} hit{% endif %}" data-v="{{ b.v }}" data-tip="{{ b.tip }}" tabindex="0">
+            <rect class="pl2-hitbox" x="{{ b.x - 3 }}" y="{{ C.top }}" width="{{ b.w + 6 }}" height="{{ C.bot - C.top }}"/>
+            <path d="{{ b.d }}"/>
+            {%- if not C.wide %}<text class="v" x="{{ b.cx }}" y="{{ b.y - 5 }}">{{ b.text }}</text>{% endif %}
+            {%- if C.wide %}<text class="o r" x="{{ b.cx + 3 }}" y="{{ C.bot + 6 }}" transform="rotate(-90 {{ b.cx + 3 }} {{ C.bot + 6 }})">{{ "" if b.home else "@" }}{{ b.opp }}</text>
+            {%- else %}<text class="o" x="{{ b.cx }}" y="{{ C.bot + 15 }}">{{ "" if b.home else "@" }}{{ b.opp }}</text><text class="d" x="{{ b.cx }}" y="{{ C.bot + 28 }}">{{ b.date[5:7]|int }}/{{ b.date[8:10]|int }}</text>{% endif %}
+          </g>
+        {%- endfor %}
+        </g>
+        <line class="pl2-base" x1="{{ C.left }}" x2="{{ C.right }}" y1="{{ C.bot }}" y2="{{ C.bot }}"/>
+        <g class="pl2-line" transform="translate(0 {{ C.line_y }})"><line x1="{{ C.left }}" x2="{{ C.right }}" y1="0" y2="0"/><text x="{{ C.right + 4 }}" y="4">{{ C.line_text }}</text></g>
+      </svg>
+      </div>
+      {{ s.legend([("var(--accent)", "reached the line"), ("transparent", "below it (outlined)")]) }}
+      <script type="application/json" id="pl2-data">{{ R.chart_json|safe }}</script>
+      {% else %}
+      {{ s.empty("No games for this filter.", "Remove a filter above to see his games.") }}
+      {% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- minutes trend #}
+    {% set M = R.minutes %}
+    {% call s.card("Minutes", sub="last " ~ M.n ~ " games", cls="span-4 pl2-min") %}
+      {% if M.n %}
+      <svg class="pl2-spark" viewBox="0 0 {{ M.w }} {{ M.h }}" role="img" aria-label="Minutes in his last {{ M.n }} games">
+        <line class="ref" x1="0" x2="{{ M.lab_x - 2 }}" y1="{{ M.y36 }}" y2="{{ M.y36 }}"/><text x="{{ M.w - 1 }}" y="{{ M.y36 + 3 }}">36</text>
+        <line class="ref" x1="0" x2="{{ M.lab_x - 2 }}" y1="{{ M.y30 }}" y2="{{ M.y30 }}"/><text x="{{ M.w - 1 }}" y="{{ M.y30 + 3 }}">30</text>
+        <polyline points="{{ M.path }}"/>
+        {% for pt in M.points %}<circle cx="{{ pt.x }}" cy="{{ pt.y }}" r="3.6" class="{{ 'st' if pt.started else 'bn' }}" data-tip="{{ pt.tip }}"/>{% endfor %}
+      </svg>
+      {% if M.has_role %}<div class="legend pl2-mleg"><span><i class="dot" style="background:var(--accent)"></i>started</span><span><i class="dot pl2-hollow"></i>bench</span></div>{% endif %}
+      <dl class="kv pl2-kv">
+        <dt>Average, last {{ M.n }}</dt><dd><b>{{ M.avg|num(1) }}</b> min{% if M.n > 5 %} <span class="dim">· last 5: {{ M.l5|num(1) }}</span>{% endif %}</dd>
+        <dt>30+ minutes</dt><dd><b>{{ M.s30|pct(0) }}</b> of last {{ M.n }}{% if M.season_n %} <span class="dim">· {{ season }}: {{ M.season_s30|pct(0) }}</span>{% endif %}</dd>
+        <dt>36+ minutes</dt><dd><b>{{ M.s36|pct(0) }}</b> of last {{ M.n }}{% if M.season_n %} <span class="dim">· {{ season }}: {{ M.season_s36|pct(0) }}</span>{% endif %}</dd>
+        {% if M.has_role %}
+        <dt>Started ({{ season }})</dt><dd>{% if M.start_n %}<b>{{ M.start_min|num(1) }}</b> min · {{ M.start_n }} game{{ "" if M.start_n == 1 else "s" }}{% else %}<span class="dim">no starts</span>{% endif %}</dd>
+        <dt>Off the bench</dt><dd>{% if M.bench_n %}<b>{{ M.bench_min|num(1) }}</b> min · {{ M.bench_n }} game{{ "" if M.bench_n == 1 else "s" }}{% else %}<span class="dim">no bench games</span>{% endif %}</dd>
+        {% endif %}
+      </dl>
+      {% else %}{{ s.empty("No games yet.") }}{% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- splits #}
+    {% call s.card("Splits", sub=season ~ " · " ~ type_label|lower ~ " · per game · click a split to filter", cls="span-8 pl2-splits", flush=True, id="splits") %}
+      {% if R.season_games %}
+      <table class="pl2-split-t">
+        <thead><tr><th class="l">Split</th><th data-tip="Games in the split (greyed under 3)">GP</th><th>Min</th><th>Pts</th><th>Reb</th><th>Ast</th><th>3PM</th><th>PRA</th><th>Stl+Blk</th><th>DK</th><th>TS%</th></tr></thead>
+        <tbody>
+        {% for r in R.splits %}
+        {% set a = r.avg %}
+        <tr class="{% if a.small %}pl2-small{% endif %}{% if loop.previtem is defined and loop.previtem.group != r.group %} pl2-gstart{% endif %}"{% if a.small %} data-tip="Only {{ a.gp }} game{{ '' if a.gp == 1 else 's' }}: too few to read much into"{% endif %}>
+          <td class="l name">{% if r.href %}<a href="{{ r.href }}">{{ r.label }}</a>{% else %}{{ r.label }}{% endif %}</td>
+          <td>{{ a.gp }}</td>
+          {% if a.gp %}{% for k in ("min", "pts", "reb", "ast", "fg3m", "pra", "stocks", "dk") %}<td{% if k == "dk" %} class="hi"{% endif %}>{{ a[k]|num(1) }}</td>{% endfor %}<td>{{ a.ts|pct(1) if a.ts is not none else DASH }}</td>
+          {% else %}{% for _ in range(9) %}<td class="dim">{{ DASH }}</td>{% endfor %}{% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="note pl-foot pad">Splits use all his {{ season }} {{ type_label|lower }} games (filters above don&rsquo;t apply here). Rest = days off before the game; opponent defense = DK points allowed to {{ R.pos or "his position" }}s{% if R.pos %} (DvP rank, top 10 = allows the fewest){% endif %}. &ldquo;Without&rdquo; counts games the teammate missed while on the same team that season.</div>
+      {% else %}{{ s.empty("No " ~ type_label|lower ~ " games in " ~ season ~ ".") }}{% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- clutch #}
+    {% set K = R.clutch %}
+    {% call s.card("Clutch", sub=season ~ " · " ~ type_label|lower, cls="span-4 pl2-clutch") %}
+      {% if K and K.n_games %}
+      {% set T = K.tot %}
+      <div class="tiles boxed pl2-ctiles">
+        {{ s.tile("Games", K.n_games, sub=K.wins ~ "-" ~ (K.n_games - K.wins) ~ " W-L") }}
+        {{ s.tile("Points", T.pts, sub=(T.p36|num(1) ~ " per 36") if T.p36 is not none else None) }}
+        {{ s.tile("FG", T.fgm ~ "-" ~ T.fga, sub=T.fg_pct|pct(1) if T.fg_pct is not none else None) }}
+        {{ s.tile("+/−", T.pm|signed(0), sub=T.min|num(0) ~ " min") }}
+      </div>
+      <div class="note pl2-cline">3PT {{ T.fg3m }}-{{ T.fg3a }} · FT {{ T.ftm }}-{{ T.fta }}{% if T.ts is not none %} · TS {{ T.ts|pct(1) }}{% endif %}</div>
+      <table class="pl2-cgames">
+        <thead><tr><th class="l">Game</th><th>Min</th><th>Pts</th><th>FG</th><th>+/&minus;</th></tr></thead>
+        <tbody>
+        {% for g in K.games[:6] %}
+        <tr><td class="l">{{ g.game_date|short_date }} {{ "vs" if g.is_home else "@" }} {{ g.opp }}{% if g.wl %} <span class="{{ 'up' if g.wl == 'W' else 'dn' }}">{{ g.wl }}</span>{% endif %}</td><td>{{ (g.sec / 60)|num(1) }}</td><td>{{ g.pts }}</td><td>{{ g.fgm }}-{{ g.fga }}</td><td class="{{ 'up' if g.pm > 0 else ('dn' if g.pm < 0 else 'dim') }}">{{ g.pm|signed(0) }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="note pl-foot">Clutch: last 5 minutes of the 4th or overtime with the score within 5. From play-by-play of {{ K.with_pbp }} of his {{ K.season_games }} games{% if K.n_games > 6 %}; the {{ 6 }} most recent shown{% endif %}.</div>
+      {% elif K and K.season_games and K.with_pbp %}
+      {{ s.empty("No clutch minutes yet.", "None of his " ~ K.with_pbp ~ " " ~ season ~ " games with play-by-play reached the last 5 minutes within 5 points while he was on the floor.") }}
+      {% else %}
+      {{ s.empty("Not collected yet.", "Clutch lines come from the archived play-by-play, which has no games of his for " ~ season ~ " " ~ type_label|lower ~ ".") }}
+      {% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- on / off (stints; garbage-time filter) #}
+    {% set O = onoff %}
+    {% set oo_sub %}{{ season }} · {{ type_label|lower }} · per 100 possessions{% if gt %} · excl. garbage time{% endif %} {{ s.seg("gt", gt_opts, "x" if gt else "all", label="Garbage time") }}{% endset %}
+    {% call s.card("On / off", sub=oo_sub, cls="span-12 pl-onoff", id="onoff") %}
+      {% if O and O.games and O.on %}
+      <div class="tiles boxed">
+        {{ s.tile_pct("On-court net", O.on.net|signed(1) if O.on.net is not none else None, rank=O.rk, n=O.n, pct=O.pct, of=(O.n ~ " qualified players with " ~ O.min_poss|int ~ "+ poss"), sub=(O.on.ortg|num(1) ~ " off / " ~ O.on.drtg|num(1) ~ " def") if O.on.ortg is not none and O.on.drtg is not none else None) }}
+        {% for r in O.teams %}
+        {{ s.tile("Off court" ~ ((" · " ~ r.team) if O.teams|length > 1 else ""), r.off.net|signed(1) if r.off and r.off.net is not none else None, sub=(r.off.poss|num(0) ~ " poss with him sitting") if r.off else "never off the floor") }}
+        {{ s.tile("On − off" ~ ((" · " ~ r.team) if O.teams|length > 1 else ""), r.diff|signed(1) if r.diff is not none else None, sub=r.team ~ " net with him minus without") }}
+        {% endfor %}
+        {{ s.tile("On-court poss", O.on.poss|num(0), sub=O.on.min|num(0) ~ " min") }}
+      </div>
+      <div class="note pl-foot">From play-by-play stints ({{ "{:,}".format(O.games) }} {{ season }} games league-wide){% if gt %}; <b>excl. garbage time</b>. {{ gt_def }}{% else %}, every minute included{% endif %}. Box-score stats (tiles above, season table) always include garbage time: they can&rsquo;t be split by time. Rank / percentile among qualified players with {{ O.min_poss|int }}+ on-court possessions.</div>
+      {% elif O and O.games %}
+      {{ s.empty("No stints for him in " ~ season ~ " " ~ type_label|lower ~ ".") }}
+      {% else %}
+      {{ s.empty("Not collected yet.", " On/off comes from play-by-play lineups (stints); " ~ season ~ " " ~ type_label|lower ~ " has none yet.") }}
+      {% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- Chances panel (another workstream) #}
+    {% include "_player_opportunity.html" ignore missing with context %}
+
+
+    {# -------------------------------------------------------------- game log #}
+    {% set log_sub %}{% if rs.filters %}<span class="pl2-lognote">filtered: {{ log|length }} game{{ "" if log|length == 1 else "s" }} · <a class="link" href="{{ rs.clear }}">clear</a></span> {% endif %}{{ s.seg("log", log_opts, log_season, label="Game log seasons") }} {{ s.seg("logtype", logtype_opts, log_type, label="Game log season type") }}{% endset %}
+    {% call s.card("Game log", sub=log_sub, cls="span-12", flush=True, tall=True, id="log") %}
+      {% if log %}
+      <table data-sortable>
+        <thead><tr><th class="l" data-sorted="desc">Date</th><th class="l">Opp</th><th class="l" data-nosort></th><th>Min</th><th>Pts</th><th>Reb</th><th>Ast</th><th>Stl</th><th>Blk</th><th>TO</th><th>3PM</th><th>FG</th><th>TS%</th><th>+/&minus;</th><th>DK</th><th>Salary</th><th data-tip="DK points per $1,000 of salary">Value</th><th data-tip="Average real ownership over the classic contests you uploaded standings for">Own%</th></tr></thead>
+        <tbody>
+        {% for r in log %}
+        <tr{% if not r.played %} class="dim"{% endif %}>
+          <td class="l" data-v="{{ r.game_date }}">{{ r.game_date|short_date }}{% if r.season != window[0] %} <span class="note">&rsquo;{{ r.game_date[2:4] }}</span>{% endif %}</td>
+          <td class="l name" data-v="{{ r.opp or '' }}">{% if r.opp %}{{ "vs" if r.is_home else "@" }} {{ s.team_link(r.opp) }}{% else %}{{ DASH }}{% endif %}{% if r.season_type == "Playoffs" %} <span class="note">PO</span>{% elif r.season_type == "PlayIn" %} <span class="note">PI</span>{% endif %}</td>
+          <td class="l">{% if r.wl %}<span class="{{ 'up' if r.wl == 'W' else 'dn' }}">{{ r.wl }}</span>{% endif %}</td>
+          {% if r.played %}
+          {{ s.ntd(r.min, 0) }}{{ s.ntd(r.pts, kind="int") }}{{ s.ntd(r.reb, kind="int") }}{{ s.ntd(r.ast, kind="int") }}{{ s.ntd(r.stl, kind="int") }}{{ s.ntd(r.blk, kind="int") }}{{ s.ntd(r.tov, kind="int") }}{{ s.ntd(r.fg3m, kind="int") }}
+          <td data-v="{{ (r.fgm / r.fga) if r.fga else '' }}">{{ r.fgm|int }}-{{ r.fga|int }}</td>
+          {{ s.ntd(r.ts, kind="pct", nd=1) }}{{ s.ntd(r.plus_minus, 0, kind="signed") }}
+          {% else %}
+          <td data-v="0">0</td><td class="dim" data-v="">DNP</td>{% for _ in range(9) %}<td data-v=""></td>{% endfor %}
+          {% endif %}
+          {{ s.ntd(r.dk, cls="hi") }}
+          <td data-v="{{ '' if r.salary is none else r.salary }}">{% if r.salary %}{{ r.salary|dollars }}{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+          <td data-v="{{ '' if r.value is none else r.value }}">{% if r.value is not none %}{{ r.value|num(1) }}x{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+          <td data-v="{{ '' if r.own is none else r.own }}">{% if r.own is not none %}{{ r.own|num(1) }}%{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ s.empty("No games for this filter.") }}{% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- versus a team #}
+    {% set vs_sub %}<form class="pl-vs-form" action="/player/{{ p.player_id }}#vs" method="get">{% for k, v in vs_hidden.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}<label class="sr" for="vs-sel">Opponent</label><select id="vs-sel" name="vs" onchange="this.form.submit()">{% for code in vs_teams %}<option value="{{ code }}"{% if code == vs_team %} selected{% endif %}>{{ team(code).name }}{% if vs_counts.get(code) %} ({{ vs_counts[code] }}){% endif %}</option>{% endfor %}</select><noscript><button type="submit">Show</button></noscript></form>{% endset %}
+    {% call s.card("Versus a team", sub=vs_sub if vs_teams else None, cls="span-12", id="vs") %}
+      {% if vs and vs.games %}
+      {% set V = vs.avg %}{% set B = vs.base %}
+      <div class="tiles boxed pl-vs-tiles">
+        <div class="tile"><div class="lab">Games</div><div class="val"><span class="num-big sm">{{ vs.games|length }}</span></div><div class="note">last 3 seasons</div></div>
+        {% for lab, k in [("Pts", "pts"), ("Reb", "reb"), ("Ast", "ast"), ("3PM", "fg3m"), ("DK", "dk")] %}
+        {% set d = vs.diff.get(k) %}
+        <div class="tile"><div class="lab">{{ lab }}</div><div class="val"><span class="num-big sm">{{ V[k]|num(1) }}</span>{% if d is not none %}<span class="{{ 'up' if d > 0 else ('dn' if d < 0 else 'dim') }}">{{ d|signed(1) }}</span>{% endif %}</div><div class="note">his avg {{ B[k]|num(1) }}</div></div>
+        {% endfor %}
+      </div>
+      <div class="split boxed pl-vs-split">
+        <div class="flushpad">
+          <div class="pl-subh">Games vs {{ vs.opp }}</div>
+          <div class="scroll pl-vs-scroll">
+          <table data-sortable>
+            <thead><tr><th class="l" data-sorted="desc">Date</th><th>Min</th><th>Pts</th><th>Reb</th><th>Ast</th><th>FG</th><th>DK</th></tr></thead>
+            <tbody>
+            {% for r in vs.games %}
+            <tr><td class="l" data-v="{{ r.game_date }}">{{ r.game_date|short_date }} &rsquo;{{ r.game_date[2:4] }}{% if r.season_type == "Playoffs" %} <span class="note">PO</span>{% endif %}{% if r.wl %} <span class="{{ 'up' if r.wl == 'W' else 'dn' }}">{{ r.wl }}</span>{% endif %}</td>
+              {{ s.ntd(r.min, 0) }}{{ s.ntd(r.pts, kind="int") }}{{ s.ntd(r.reb, kind="int") }}{{ s.ntd(r.ast, kind="int") }}
+              <td data-v="{{ (r.fgm / r.fga) if r.fga else '' }}">{{ r.fgm|int }}-{{ r.fga|int }}</td>{{ s.ntd(r.dk, cls="hi") }}</tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          </div>
+        </div>
+        <div class="flushpad">
+          <div class="pl-subh">Who guarded him</div>
+          {% if vs.guarded %}
+          <div class="scroll pl-vs-scroll">
+          <table data-sortable>
+            <thead><tr><th class="l">Defender</th><th data-sorted="desc" data-tip="Partial possessions he was the primary defender">Poss</th><th data-tip="Matchup minutes">Min</th><th>Pts</th><th>FG</th><th>Ast</th><th>TO</th><th data-tip="Points per 100 possessions on this defender">Pts/100</th></tr></thead>
+            <tbody>
+            {% for g in vs.guarded %}
+            <tr data-tip="{{ g.name }} ({{ g.team }}) · {{ g.games }} game{{ '' if g.games == 1 else 's' }}&#10;{{ g.poss|num(0) }} poss · {{ g.pts }} pts · {{ g.fg3m|int }}-{{ g.fg3a|int }} 3PT">
+              <td class="l name"><a href="/player/{{ g.def_player_id }}">{{ g.name }}</a></td>
+              {{ s.ntd(g.poss, 0) }}{{ s.ntd(g.min, 1) }}{{ s.ntd(g.pts, kind="int") }}
+              <td data-v="{{ (g.fgm / g.fga) if g.fga else '' }}">{{ g.fgm|int }}-{{ g.fga|int }}</td>
+              {{ s.ntd(g.ast, kind="int") }}{{ s.ntd(g.tov, kind="int") }}{{ s.ntd(g.p100, 0) }}
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          </div>
+          {% else %}{{ s.empty("No matchup data for these games.", "Who-guarded-whom comes from NBA tracking; it is not collected for every game yet.") }}{% endif %}
+        </div>
+      </div>
+      <div class="note pl-foot">&ldquo;Who guarded him&rdquo; comes from NBA tracking: possessions where that defender was on him, and what he scored on them. Differences are against his average over the last 3 seasons.</div>
+      {% elif vs_team %}
+      {{ s.empty("No games against " ~ team(vs_team).name ~ " in the last three seasons.") }}
+      {% else %}
+      {{ s.empty("No opponents yet.") }}
+      {% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- shot chart #}
+    {% set sh = shots %}
+    {% call s.card("Shot chart", sub=(season ~ " · " ~ type_label|lower ~ ((" · " ~ "{:,}".format(sh.n) ~ " shots in " ~ sh.games ~ " games") if sh and sh.n else "")), cls="span-6", id="shots") %}
+      {% if sh and sh.n %}
+      <svg class="pl-court" viewBox="0 0 {{ court_w }} {{ court_h }}" role="img" aria-label="Shot chart: {{ sh.n }} shots, {{ sh.made }} made">
+        <g class="pl-lines" fill="none">{% for d in court %}<path d="{{ d }}"/>{% endfor %}<circle cx="250" cy="47.5" r="7.5"/></g>
+        <g class="pl-hex">{% for h in sh.hexes %}<polygon points="{{ h.points }}" fill="{{ h.fill }}" data-tip="{{ h.tip }}"/>{% endfor %}</g>
+      </svg>
+      <div class="legend pl-ramp"><span>FG%</span>{% for c in ramp %}<span><i style="background:{{ c }}"></i>{{ ["25%", "", "", "50%", "", "75%"][loop.index0] }}</span>{% endfor %}<span class="note">bigger hex = more shots</span></div>
+      <table class="pl-zones">
+        <thead><tr><th class="l">Zone</th><th>FGA</th><th>Share</th><th>FG%</th><th data-tip="League FG% from this zone, same season">League</th><th>Diff</th></tr></thead>
+        <tbody>
+        {% for z in sh.zones %}
+        <tr><td class="l">{{ z.zone }}</td><td>{{ z.fga }}</td><td>{{ z.share|pct(1) }}</td><td>{{ z.fg_pct|pct(1) }}</td><td class="dim">{{ pctv(z.league) }}</td>{{ diffcell(z.diff, kind="pct") }}</tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      {{ s.empty("No shots collected for " ~ season ~ " " ~ type_label|lower ~ ".", "Shot charts come from archived play-by-play (2019-20 on).") }}
+      {% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- play types #}
+    {% set pt = ptypes %}
+    {% call s.card("Play types", sub=season ~ " · " ~ type_label|lower ~ " · offense · share of his possessions", cls="span-6") %}
+      {% if pt.thin %}
+      {{ s.empty("Not enough play-type data yet for " ~ season ~ ".", "nba.com publishes few play-type rows early in a season. Pick an earlier season above.") }}
+      {% elif not pt.rows %}
+      {{ s.empty("No play-type rows for him in " ~ season ~ ".") }}
+      {% else %}
+      {% set mx = pt.rows|map(attribute="poss_pct")|select|max %}
+      <table data-sortable class="pl-ptypes">
+        <thead><tr><th class="l">Play type</th><th class="l pl-share">Share</th><th data-sorted="desc">Poss</th><th>Pts/poss</th><th data-tip="Points-per-possession percentile among all players with this play type">Percentile</th></tr></thead>
+        <tbody>
+        {% for r in pt.rows %}
+        <tr data-tip="{{ r.label }}: {{ r.poss|num(0) }} poss · {{ r.ppp|num(2) }} pts per poss{% if r.percentile is not none %} · better than {{ r.pctile }}% of players{% endif %}">
+          <td class="l name">{{ r.label }}</td>
+          <td class="l" data-v="{{ r.poss_pct or '' }}">{{ s.hbar(r.poss_pct or 0, mx, r.poss_pct|pct(1)) }}</td>
+          {{ s.ntd(r.poss, 0) }}{{ s.ntd(r.ppp, 2) }}
+          <td data-v="{{ '' if r.percentile is none else r.percentile }}">{% if r.pctile is not none %}<span class="rk" style="background:{{ (101 - r.pctile)|rank_color(100) }}">{{ r.pctile }}</span>{% else %}{{ DASH }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="note pl-foot">Percentile vs all players with that play type (blue = elite).</div>
+      {% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- similar players #}
+    {% include "_player_similar.html" ignore missing with context %}
+
+    {# -------------------------------------------------------------- real ownership #}
+    {% call s.card("Real DFS ownership", sub="from your uploaded standings", cls="span-12", flush=(own|length > 0)) %}
+      {% if own %}
+      {% set has_est = own|selectattr("est", "ne", none)|list|length > 0 %}
+      <table data-sortable>
+        <thead><tr><th class="l" data-sorted="desc">Date</th><th class="l">Contest</th><th>Field</th><th>Real own%</th>{% if has_est %}<th data-tip="Our pre-lock ownership estimate (large-GPP proxy from the last run before lock)">Our est.</th>{% endif %}<th>DK pts</th></tr></thead>
+        <tbody>
+        {% for r in own %}
+        <tr>
+          <td class="l" data-v="{{ r.nba_day or '' }}">{{ r.nba_day|short_date or DASH }}</td>
+          <td class="l pl-contest" title="{{ r.contest }}">{{ r.contest }}{% if r.game_type_id and r.game_type_id != 70 %} <span class="note">SD</span>{% endif %}</td>
+          {{ s.ntd(r.field, kind="int") }}
+          <td data-v="{{ '' if r.own is none else r.own }}"><b>{{ r.own|num(1) }}%</b></td>
+          {% if has_est %}<td data-v="{{ '' if r.est is none else r.est }}" class="dim">{% if r.est is not none %}{{ r.est|num(1) }}%{% else %}{{ DASH }}{% endif %}</td>{% endif %}
+          {{ s.ntd(r.fpts) }}
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="note pl-foot pad">Grows every time you upload standings.{% if has_est %} &ldquo;Our est.&rdquo; is what we expected before lock.{% endif %}</div>
+      {% else %}
+      {{ s.empty("Not in any standings you uploaded yet.", "Upload contest standings on the DFS page and his real ownership shows up here.") }}
+      {% endif %}
+    {% endcall %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,90 @@
+/* "Chances" panel (templates/_player_opportunity.html) and the "Running hot / running cold"
+   card on /leaders (templates/_leaders_chances.html). Builds on pro.css tokens; scoped to .pro.
+   Marker shapes differ (ring, dot, square, bar, dashed bar) so colour is never the only cue. */
+
+.pro .ch-card .body { display: flex; flex-direction: column; gap: 12px; }
+.pro .ch-intro { margin: 0; color: var(--text-secondary); font-size: 12.5px; max-width: 900px; }
+.pro .ch-foot { margin: 0; }
+
+/* ---------------------------------------------------------------- signal lines */
+.pro .ch-signals { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.pro .ch-sig { display: grid; grid-template-columns: 118px 74px 1fr; gap: 4px 10px; align-items: baseline; padding: 7px 10px; border: 1px solid var(--line); border-left-width: 3px; border-radius: 6px; background: var(--surface-2); font-size: 12.5px; }
+.pro .ch-sig.ch-hot { border-left-color: var(--accent-2); }
+.pro .ch-sig.ch-cold { border-left-color: var(--accent); }
+.pro .ch-sig.ch-flat { border-left-color: var(--line-2); color: var(--text-secondary); }
+.pro .ch-sig.strong { background: #1d2435; }
+.pro .ch-tag { font: 700 10.5px/1.4 var(--sans); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.pro .ch-hot .ch-tag { color: #f0a27e; }
+.pro .ch-cold .ch-tag { color: #8fbcf2; }
+.pro .ch-flat .ch-tag { color: var(--text-muted); }
+.pro .ch-sig-l { color: var(--text-muted); font-weight: 600; }
+.pro .ch-sig-t { color: var(--text-primary); }
+.pro .ch-flat .ch-sig-t { color: var(--text-secondary); }
+
+/* ---------------------------------------------------------------- legend + marker keys */
+.pro .ch-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--text-secondary); font-size: 11.5px; }
+.pro .ch-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.pro .ch-k { display: inline-block; flex: none; position: relative; }
+.pro .ch-k.ch-l5, .pro .ch-m.ch-l5 { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent-2); background: var(--surface-1); }
+.pro .ch-k.ch-l10, .pro .ch-m.ch-l10 { width: 11px; height: 11px; border-radius: 50%; background: var(--accent-2); }
+.pro .ch-k.ch-season, .pro .ch-m.ch-season { width: 9px; height: 9px; background: var(--accent); border-radius: 1px; }
+.pro .ch-k.ch-own, .pro .ch-m.ch-own { width: 3px; height: 16px; background: var(--text-primary); border-radius: 1px; }
+.pro .ch-k.ch-league, .pro .ch-m.ch-league { width: 0; height: 16px; border-left: 2px dashed var(--text-muted); }
+
+/* ---------------------------------------------------------------- sub-panels */
+.pro .ch-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pro .ch-sub { border: 1px solid var(--line); border-radius: 8px; min-width: 0; padding-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
+.pro .ch-h { padding: 8px 10px; font-weight: 700; color: var(--text-secondary); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.pro .ch-h .note { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.pro .ch-t th, .pro .ch-t td { padding: 5px 8px; }
+.pro .ch-t th { vertical-align: bottom; line-height: 1.25; }
+.pro .ch-t th .ch-g { display: block; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--text-muted); font-size: 10.5px; }
+.pro .ch-t td .ch-sm { display: block; font-size: 10.5px; color: var(--text-muted); line-height: 1.2; }
+.pro .ch-t td.l .note { font-size: 10.5px; }
+.pro .ch-t .ch-b { color: var(--text-secondary); background: rgba(255, 255, 255, .02); }
+.pro .ch-t th.ch-b { color: var(--text-muted); }
+.pro .ch-t tr.ch-key td { font-weight: 700; }
+.pro .ch-t tr.ch-key td.l { color: var(--text-primary); }
+.pro .ch-t tbody tr:last-child { border-bottom: 0; }
+.pro .ch-sub > .note { padding: 0 10px; }
+.pro .ch-check { display: inline-block; padding: 0 5px; border: 1px dashed var(--warn); border-radius: 4px; color: var(--warn); font: 600 10.5px/1.5 var(--sans); white-space: nowrap; }
+.pro .ch-dq { color: var(--text-secondary); }
+
+/* ---------------------------------------------------------------- conversion vs baseline bar */
+.pro .ch-bar { padding: 0 12px; }
+.pro .ch-bar-h { font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 6px; }
+.pro .ch-track { position: relative; height: 18px; margin: 0 6px; }
+.pro .ch-track::before { content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 6px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; }
+.pro .ch-track .ch-zero { position: absolute; top: 0; height: 18px; width: 1px; background: var(--line-2); }
+.pro .ch-m { position: absolute; top: 50%; transform: translate(-50%, -50%); }
+.pro .ch-m.ch-own, .pro .ch-m.ch-league { top: 1px; transform: translateX(-50%); }
+.pro .ch-m.ch-l10 { z-index: 3; }
+.pro .ch-m.ch-l5 { z-index: 4; background: transparent; }
+.pro .ch-m.ch-season { z-index: 2; }
+.pro .ch-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin: 1px 0 4px; }
+.pro .ch-vals { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 11.5px; color: var(--text-muted); }
+.pro .ch-vals span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.pro .ch-vals b { color: var(--text-primary); font-weight: 600; }
+.pro .ch-vals .ch-k.ch-own, .pro .ch-vals .ch-k.ch-league { height: 11px; }
+.pro .ch-bar .note { margin-top: 3px; }
+
+/* ---------------------------------------------------------------- leaders: running hot / cold */
+.pro .ch-help { display: inline-block; margin-left: 8px; padding: 1px 8px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--text-secondary); font: 500 11px/1.5 var(--sans); }
+.pro .ch-lead > div { padding: 0; }
+.pro .ch-lead-h { padding: 8px 10px; font-weight: 700; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+.pro .ch-lead-h .note { margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.pro .ch-lead-h.ch-hot { color: #f0a27e; }
+.pro .ch-lead-h.ch-cold { color: #8fbcf2; }
+.pro .ch-lead td.name { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
+.pro .ch-lead .empty-state { margin: 12px; }
+.pro .ch-lead-note { margin: 0; padding: 8px 14px 12px; }
+
+@media (max-width: 1000px) {
+  .pro .ch-grid { grid-template-columns: minmax(0, 1fr); }
+  .pro .ch-sig { grid-template-columns: auto 1fr; }
+  .pro .ch-sig-t { grid-column: 1 / -1; }
+  .pro .ch-hide-sm { display: none; }
+  .pro .ch-card .body { padding: 10px; }
+  .pro .ch-t th, .pro .ch-t td { padding: 5px 6px; font-size: 12px; }
+  .pro .ch-bar { padding: 0 8px; }
+}

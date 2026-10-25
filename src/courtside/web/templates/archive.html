@@ -10,9 +10,9 @@
   </header>
   {% if months %}
   {% for mo in months %}
-  <section class="arch-month" aria-labelledby="mo{{ loop.index }}">
-    <h2 class="arch-label" id="mo{{ loop.index }}">{{ mo.label }}</h2>
-    <ol class="arch-list card">
+  <section class="card flush arch-month" aria-labelledby="mo{{ loop.index }}">
+    <h2 class="card-title" id="mo{{ loop.index }}">{{ mo.label }} <span class="sub">{{ mo.rows|length }} {{ "Brief" if mo.rows|length == 1 else "Briefs" }}</span></h2>
+    <ol class="arch-list">
       {% for r in mo.rows %}
       <li><a href="/brief/{{ r.day }}" class="arch-row">
         <span class="arch-date"><b>{{ r.day|short_date }}</b><span>{{ r.day|weekday }}</span></span>

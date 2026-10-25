@@ -1,0 +1,136 @@
+{#- Box score for /game/<id> (included by game.html when `box` is set).
+    View model: stats/games.py game_box(). All three player views are rendered server-side; the
+    seg control only toggles panels (stats.js). Tables are sortable (data-sortable, ntd cells). -#}
+{% import "_stats.html" as s %}
+{% set away = box.teams[0] %}{% set home = box.teams[1] %}
+
+{#- A number cell for the DFS view: en dash when we do not have the value. -#}
+{% macro dtd(v, nd=1, kind="num", cls="") -%}
+<td{% if cls %} class="{{ cls }}"{% endif %} data-v="{{ '' if v is none else v }}">
+{%- if v is none %}{{ DASH }}{% elif kind == "dollars" %}{{ v|dollars }}{% elif kind == "pct" %}{{ v|num(1) }}%{% elif kind == "signed" %}{{ v|signed(nd) }}{% else %}{{ v|num(nd) }}{% endif -%}
+</td>
+{%- endmacro %}
+
+{% macro who(p) -%}
+<td class="l name" data-v="{{ p.name }}">{{ s.player_link(p.player_id, p.name) }}{% if p.starter %}<span class="stm" title="Started" aria-label="Started">S</span>{% endif %}</td>
+{%- endmacro %}
+
+{% macro team_head(t) -%}
+<div class="section-h team-h">{{ s.team_link(t.team, full=True) }} <span class="note">{{ t.score if t.score is not none else '' }}{% if t.wl %} &middot; {{ 'Win' if t.wl == 'W' else 'Loss' }}{% endif %}</span></div>
+{%- endmacro %}
+
+{% macro dnp(t) -%}
+{%- if t.dnp %}<p class="note dnp">Did not play: {{ t.dnp|join(', ') }}</p>{% endif -%}
+{%- endmacro %}
+
+{% macro pm_td(v) -%}
+<td class="{{ 'up' if (v or 0) > 0 else ('dn' if (v or 0) < 0 else '') }}" data-v="{{ '' if v is none else v }}">{{ v|signed_int }}</td>
+{%- endmacro %}
+
+<div class="pro gbox" id="box-score">
+  <div class="grid g-12">
+    {% call s.card("Four factors", sub=away.team ~ " at " ~ home.team, cls="span-5") %}
+      {% if box.four_factors %}
+      <div class="ff">
+        <div class="v l side">{{ away.team }}</div><div class="lab strong">Four factors</div><div class="v side">{{ home.team }}</div>
+        {%- for f in box.four_factors %}
+        {%- set a = f.away %}{% set h = f.home %}
+        <div class="hbar"><span class="v l">{% if a is none %}{{ DASH }}{% elif f.kind == 'pct' %}{{ a|pct(1) }}{% elif f.kind == 'rate' %}{{ a|num(2) }}{% else %}{{ a|num(1) }}{% endif %}</span><div class="bar l"><i style="width:{{ f.away_w }}%{% if f.better == 'home' %};opacity:.45{% endif %}"></i></div></div>
+        <div class="lab">{{ f.label }}</div>
+        <div class="hbar"><div class="bar r"><i style="width:{{ f.home_w }}%{% if f.better == 'away' %};opacity:.45{% endif %}"></i></div><span class="v">{% if h is none %}{{ DASH }}{% elif f.kind == 'pct' %}{{ h|pct(1) }}{% elif f.kind == 'rate' %}{{ h|num(2) }}{% else %}{{ h|num(1) }}{% endif %}</span></div>
+        {%- endfor %}
+      </div>
+      <p class="note ff-note">Brighter bar = the better side. eFG% = (FG + 0.5 &times; 3P) / FGA; FT rate = FTA / FGA.</p>
+      {% else %}
+      {{ s.empty("No team numbers yet.") }}
+      {% endif %}
+    {% endcall %}
+
+    {% call s.card("Team totals", sub=box.away ~ " vs " ~ box.home, cls="span-7", flush=True) %}
+      <table class="totals">
+        <thead><tr><th class="l" scope="col"><span class="sr">Stat</span></th><th scope="col">{{ s.team_link(away.team) }}</th><th scope="col">{{ s.team_link(home.team) }}</th></tr></thead>
+        <tbody>
+          {%- for lab, k in [("Points", "pts"), ("Rebounds", "reb"), ("Assists", "ast"), ("Steals", "stl"), ("Blocks", "blk"), ("Turnovers", "tov"), ("Fouls", "pf")] %}
+          <tr><td class="l">{{ lab }}</td><td>{{ away.tot[k]|int }}</td><td>{{ home.tot[k]|int }}</td></tr>
+          {%- endfor %}
+          {%- for lab, m_, a_ in [("Field goals", "fgm", "fga"), ("3-pointers", "fg3m", "fg3a"), ("Free throws", "ftm", "fta")] %}
+          <tr><td class="l">{{ lab }}</td>
+            {%- for t in (away, home) %}<td>{% if t.tot[a_] %}{{ t.tot[m_] }}-{{ t.tot[a_] }} <span class="dim">{{ (t.tot[m_] / t.tot[a_])|pct(1) }}</span>{% else %}{{ DASH }}{% endif %}</td>{% endfor -%}
+          </tr>
+          {%- endfor %}
+          {%- if away.tot.reb is not none %}
+          <tr><td class="l">Offensive rebounds</td><td>{{ away.tot.oreb|int }}</td><td>{{ home.tot.oreb|int }}</td></tr>
+          {%- endif %}
+        </tbody>
+      </table>
+    {% endcall %}
+
+    {% set seg_markup = s.seg("box", [("trad", "Traditional"), ("adv", "Advanced"), ("dfs", "DFS")], "trad", remember=True, label="Box score view") %}
+    {% call s.card("Players", sub=seg_markup, cls="span-12 box-players") %}
+      {#- Traditional -#}
+      {% call s.panel("box", "trad", "trad") %}
+        {% for t in (away, home) %}
+        {{ team_head(t) }}
+        <div class="scroll">
+        <table data-sortable>
+          <thead><tr><th class="l" scope="col">Player</th><th scope="col">Min</th><th scope="col">Pts</th><th scope="col">Reb</th><th scope="col">Ast</th><th scope="col">Stl</th><th scope="col">Blk</th><th scope="col">TO</th><th scope="col" data-tip="Field goals made-attempted (sorts by made)">FG</th><th scope="col" data-tip="3-pointers made-attempted (sorts by made)">3P</th><th scope="col" data-tip="Free throws made-attempted (sorts by made)">FT</th><th scope="col" data-tip="Offensive rebounds">OR</th><th scope="col">PF</th><th scope="col">+/&minus;</th></tr></thead>
+          <tbody>
+          {%- for p in t.players %}
+          <tr>{{ who(p) }}<td data-v="{{ p.min if p.min is not none else '' }}">{{ p.min|minutes }}</td>
+            {{ s.ntd(p.pts, kind="int", cls="hi") }}{{ s.ntd(p.reb, kind="int") }}{{ s.ntd(p.ast, kind="int") }}{{ s.ntd(p.stl, kind="int") }}{{ s.ntd(p.blk, kind="int") }}{{ s.ntd(p.tov, kind="int") }}
+            <td data-v="{{ p.fgm if p.fgm is not none else '' }}">{{ p.fgm }}-{{ p.fga }}</td><td data-v="{{ p.fg3m if p.fg3m is not none else '' }}">{{ p.fg3m }}-{{ p.fg3a }}</td><td data-v="{{ p.ftm if p.ftm is not none else '' }}">{{ p.ftm }}-{{ p.fta }}</td>
+            {{ s.ntd(p.oreb, kind="int") }}{{ s.ntd(p.pf, kind="int") }}{{ pm_td(p.plus_minus) }}</tr>
+          {%- endfor %}
+          </tbody>
+          <tfoot><tr><td class="l">Team</td><td>{{ t.tot.min|minutes }}</td><td>{{ t.tot.pts|int }}</td><td>{{ t.tot.reb|int }}</td><td>{{ t.tot.ast|int }}</td><td>{{ t.tot.stl|int }}</td><td>{{ t.tot.blk|int }}</td><td>{{ t.tot.tov|int }}</td><td>{{ t.tot.fgm }}-{{ t.tot.fga }}</td><td>{{ t.tot.fg3m }}-{{ t.tot.fg3a }}</td><td>{{ t.tot.ftm }}-{{ t.tot.fta }}</td><td>{{ t.tot.oreb|int }}</td><td>{{ t.tot.pf|int }}</td><td></td></tr></tfoot>
+        </table>
+        </div>
+        {{ dnp(t) }}
+        {% endfor %}
+      {% endcall %}
+
+      {#- Advanced -#}
+      {% call s.panel("box", "adv", "trad") %}
+        {% for t in (away, home) %}
+        {{ team_head(t) }}
+        <div class="scroll">
+        <table data-sortable>
+          <thead><tr><th class="l" scope="col">Player</th><th scope="col">Min</th><th scope="col" data-tip="Offensive rating: points produced per 100 possessions">OffRtg</th><th scope="col" data-tip="Defensive rating: points allowed per 100 possessions">DefRtg</th><th scope="col">Net</th><th scope="col" data-tip="Usage: share of team plays used while on the floor">USG%</th><th scope="col" data-tip="True shooting">TS%</th><th scope="col" data-tip="Effective field-goal %">eFG%</th><th scope="col" data-tip="Assist %">AST%</th><th scope="col" data-tip="Rebound %">REB%</th><th scope="col" data-tip="Player impact estimate">PIE</th></tr></thead>
+          <tbody>
+          {%- for p in t.players %}
+          <tr>{{ who(p) }}<td data-v="{{ p.min if p.min is not none else '' }}">{{ p.min|minutes }}</td>
+            {{ s.ntd(p.adv.off_rating) }}{{ s.ntd(p.adv.def_rating) }}{{ s.ntd(p.adv.net_rating, kind="signed") }}{{ s.ntd(p.adv.usg_pct, kind="pct") }}{{ s.ntd(p.adv.ts_pct, kind="pct") }}{{ s.ntd(p.adv.efg_pct, kind="pct") }}{{ s.ntd(p.adv.ast_pct, kind="pct") }}{{ s.ntd(p.adv.reb_pct, kind="pct") }}{{ s.ntd(p.adv.pie, kind="pct") }}</tr>
+          {%- endfor %}
+          </tbody>
+          <tfoot><tr><td class="l">Team</td><td>{{ t.tot.min|minutes }}</td><td>{{ t.adv.off_rating|num }}</td><td>{{ t.adv.def_rating|num }}</td><td>{{ t.adv.net_rating|signed }}</td><td></td><td>{{ t.adv.ts_pct|pct(1) }}</td><td>{{ t.adv.efg_pct|pct(1) }}</td><td>{{ t.adv.ast_pct|pct(1) }}</td><td></td><td></td></tr></tfoot>
+        </table>
+        </div>
+        {{ dnp(t) }}
+        {% endfor %}
+      {% endcall %}
+
+      {#- DFS -#}
+      {% call s.panel("box", "dfs", "trad") %}
+        {% for t in (away, home) %}
+        {{ team_head(t) }}
+        <div class="scroll">
+        <table data-sortable>
+          <thead><tr><th class="l" scope="col">Player</th><th scope="col">Min</th><th scope="col" data-tip="DraftKings Classic points scored">DK pts</th><th scope="col">Pts</th><th scope="col">Reb</th><th scope="col">Ast</th><th scope="col">Stl</th><th scope="col">Blk</th><th scope="col">TO</th><th scope="col">3PM</th><th scope="col" data-tip="Our DK projection from the last run before tip-off">Our proj</th><th scope="col" data-tip="DK points scored minus our projection">Diff</th><th scope="col" data-tip="DraftKings Classic salary">Salary</th><th scope="col" data-tip="DK points per $1,000 of salary">Value</th><th scope="col" data-tip="Real ownership: average % drafted in your uploaded contest standings">Own%</th></tr></thead>
+          <tbody>
+          {%- for p in t.players %}
+          <tr>{{ who(p) }}<td data-v="{{ p.min if p.min is not none else '' }}">{{ p.min|minutes }}</td>
+            {{ s.ntd(p.dk, cls="hi") }}{{ s.ntd(p.pts, kind="int") }}{{ s.ntd(p.reb, kind="int") }}{{ s.ntd(p.ast, kind="int") }}{{ s.ntd(p.stl, kind="int") }}{{ s.ntd(p.blk, kind="int") }}{{ s.ntd(p.tov, kind="int") }}{{ s.ntd(p.fg3m, kind="int") }}
+            {{ dtd(p.proj, cls="dim") }}{{ dtd(p.diff, kind="signed", cls=('up' if (p.diff or 0) > 0 else ('dn' if (p.diff or 0) < 0 else ''))) }}{{ dtd(p.salary, kind="dollars", cls="dim") }}{{ dtd(p.value, cls="dim") }}{{ dtd(p.own, kind="pct", cls="dim") }}</tr>
+          {%- endfor %}
+          </tbody>
+          <tfoot><tr><td class="l">Team</td><td>{{ t.tot.min|minutes }}</td><td>{{ t.dk_total|num }}</td><td>{{ t.tot.pts|int }}</td><td>{{ t.tot.reb|int }}</td><td>{{ t.tot.ast|int }}</td><td>{{ t.tot.stl|int }}</td><td>{{ t.tot.blk|int }}</td><td>{{ t.tot.tov|int }}</td><td>{{ t.tot.fg3m|int }}</td><td>{{ t.proj_total|num if t.proj_total is not none else DASH }}</td><td></td><td></td><td></td><td></td></tr></tfoot>
+        </table>
+        </div>
+        {{ dnp(t) }}
+        {% endfor %}
+        <p class="note foot-note">{% if box.has_dfs %}Salary is DraftKings Classic. Our proj is the last projection made before tip-off. Own% is the average share of lineups that drafted him in the contests you uploaded; an en dash means we do not have it.{% else %}No DraftKings salary, projection or ownership is stored for this game. DK points are computed from the box score.{% endif %}</p>
+      {% endcall %}
+      <p class="note foot-note sort-hint">Click a column to sort.{% if box.has_starts %} S marks a starter; starters are listed first.{% endif %}</p>
+    {% endcall %}
+  </div>
+</div>

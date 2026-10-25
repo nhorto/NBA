@@ -1,0 +1,44 @@
+{#- "Running hot / running cold" card on /leaders (web/stats_chances.league_chances; styles
+    static/pro-chances.css). Included by stats_leaders.html with context: chances, season,
+    type_label. Stat tabs toggle with stats.js; the first stat shows without JS. -#}
+{% import "_stats.html" as s %}
+{% set CH = chances if chances is defined else None %}
+<link rel="stylesheet" href="/static/pro-chances.css?v={{ asset_v }}">
+{% set ch_sub %}{% if CH and CH.any %}{% set opts = [] %}{% for m in CH.metrics %}{% set _ = opts.append((m.key, m.label)) %}{% endfor %}{{ s.seg("chstat", opts, "reb", label="Stat") }}{% endif %}<span class="ch-help" tabindex="0" data-tip="{{ CH.tip if CH else '' }}">How this works</span>{% endset %}
+{% call s.card("Running hot / running cold", sub=ch_sub, cls="span-12", id="chances") %}
+  {% if CH and CH.any %}
+  {% for m in CH.metrics %}
+  {% call s.panel("chstat", m.key, "reb") %}
+  <div class="split ch-lead">
+    {% for side, rows, head in (("hot", m.hot, "&#9650; Running hot"), ("cold", m.cold, "&#9660; Running cold")) %}
+    <div>
+      <div class="ch-lead-h ch-{{ side }}">{{ head|safe }}<span class="note">{{ m.label }} · last 10 vs his usual · {{ "likely to cool off" if side == "hot" else "likely to pick back up" }}</span></div>
+      {% if rows %}
+      <div class="scroll"><table class="ch-lt">
+        <thead><tr><th>#</th><th class="l">Player</th><th class="l ch-hide-sm">Team</th><th class="l ch-hide-sm">Stat</th><th>Last 10</th><th>{{ "Expected" if m.key == "fg" else "Usual" }}</th><th data-tip="Games in the window">G</th><th class="ch-hide-sm" data-tip="Shrunk z: how far from his usual rate, discounted for a small sample">z*</th></tr></thead>
+        <tbody>
+        {% for f in rows %}
+        <tr data-tip="{{ f.n|num(0) }} of {{ f.d|num(0) }} {{ m.unit }}; {{ f.expected|num(0) }} expected at his usual rate">
+          <td class="dim">{{ loop.index }}</td>
+          <td class="name">{{ s.player_link(f.player_id, f.name) }}</td>
+          <td class="l ch-hide-sm">{{ s.team_link(f.team) if f.team else DASH }}</td>
+          <td class="l dim ch-hide-sm">{{ m.label }}</td>
+          <td class="hi">{{ f.rate|pct(1) }}</td>
+          <td class="dim">{{ f.baseline|pct(1) }}</td>
+          <td>{{ f.games }}</td>
+          <td class="ch-hide-sm {{ 'up' if f.z_shrunk > 0 else 'dn' }}">{{ f.z_shrunk|signed(1) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}{{ s.empty("Nobody far from normal.", "No " ~ m.label|lower ~ " conversion this far " ~ ("above" if side == "hot" else "below") ~ " normal over the last 10 games" ~ (", or potential assists are not collected for " ~ season ~ " yet." if m.key == "ast_pot" else ".")) }}{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endcall %}
+  {% endfor %}
+  <p class="note ch-lead-note">Last 10 = each player's last 10 {{ type_label|lower }} games of {{ season }} with the stat collected; usual = his earlier games, pulled toward the league rate for his position. Ranked by shrunk z; the top {{ 10 }} each way. Information only: rates far from normal tend to drift back toward it.</p>
+  {% else %}
+  {{ s.empty("Nobody to list yet.", "This card needs " ~ season ~ " " ~ type_label|lower ~ " tracking (rebound chances, potential assists) or shots; tracking for this season is collected nightly.") }}
+  {% endif %}
+{% endcall %}

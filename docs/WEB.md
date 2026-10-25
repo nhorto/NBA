@@ -35,10 +35,25 @@ uv run courtside serve --reload                 # dev: reload on .py/.html/.css/
 | `/brief/<YYYY-MM-DD>` | the Brief for a day, with prev/next navigation |
 | `/archive` | every stored Brief, grouped by month |
 | `/game/<game_id>` | deep-dive for a finished game (linescore, lead-margin chart, runs, clutch, impact table, unsung-hero candidates, notable lines, incidents); a preview page if the id is only on a "tonight" slate |
+| `/tonight`, `/tonight/<day>` | Tonight's players: projections, availability and prop cards (`players_view.py`); `/tonight` redirects to today. Was `/players/<day>`, which now 301-redirects here (query kept) |
+| `/games`, `/games/<day>` | stats dashboard: the scoreboard for a night (default: the latest night with finals) (`stats_games.py`) |
+| `/teams` | stats dashboard: league table of all 30 teams, `?season=` (`stats_teams.py`) |
+| `/team/<ABBR>` | stats dashboard: team page; lower-case codes 301 to upper case, unknown codes 404 (`stats_teams.py`) |
+| `/players` | stats dashboard: player directory; `?q=` is also the no-JS fallback of the top-bar search (`stats_players.py`) |
+| `/player/<player_id>` | stats dashboard: player page; unknown or non-numeric ids 404 (`stats_players.py`) |
+| `/leaders` | stats dashboard: league and team leaders, `?season=` (`stats_leaders.py`) |
+| `/api/search?q=` | JSON for the top-bar search: `{"q", "results": [{type, id, name, team, url, sub, ...}]}`, players of the last 3 seasons plus the 30 teams, accent-insensitive, at most 10 (`stats/search.py`) |
 | `/health` | Model Health: status light, per-model scoreboard vs the market, rolling log-loss/accuracy, calibration, over/under-prediction, drift, alerts, data checks and model history (reads the MLOps tables; empty states when they are empty) |
 | `/api/health` | JSON summary of the same: status, champions, alerts, models, calibration, bias, drift, checks |
 | `/healthz` | `{"ok", "status", "briefs", "latest_day", "latest_built_at", "latest_age_hours", "data_dir"}` for monitoring |
 | `/api/brief/<day>` or `/api/brief/latest` | the stored Brief JSON, unchanged |
+
+The site menu is Today · Tonight · Games · Teams · Players · Leaders · DFS · Health, plus a
+global search box ("/" focuses it). The stats dashboard pages (spec: `docs/STATS_SITE.md`) use
+the dark look in `static/pro.css`, the macros in `templates/_stats.html`, `static/stats.js`
+(sortable tables, segmented controls, tooltips, search) and the query layer in
+`src/courtside/stats/`. Their content is being built; the routes above render placeholders
+until then.
 
 ## View it from your phone over Tailscale
 

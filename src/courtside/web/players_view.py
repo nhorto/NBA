@@ -1,4 +1,4 @@
-"""The `/players` page: Tonight player cards (docs/PLAYERS.md T2.9, §2.8).
+"""The `/tonight` page ("Tonight's players"): player cards (docs/PLAYERS.md T2.9, §2.8).
 
 Per game, per player: our projection if he plays (minutes, points, rebounds, assists, 3PM, DK
 points, each with a 10th-90th percentile range), availability (the injury report status and our
@@ -17,8 +17,10 @@ Read-only: runs on the app's read-only SQLite connection and never migrates. The
 cached per (day, newest run, newest prop capture, newest injury capture).
 
 Routes
-  /players                  redirect to today's NBA day
-  /players/<day>            ?game=<game_id> (filter) &sort=dk|pts|reb|ast|min|name
+  /tonight                  redirect to today's NBA day
+  /tonight/<day>            ?game=<game_id> (filter) &sort=dk|pts|reb|ast|min|name
+  /players/<day>            301 to /tonight/<day> (the page's old URL; /players is now the
+                            player directory, web/stats_players.py)
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from ..proj import props as P
 from ..proj import scenarios as SCN
 from ..proj.dfs import late_news_tag as LN
 from ..proj.dfs import xfactor as XF
+from ..stats import tonight as TN
 from . import fmt
 from .teams import identity
 
@@ -154,7 +157,69 @@ def _sort_cards(cards: list[dict], sort: str) -> list[dict]:
     return sorted(cards, key=lambda c: (-(c["by"].get(sort) or 0.0), -(c["dk_all"] or 0.0)))
 
 
-def _game_view(conn: sqlite3.Connection, res: dict, at: str, cache: dict) -> dict:
+def _teammate_out(conn: sqlite3.Connection, day: date, teams: tuple[str, str],
+                  status: Mapping[int, dict], names: Mapping[int, list[str]],
+                  team_of: Mapping[int, str], cards: list[dict]) -> list[dict]:
+    """The "Teammate out" panel (`stats.tonight.with_without`): per team, per player listed
+    Out or Doubtful, how each healthy rotation teammate's per-game numbers moved with and
+    without him (this season and last, same team). Never fails the page."""
+    out = []
+    for team in teams:
+        mates = sorted((c for c in cards if c["team"] == team
+                        and c.get("status") not in ("Out", "Doubtful")),
+                       key=lambda c: -(c["dk_all"] or 0.0))
+        absent = [pid for pid, st in status.items()
+                  if st.get("status") in ("Out", "Doubtful") and team_of.get(pid) == team]
+        if not team or not absent or not mates:
+            continue
+        mate_name = {c["player_id"]: c["name"] for c in mates}
+        blocks = []
+        for pid in absent:
+            try:
+                ww = TN.with_without(conn, team, pid, [c["player_id"] for c in mates], day)
+            except Exception:  # noqa: BLE001 - an optional panel never breaks the page
+                continue
+            rows = []
+            for r in ww["rows"]:
+                cells = []
+                for k in TN.STATS:
+                    scale = 100.0 if k == "usg" else 1.0
+                    w, wo, dl = r["with"][k], r["without"][k], r["delta"][k]
+                    cells.append({"key": k, "label": TN.LABELS[k],
+                                  "w": None if w is None else w * scale,
+                                  "wo": None if wo is None else wo * scale,
+                                  "d": None if dl is None else dl * scale})
+                rows.append({"player_id": r["player_id"], "name": mate_name.get(r["player_id"]),
+                             "n_with": r["with"]["n"], "n_without": r["without"]["n"],
+                             "small": r["small"], "cells": cells})
+            nm = (names.get(pid) or [str(pid)])[0]
+            blocks.append({"player_id": pid, "name": nm, "status": status[pid].get("status"),
+                           "a_games": ww["a_games"], "seasons": ww["seasons"],
+                           "window": list(ww["window"]), "rows": rows})
+        blocks.sort(key=lambda b: (not b["rows"], -b["a_games"], b["name"]))
+        out.append({"team": team, "absent": blocks})
+    return out
+
+
+def _market(conn: sqlite3.Connection, g: Mapping, day: date | None, cache: dict) -> dict | None:
+    """Market context for the game header (`stats.tonight.market_context`). Never fails."""
+    if day is None:
+        return None
+    try:
+        if "pace" not in cache:
+            cache["pace"] = TN.pace_ranks(conn, day)
+        home, away = g.get("home") or "", g.get("away") or ""
+        mk = TN.market_context(conn, g["game_id"], home, away, g.get("tipoff_utc"),
+                               cache["pace"])
+        if mk is not None:
+            mk["spread_text"] = fmt.spread_text(None, mk["home_spread"], home, away)
+        return mk
+    except Exception:  # noqa: BLE001 - an optional strip never breaks the page
+        return None
+
+
+def _game_view(conn: sqlite3.Connection, res: dict, at: str, cache: dict,
+               day: date | None = None) -> dict:
     g = res["game"]
     gid, home, away = g["game_id"], g.get("home") or "", g.get("away") or ""
     proj = res.get("proj") or {}
@@ -194,6 +259,8 @@ def _game_view(conn: sqlite3.Connection, res: dict, at: str, cache: dict) -> dic
         if prow or (c["dk_all"] or 0.0) >= CARD_MIN_DK:
             cards.append(c)
     caps = sorted({r["captured_at"] for r in res["rows"]})
+    tout = _teammate_out(conn, day, (away, home), status, names, team_of, cards) \
+        if day is not None and run else []
     return {
         "game_id": gid, "home": identity(home), "away": identity(away),
         "label": f"{away} @ {home}", "tip": g.get("tipoff_utc"),
@@ -203,12 +270,14 @@ def _game_view(conn: sqlite3.Connection, res: dict, at: str, cache: dict) -> dic
             "model_version": run.get("model_version")},
         "market_at": caps[-1] if caps else None, "n_props": len(res["rows"]),
         "cards": cards, "listed": sorted(listed, key=lambda c: c["name"]),
+        "market": _market(conn, g, day, cache), "tout": tout,
+        "tout_n": sum(len(t["absent"]) for t in tout),
     }
 
 
 def build_page(conn: sqlite3.Connection | None, day: str, *, now: datetime,
                params: Mapping[str, str] | None = None, cache: dict | None = None) -> dict:
-    """View model for /players/<day>. `cache` (optional) holds the expensive per-day part."""
+    """View model for /tonight/<day>. `cache` (optional) holds the expensive per-day part."""
     params = dict(params or {})
     sort = params.get("sort") if params.get("sort") in SORTS else "dk"
     want = params.get("game") or ""
@@ -228,7 +297,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, *, now: datetime,
         tips = [g["game"].get("tipoff_utc") for g in res["games"] if g["game"].get("tipoff_utc")]
         if tips:                         # a past day: the reports as they stood at the last tip
             at = min(at, max(tips))
-        games = [_game_view(conn, g, at, pcache) for g in res["games"]]
+        games = [_game_view(conn, g, at, pcache, d) for g in res["games"]]
         cache["games"] = games
         cache["summary"] = res["summary"]
     if not games:
@@ -237,7 +306,7 @@ def build_page(conn: sqlite3.Connection | None, day: str, *, now: datetime,
     def url(**over) -> str:
         q = {"game": want, "sort": sort, **over}
         q = {k: v for k, v in q.items() if v and not (k == "sort" and v == "dk")}
-        return f"/players/{day}" + (f"?{urlencode(q)}" if q else "")
+        return f"/tonight/{day}" + (f"?{urlencode(q)}" if q else "")
     filters = [{"label": "All games", "url": url(game=""), "active": not want}]
     filters += [{"label": g["label"], "sub": fmt.tipoff(g["tip"]), "url": url(game=g["game_id"]),
                  "active": want == g["game_id"]} for g in games]
@@ -253,27 +322,36 @@ def build_page(conn: sqlite3.Connection | None, day: str, *, now: datetime,
             "has_splits": any(c["splits"] for g in shown for c in g["cards"]),
             "has_late": any(c.get("ln") for g in shown for c in g["cards"]),
             "ln_window": int(LN.LATE_NEWS_WINDOW.total_seconds() // 60),
-            "big_k": f"{XF.BIG_K:g}", "split_min_n": SCN.MIN_N}
+            "big_k": f"{XF.BIG_K:g}", "split_min_n": SCN.MIN_N, "small_n": TN.SMALL_N,
+            "has_tout": any(g.get("tout") for g in shown),
+            "has_market": any(g.get("market") for g in shown)}
 
 
 # ===================================================================== routes
 
 def register(app, *, store, render: Callable, not_found: Callable, today: Callable[[], date],
              health_banner: Callable | None = None) -> None:
-    """Add /players routes. Tests can set ``app.state.players_now`` to a callable returning an
-    aware datetime."""
+    """Add /tonight routes (and the /players/<day> redirect). Tests can set
+    ``app.state.players_now`` to a callable returning an aware datetime."""
     def now() -> datetime:
         fn = getattr(app.state, "players_now", None)
         return fn() if fn else datetime.now(timezone.utc)
 
-    @app.get("/players")
-    def players_today():
-        return RedirectResponse(f"/players/{today().isoformat()}", status_code=307)
+    @app.get("/tonight")
+    def tonight_today():
+        return RedirectResponse(f"/tonight/{today().isoformat()}", status_code=307)
 
-    @app.get("/players/{day}", response_class=HTMLResponse)
-    def players_day(day: str, request: Request):
+    @app.get("/players/{day}")
+    def players_moved(day: str, request: Request):
         if fmt.parse_day(day) is None or len(day) != 10:
-            return not_found("Not a date", "Player pages look like /players/2026-10-20.")
+            return not_found("Page not found", "Tonight's player cards live at /tonight.")
+        q = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(f"/tonight/{day}{q}", status_code=301)
+
+    @app.get("/tonight/{day}", response_class=HTMLResponse)
+    def tonight_day(day: str, request: Request):
+        if fmt.parse_day(day) is None or len(day) != 10:
+            return not_found("Not a date", "Tonight pages look like /tonight/2026-10-20.")
         conn = store.health_conn()
         try:
             if conn is None:
@@ -286,5 +364,5 @@ def register(app, *, store, render: Callable, not_found: Callable, today: Callab
         finally:
             if conn is not None:
                 conn.close()
-        return render("players.html", v=vm, page="players",
+        return render("players.html", v=vm, page="tonight",
                       health_banner=health_banner() if health_banner else None)

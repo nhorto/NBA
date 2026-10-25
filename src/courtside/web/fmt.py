@@ -245,11 +245,52 @@ def last_name(name: str | None) -> str:
     return parts[-1] if parts else name
 
 
+def ordinal(x, empty: str = "") -> str:
+    """1 -> '1st', 2 -> '2nd', 13 -> '13th', 22 -> '22nd'."""
+    v = _num(x)
+    if v is None:
+        return empty
+    n = int(round(v))
+    suf = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suf}"
+
+
+RANK_BEST, RANK_MID, RANK_WORST = "#2a6fc4", "#3a3f4b", "#c44a4a"
+
+
+def _mix(a: str, b: str, t: float) -> str:
+    pa = [int(a[i:i + 2], 16) for i in (1, 3, 5)]
+    pb = [int(b[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(pa, pb))
+
+
+def rank_color(rank, n=30) -> str:
+    """League-rank chip colour, diverging: 1st blue -> middle gray -> last red. Rank 1 is
+    always the best (callers rank "lower is better" stats ascending). Pair it with the rank
+    text: colour is never the only signal."""
+    r, nn = _num(rank), _num(n)
+    if r is None:
+        return RANK_MID
+    nn = max(nn or 30, 2)
+    t = min(max((r - 1) / (nn - 1), 0.0), 1.0)
+    return _mix(RANK_BEST, RANK_MID, t * 2) if t < .5 else _mix(RANK_MID, RANK_WORST, (t - .5) * 2)
+
+
+def dollars(x, empty: str = EM) -> str:
+    """11400 -> '$11,400'."""
+    v = _num(x)
+    if v is None:
+        return empty
+    s = f"${abs(v):,.0f}"
+    return MINUS + s if v < 0 else s
+
+
 FILTERS = {
     "num": num, "signed": signed, "signed_int": signed_int, "pct": pct,
     "pct_points": pct_points, "ts": ts, "prob3": prob3, "ml": ml, "record": record, "run": run,
     "int": int_, "minutes": minutes, "long_date": long_date, "short_date": short_date,
     "medium_date": medium_date, "weekday": weekday, "tipoff": tipoff, "stamp": stamp,
     "injury_reason": injury_reason, "last_name": last_name, "possessive": possessive,
-    "seconds_clock": seconds_clock,
+    "seconds_clock": seconds_clock, "ordinal": ordinal, "rank_color": rank_color,
+    "dollars": dollars,
 }

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# Teams: league table / conference standings / divisions (web/stats_teams.py, queries
+   stats/teams.py). ?view=league|conf|div #}
+{% block title %}Teams &middot; {{ season }} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-teams.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page tm-page{% endblock %}
+{% macro standings_table(rows, tq, show_conf_line=False) -%}
+<table class="tm-stand">
+  <thead><tr><th>#</th><th class="l">Team</th><th>W</th><th>L</th><th>PCT</th><th>GB</th><th>Home</th><th>Road</th><th>L10</th><th>Strk</th></tr></thead>
+  <tbody>
+  {% for r in rows %}{% set t = team(r.team) %}
+    <tr{% if show_conf_line and r.pos == 6 %} class="tm-cut"{% elif show_conf_line and r.pos == 10 %} class="tm-cut2"{% endif %}>
+      <td class="dim">{{ r.pos }}</td>
+      <td class="name"><span class="tm-sw" style="background:{{ t.primary }};box-shadow:inset 0 -3px 0 {{ t.secondary }}"></span><a href="/team/{{ r.team }}{{ tq }}">{{ t.nickname }}</a> <span class="note">{{ r.team }}</span></td>
+      <td>{{ r.w }}</td><td>{{ r.l }}</td>
+      <td>{{ ("%.3f"|format(r.win_pct)).lstrip("0") if r.win_pct is not none else DASH }}</td>
+      <td class="{{ 'dim' if r.gb == 0 else '' }}">{{ DASH if r.gb == 0 else ("%g"|format(r.gb) if r.gb != r.gb|int else r.gb|int) }}</td>
+      <td class="dim">{{ r.home|record }}</td><td class="dim">{{ r.road|record }}</td>
+      <td class="dim">{{ r.l10|record }}</td>
+      <td class="{{ 'tm-w' if (r.streak or '').startswith('W') else 'tm-l' }}">{{ r.streak or DASH }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{%- endmacro %}
+{% block content %}
+{%- set tq = ("?season=" ~ season ~ ("&type=playoffs" if type_value == "playoffs" else "")) if (season != seasons[0] or type_value == "playoffs") else "" -%}
+<div class="pro">
+  <div class="filters">
+    <h1 class="page-title">Teams</h1>
+    {{ s.season_seg(season, base="/teams", extra=extra, options=seasons) }}
+    {{ s.seg("type", type_opts, type_value, label="Season type") }}
+    {{ s.seg("view", view_opts, view, label="View") }}
+    {% if view == "league" and rows %}{{ s.seg("tmpct", [("rk", "Ranks"), ("pct", "Percentiles")], "rk", remember=True, label="Ranks or percentiles") }}{% endif %}
+    {% if rows and max_gp < 10 %}<span class="note">{{ season }} is {{ max_gp }} game{{ '' if max_gp == 1 else 's' }} old: ranks move a lot night to night.</span>{% endif %}
+  </div>
+  {% if view == "league" %}
+  {% call s.card("League table", sub=season ~ " · " ~ type_label ~ " · click a column to sort · chip = league rank (blue best, red worst)", flush=True) %}
+  {% if rows %}
+  <table data-sortable data-renumber class="tm-league">
+    <thead><tr>
+      <th data-nosort>#</th>
+      <th class="l">Team</th>
+      <th>GP</th>
+      <th data-tip="Wins (sorts by win %)">W&ndash;L</th>
+      <th data-nosort>L10</th>
+      <th data-nosort>Home</th>
+      <th data-nosort>Road</th>
+      {% for key, h, kind, nd, tip in cols %}<th data-tip="{{ tip }}"{% if key == 'net' %} data-sorted="desc"{% endif %}{% if key in ('opp_pts', 'drtg', 'tov') %} data-sort-first="asc"{% endif %}>{{ h }}</th>{% endfor %}
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}{% set t = team(r.team) %}
+      <tr>
+        <td class="rownum dim">{{ loop.index }}</td>
+        <td class="name"><span class="tm-sw" style="background:{{ t.primary }};box-shadow:inset 0 -3px 0 {{ t.secondary }}"></span><a href="/team/{{ r.team }}{{ tq }}">{{ t.nickname }}</a> <span class="note">{{ r.team }}</span></td>
+        {{ s.ntd(r.gp, kind="int") }}
+        <td data-v="{{ r.win_pct }}">{{ r.w }}&ndash;{{ r.l }}</td>
+        <td class="dim">{{ r.l10|record }}</td>
+        <td class="dim">{{ r.home|record }}</td>
+        <td class="dim">{{ r.road|record }}</td>
+        {%- set tp = pcts.get(r.team) or {} %}
+        {% for key, h, kind, nd, tip in cols %}{{ s.ntd_pct(r[key], nd=nd, kind=kind, rank=r.rk[key], n=n, pct=tp.get(key), group="tmpct", of=(n ~ " teams")) }}{% endfor %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  {{ s.empty("No " ~ type_label|lower ~ " games in " ~ season ~ " yet.", " The table fills in after the first final of the season (postgame job, 3 AM).") }}
+  {% endif %}
+  {% endcall %}
+  {% elif not rows %}
+  {% call s.card("Standings", sub=season ~ " · " ~ type_label) %}{{ s.empty("No " ~ type_label|lower ~ " games in " ~ season ~ " yet.") }}{% endcall %}
+  {% elif view == "conf" %}
+  <div class="grid g-12">
+    {% for conf, crows in standings.conferences.items() %}
+    {% call s.card(conf ~ "ern Conference", sub=season ~ " · " ~ type_label, cls="span-6", flush=True) %}{{ standings_table(crows, tq, show_conf_line=(type_value == "regular")) }}{% endcall %}
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="grid g-12">
+    {% for dname, d in standings.divisions.items() %}
+    {% call s.card(dname, sub=d.conference, cls="span-4", flush=True) %}{{ standings_table(d.rows, tq) }}{% endcall %}
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if view != "league" and rows %}
+  <p class="note tm-foot">Ordered by win % (then wins); the NBA's tiebreakers are not applied, so tied teams may be listed in a different order than nba.com. GB = games behind the group leader.{% if view == "conf" and type_value == "regular" %} Lines mark the top 6 (playoffs) and 7&ndash;10 (play-in).{% endif %} Conferences and divisions are today's alignment.</p>
+  {% else %}
+  <p class="note tm-foot">Ratings are possession-weighted season totals (100 &times; points &divide; possessions), not averages of game ratings. Rank 1 is the best: lowest for DRtg, TOV% and opponent points, fastest for pace. Percentile = share of the league a team beats (100 = best, same direction as the rank).</p>
+  {% endif %}
+</div>
+{% endblock %}

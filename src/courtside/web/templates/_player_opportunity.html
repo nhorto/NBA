@@ -1,0 +1,143 @@
+{#- "Chances" panel on the player page: opportunity vs conversion (stats/opportunity.py,
+    view model web/stats_chances.py, styles static/pro-chances.css). Included by
+    stats_player.html with context: pv.opportunity, season, type_label, line. -#}
+{% import "_stats.html" as s %}
+{% set C = pv.opportunity if pv is defined and pv else None %}
+{% macro pc(x, nd=1) %}{{ x|pct(nd) if x is not none else DASH }}{% endmacro %}
+{% macro pg(x, g, nd=1) %}{{ (x / g)|num(nd) if x is not none and g else DASH }}{% endmacro %}
+{% macro gh(block, key) -%}
+{%- for w, lab in C.windows %}<th>{{ lab }}<span class="ch-g">{{ block[w][key] or 0 }} g</span></th>{% endfor -%}
+{%- endmacro %}
+{% macro cbar(b) -%}
+{%- if b %}
+<div class="ch-bar">
+  <div class="ch-bar-h">{{ b.label }}</div>
+  <div class="ch-track" role="img" aria-label="{{ b.aria }}">
+    {%- if b.zero is not none %}<i class="ch-zero" style="left:{{ b.zero }}%"></i>{% endif -%}
+    {%- for m in b.marks %}<i class="ch-m ch-{{ m.key }}" style="left:{{ m.x }}%" data-tip="{{ m.label }}: {{ m.text }}"></i>{% endfor -%}
+  </div>
+  <div class="ch-axis" aria-hidden="true"><span>{{ b.lo }}</span><span>{{ b.hi }}</span></div>
+  <div class="ch-vals">{% for m in b.marks %}<span><i class="ch-k ch-{{ m.key }}" aria-hidden="true"></i>{{ m.label }} <b>{{ m.text }}</b></span>{% endfor %}</div>
+  {%- if b.note %}<div class="note">{{ b.note }}</div>{% endif %}
+</div>
+{%- endif %}
+{%- endmacro %}
+<link rel="stylesheet" href="/static/pro-chances.css?v={{ asset_v }}">
+{% call s.card("Chances", sub=season ~ " · " ~ type_label|lower ~ " · opportunity vs conversion", cls="span-12 ch-card", id="chances") %}
+  {% if not C or not C.tracking %}
+    {% if not line %}
+    {{ s.empty("No " ~ type_label|lower ~ " games in " ~ season ~ ".") }}
+    {% else %}
+    {{ s.empty("Tracking not collected yet.", "Tracking stats for this season are collected nightly; first games appear after the next update.") }}
+    {% endif %}
+  {% endif %}
+  {% if C and (C.tracking or C.has.shots) %}
+  {% set R, A, S, D = C.raw.rebounds, C.raw.assists, C.raw.shooting, C.raw.defense %}
+  <p class="ch-intro">Chances = how often he was in position for a stat; conversion = how many of those he turned into it. Recent conversion far from his normal rate tends to drift back toward it.</p>
+
+  {% if C.signals %}
+  <ul class="ch-signals" aria-label="Signal">
+    {% for g in C.signals %}
+    <li class="ch-sig ch-{{ g.dir }}{% if g.strong %} strong{% endif %}"{% if g.tip %} data-tip="{{ g.tip }}"{% endif %}>
+      <span class="ch-tag">{% if g.dir == "hot" %}&#9650; Running hot{% elif g.dir == "cold" %}&#9660; Running cold{% else %}&#9679; {{ g.tag }}{% endif %}</span>
+      <span class="ch-sig-l">{{ g.label }}</span>
+      <span class="ch-sig-t">{{ g.text }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <div class="ch-legend" aria-hidden="true">
+    <span><i class="ch-k ch-l5"></i>Last 5</span><span><i class="ch-k ch-l10"></i>Last 10</span><span><i class="ch-k ch-season"></i>Season</span><span><i class="ch-k ch-own"></i>His season</span><span><i class="ch-k ch-league"></i>{{ C.league_lab }}</span>
+  </div>
+
+  <div class="ch-grid">
+    {# ------------------------------------------------------------ rebounds #}
+    {% if C.has.tracking %}
+    <div class="ch-sub">
+      <div class="ch-h">Rebounds <span class="note">chance = within ~3.5 ft of a rebound</span></div>
+      <div class="scroll"><table class="ch-t">
+        <thead><tr><th class="l">Per game</th>{{ gh(R, "games") }}<th class="ch-b" data-tip="His whole {{ season }} rate, pulled slightly toward the league rate for his position when his sample is thin">His season</th><th class="ch-b">{{ C.league_lab }}</th></tr></thead>
+        <tbody>
+          <tr><td class="l">Rebounds</td>{% for w, _ in C.windows %}<td>{{ pg(R[w].reb, R[w].games) }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr><td class="l">Chances <span class="note">off / def</span></td>{% for w, _ in C.windows %}<td>{{ R[w].chances_pg|num(1) }}<span class="ch-sm">{{ pg(R[w].off.opps, R[w].games) }} / {{ pg(R[w].def.opps, R[w].games) }}</span></td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr class="ch-key"><td class="l">Conversion</td>{% for w, _ in C.windows %}<td>{{ pc(R[w].conv) }}</td>{% endfor %}<td class="ch-b">{{ pc(R.baseline.own) }}</td><td class="ch-b">{{ pc(R.baseline.league) }}</td></tr>
+          <tr><td class="l">Off. / def. conversion</td>{% for w, _ in C.windows %}<td>{{ pc(R[w].off.conv, 0) }} / {{ pc(R[w].def.conv, 0) }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr><td class="l" data-tip="Rebounds minus chances × his season conversion, per game">vs his season rate</td>{% for w, _ in C.windows %}{% set d = R[w].reb_over_expected %}<td class="{{ 'up' if d and d > 0 else ('dn' if d and d < 0 else 'dim') }}">{{ (d / R[w].games)|signed(1) if d is not none and R[w].games else DASH }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+        </tbody>
+      </table></div>
+      {{ cbar(C.bars.reb) }}
+    </div>
+    {% endif %}
+
+    {# ------------------------------------------------------------ assists #}
+    {% if C.has.tracking or C.pot_any %}
+    <div class="ch-sub">
+      <div class="ch-h">Assists <span class="note">potential assist = a pass into a shot that would be an assist if made</span></div>
+      <div class="scroll"><table class="ch-t">
+        <thead><tr><th class="l">Per game</th>{{ gh(A, "games") }}<th class="ch-b">His season</th><th class="ch-b">{{ C.league_lab }}</th></tr></thead>
+        <tbody>
+          <tr><td class="l">Assists</td>{% for w, _ in C.windows %}<td>{{ pg(A[w].ast, A[w].games) }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          {% if C.pot_any or C.pot_check %}
+          <tr><td class="l">Potential assists</td>{% for w, _ in C.windows %}<td>{% if C.pot_ok[w] %}{{ A[w].pot_ast_pg|num(1) }}{% elif A[w].pot_ast_games %}<span class="ch-check" data-tip="Left out: implausible potential-assist count">data check</span>{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          {% endif %}
+          <tr><td class="l">Passes</td>{% for w, _ in C.windows %}<td>{{ A[w].passes_pg|num(1) }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr><td class="l">Touches</td>{% for w, _ in C.windows %}<td>{{ A[w].touches_pg|num(1) }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          {% if C.pot_any or C.pot_check %}
+          <tr class="ch-key"><td class="l">AST per potential AST</td>{% for w, _ in C.windows %}<td>{{ pc(A[w].ast_per_pot_ast) if C.pot_ok[w] else DASH }}</td>{% endfor %}<td class="ch-b">{{ pc(A.baseline.own) if C.pot_any else DASH }}</td><td class="ch-b">{{ pc(A.baseline.league) if C.pot_any else DASH }}</td></tr>
+          {% endif %}
+          <tr class="ch-key"><td class="l">AST per 100 passes</td>{% for w, _ in C.windows %}<td>{{ (A[w].ast_per_pass * 100)|num(1) if A[w].ast_per_pass is not none else DASH }}</td>{% endfor %}<td class="ch-b">{{ (A.baseline.own_per_pass * 100)|num(1) if A.baseline.own_per_pass is not none else DASH }}</td><td class="ch-b">{{ (A.baseline.league_per_pass * 100)|num(1) if A.baseline.league_per_pass is not none else DASH }}</td></tr>
+        </tbody>
+      </table></div>
+      {% if not C.pot_any and not C.pot_check %}<div class="note ch-foot">Potential assists for {{ season }} are not collected yet; assists per 100 passes stands in.</div>{% endif %}
+      {% if C.pot_check %}<div class="note ch-foot ch-dq" role="note"><span class="ch-check">data check</span> {% if C.pot_excluded %}{{ C.pot_excluded }} game{{ "" if C.pot_excluded == 1 else "s" }} with an implausible potential-assist count (over {{ C.pot_max }}, or over {{ C.pot_ratio|int }}× his assists) {{ "is" if C.pot_excluded == 1 else "are" }} left out{% else %}Potential assists look implausible for some windows and are hidden{% endif %}.</div>{% endif %}
+      {{ cbar(C.bars.pot) }}
+      {{ cbar(C.bars.pass) }}
+    </div>
+    {% endif %}
+
+    {# ------------------------------------------------------------ shooting #}
+    {% if C.has.shots %}
+    {% set K = C.contested %}
+    <div class="ch-sub">
+      <div class="ch-h">Shooting <span class="note">expected FG% from his shot locations</span></div>
+      <div class="scroll"><table class="ch-t">
+        <thead><tr><th class="l">Field goals</th>{{ gh(S, "games") }}<th class="ch-b">His season</th><th class="ch-b">League</th></tr></thead>
+        <tbody>
+          <tr><td class="l">FG%</td>{% for w, _ in C.windows %}<td>{{ pc(S[w].fg_pct) }}<span class="ch-sm">{{ S[w].fgm }}-{{ S[w].fga }}</span></td>{% endfor %}<td class="dim"></td><td class="ch-b">{{ pc(S.baseline.league_fg_pct) }}</td></tr>
+          <tr><td class="l">Expected FG%</td>{% for w, _ in C.windows %}<td>{{ pc(S[w].xfg_pct) }}</td>{% endfor %}<td class="dim"></td><td class="ch-b">{{ pc(S.baseline.league_fg_pct) }}</td></tr>
+          <tr class="ch-key"><td class="l" data-tip="FG% minus expected FG%, in percentage points">Shot-making</td>{% for w, _ in C.windows %}{% set d = S[w].making_fg_pct %}<td class="{{ 'up' if d and d > 0 else ('dn' if d and d < 0 else '') }}">{{ ((d * 100)|signed(1) ~ " pts") if d is not none else DASH }}</td>{% endfor %}<td class="ch-b">{{ ((S.baseline.own * 100)|signed(1) ~ " pts") if S.baseline.own is not none else DASH }}</td><td class="ch-b">0.0 pts</td></tr>
+          <tr><td class="l">FG points vs expected <span class="note">per game</span></td>{% for w, _ in C.windows %}<td>{{ pg(S[w].pts, S[w].games) }}<span class="ch-sm">exp {{ pg(S[w].xpts, S[w].games) }}</span></td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr><td class="l" data-tip="FG points minus expected FG points, per game">Shot-making per game</td>{% for w, _ in C.windows %}{% set d = S[w].making_per_game %}<td class="{{ 'up' if d and d > 0 else ('dn' if d and d < 0 else '') }}">{{ d|signed(1) if d is not none else DASH }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          {% if K and K.season %}
+          <tr><td class="l" data-tip="Share of his shots with a defender within 4 ft (NBA tracking)">Contested / open</td>{% for w, _ in C.windows %}{% set k = K[w] %}<td>{% if k %}{{ pc(k.cont_share, 0) }} / {{ pc(1 - k.cont_share, 0) if k.cont_share is not none else DASH }}{% else %}{{ DASH }}{% endif %}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr><td class="l">FG% contested / open</td>{% for w, _ in C.windows %}{% set k = K[w] %}<td>{% if k %}{{ pc(k.cont_fg, 0) }} / {{ pc(k.open_fg, 0) }}{% else %}{{ DASH }}{% endif %}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          {% endif %}
+        </tbody>
+      </table></div>
+      {{ cbar(C.bars.fg) }}
+    </div>
+    {% endif %}
+
+    {# ------------------------------------------------------------ defense #}
+    {% if C.has.hustle or C.bars.rim %}
+    <div class="ch-sub">
+      <div class="ch-h">Defense <span class="note">hustle and rim protection</span></div>
+      <div class="scroll"><table class="ch-t">
+        <thead><tr><th class="l">Per game</th>{{ gh(D, "hustle_games") }}<th class="ch-b">His season</th><th class="ch-b">{{ C.league_lab }}</th></tr></thead>
+        <tbody>
+          <tr><td class="l">Deflections</td>{% for w, _ in C.windows %}<td>{{ D[w].deflections_pg|num(1) }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr><td class="l">Contested shots <span class="note">2pt / 3pt</span></td>{% for w, _ in C.windows %}<td>{{ D[w].contested_shots_pg|num(1) }}<span class="ch-sm">{{ pg(D[w].contested_2pt, D[w].hustle_games) }} / {{ pg(D[w].contested_3pt, D[w].hustle_games) }}</span></td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr><td class="l">Steals per deflection</td>{% for w, _ in C.windows %}<td>{{ pc(D[w].stl_per_deflection, 0) }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr><td class="l">Rim shots defended</td>{% for w, _ in C.windows %}<td>{{ pg(D[w].rim_fga_defended, D[w].rim_games) }}</td>{% endfor %}<td class="dim"></td><td class="dim"></td></tr>
+          <tr class="ch-key"><td class="l" data-tip="Opponents' FG% at the rim with him defending (lower is better)">Rim FG% allowed</td>{% for w, _ in C.windows %}<td>{{ pc(D[w].rim_fg_allowed) }}</td>{% endfor %}<td class="ch-b">{{ pc(D.baseline.own) }}</td><td class="ch-b">{{ pc(D.baseline.league) }}</td></tr>
+        </tbody>
+      </table></div>
+      {{ cbar(C.bars.rim) }}
+    </div>
+    {% endif %}
+  </div>
+  {% if not C.tracking %}<div class="note ch-foot">Shooting above comes from play-by-play; the tracking parts of this panel appear once {{ season }} tracking is collected.</div>{% endif %}
+  <div class="note ch-foot">Windows: his last 5, last 10 and all {{ season }} {{ type_label|lower }} games; &ldquo;g&rdquo; = games with that feed. &ldquo;His season&rdquo; is his whole {{ season }} rate, pulled slightly toward the league rate for his position when his sample is thin; the league column is {{ season }} for {{ C.league_lab[7:] if C.league_lab != "League" else "every player" }}. Signals compare his last 10 games with his earlier games of the same season type. Information only.</div>
+  {% endif %}
+{% endcall %}

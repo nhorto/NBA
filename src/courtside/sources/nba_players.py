@@ -17,6 +17,10 @@ Per-game endpoints (one call per game id, ~20-200 KB):
   boxscoreplayertrackv3  touches, distance, contested/uncontested FG, defended at rim
   boxscorehustlev2       contests, deflections, charges, screen assists, box-outs
 
+Per-day endpoint (one call per day x PtMeasureType x season type):
+  leaguedashptstats      Passing (potential assists), Drives, Possessions (paint/elbow/post
+                         touches), DateFrom = DateTo = the day: one row per player-game
+
 Per-game matchups orientation (verified against the box score): the top-level player in the
 payload is the OFFENSIVE player and each entry of his ``matchups`` is a DEFENDER who guarded him;
 the statistics are what the offensive player did against that defender (playerPoints = the
@@ -455,6 +459,65 @@ GAME_PARSERS = {
     "boxscoreplayertrackv3": ("player_tracking", parse_game_tracking),
     "boxscorehustlev2": ("player_hustle", parse_game_hustle),
 }
+
+
+# ------------------------------------------------- per-day tracking dashboards (player_tracking_ext)
+#
+# leaguedashptstats (the nba.com "Tracking" pages) with DateFrom = DateTo = one day: a player plays
+# at most one game a day, so each row is that player's game. It carries what the per-game box
+# score feeds do not: POTENTIAL_AST (boxscoreplayertrackv3 has no potential assists and
+# boxscorematchupsv3 leaves matchupPotentialAssists at 0), drives, and elbow / post / paint
+# touches. One request per day x measure x season type; verified live 2026-10-25 (2025-26 days
+# return ~240 rows; a day nba.com has not processed yet returns an empty rowSet).
+PT_DAY_KIND = "leaguedashptstats"
+PT_MEASURES = {
+    "Passing": {
+        "PASSES_MADE": "passes_made", "PASSES_RECEIVED": "passes_received", "AST": "ast",
+        "FT_AST": "ft_ast", "SECONDARY_AST": "secondary_ast", "POTENTIAL_AST": "pot_ast",
+        "AST_PTS_CREATED": "ast_pts_created", "AST_ADJ": "ast_adj"},
+    "Drives": {
+        "DRIVES": "drives", "DRIVE_FGM": "drive_fgm", "DRIVE_FGA": "drive_fga",
+        "DRIVE_FTM": "drive_ftm", "DRIVE_FTA": "drive_fta", "DRIVE_PTS": "drive_pts",
+        "DRIVE_PASSES": "drive_passes", "DRIVE_AST": "drive_ast", "DRIVE_TOV": "drive_tov",
+        "DRIVE_PF": "drive_pf"},
+    "Possessions": {
+        "TOUCHES": "touches", "FRONT_CT_TOUCHES": "front_ct_touches",
+        "TIME_OF_POSS": "time_of_poss", "AVG_SEC_PER_TOUCH": "avg_sec_per_touch",
+        "AVG_DRIB_PER_TOUCH": "avg_drib_per_touch", "ELBOW_TOUCHES": "elbow_touches",
+        "POST_TOUCHES": "post_touches", "PAINT_TOUCHES": "paint_touches"},
+}
+
+
+def fetch_pt_day(day: Any, season: str, season_type: str, measure: str) -> dict:
+    """One leaguedashptstats page for a single day (``day``: date or 'YYYY-MM-DD')."""
+    if measure not in PT_MEASURES:
+        raise ValueError(f"unknown PtMeasureType {measure!r}")
+    d = str(day)
+    mdy = f"{d[5:7]}/{d[8:10]}/{d[:4]}"
+    params = {"College": "", "Conference": "", "Country": "", "DateFrom": mdy, "DateTo": mdy,
+              "Division": "", "DraftPick": "", "DraftYear": "", "GameScope": "", "Height": "",
+              "LastNGames": "0", "LeagueID": "00", "Location": "", "Month": "0",
+              "OpponentTeamID": "0", "Outcome": "", "PORound": "0", "PerMode": "Totals",
+              "PlayerExperience": "", "PlayerOrTeam": "Player", "PlayerPosition": "",
+              "PtMeasureType": measure, "Season": season, "SeasonSegment": "",
+              "SeasonType": season_type, "StarterBench": "", "TeamID": "0",
+              "VsConference": "", "VsDivision": "", "Weight": ""}
+    return _get(PT_DAY_KIND, params, timeout=60.0)
+
+
+def parse_pt_day(payload: dict, measure: str) -> list[dict]:
+    """[{player_id, team, minutes, <measure columns>}] for players with a game (GP >= 1)."""
+    cols = PT_MEASURES[measure]
+    out = []
+    for r in result_rows(payload):
+        if not r.get("PLAYER_ID") or not r.get("GP"):
+            continue
+        row = {"player_id": int(r["PLAYER_ID"]),
+               "team": r.get("TEAM_ABBREVIATION") or _tricode(r.get("TEAM_ID")),
+               "minutes": r.get("MIN")}
+        row.update({dst: r.get(src) for src, dst in cols.items()})
+        out.append(row)
+    return out
 
 
 def game_has_data(payload: dict, kind: str) -> bool:

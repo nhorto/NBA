@@ -11,12 +11,12 @@
     <section class="card" aria-labelledby="inj-title">
       <h2 class="card-title" id="inj-title">Injury report</h2>
       {% for side, s in [("away", t.away), ("home", t.home)] %}
-      <h3 class="mini-head">{{ m.dot(s) }}{{ s.full_name }}</h3>
+      <h3 class="mini-head">{{ m.dot(s) }}{{ m.tlink(s, s.full_name) }}</h3>
       {% if t.injuries[side] %}
       <ul class="inj-list">
         {% for i in t.injuries[side] %}
         <li class="inj-row">
-          <div class="inj-main"><p><strong>{{ i.player }}</strong></p>{% if i.reason %}<p class="inj-reason">{{ i.reason|injury_reason }}</p>{% endif %}</div>
+          <div class="inj-main"><p><strong>{{ m.plink(i.player_id, i.player) }}</strong></p>{% if i.reason %}<p class="inj-reason">{{ i.reason|injury_reason }}</p>{% endif %}</div>
           <div class="inj-side">{{ m.status_pill(i.status) }}{% if i.mpg is not none %}<span class="inj-mpg tabnum">{{ i.mpg|num }} mpg</span>{% endif %}</div>
         </li>
         {% endfor %}

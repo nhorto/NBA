@@ -1,0 +1,193 @@
+{#- Pro stats dashboard macros (styles: static/pro.css, behaviour: static/stats.js).
+    Use inside a page that opted in:
+      {% extends "base.html" %}
+      {% import "_stats.html" as s %}
+      {% block body_class %}pro-page{% endblock %}
+      {% block content %}<div class="pro"> ... </div>{% endblock %}
+    Filters available everywhere (web/fmt.py): num(nd), signed(nd), pct(nd), ordinal,
+    rank_color(n), dollars, int, short_date, medium_date ... Rank 1 is always the best. -#}
+
+{#- League-rank chip: colour from rank/n (blue best -> gray -> red worst) AND the rank text. -#}
+{% macro rank_chip(rank, n=30, title=None) -%}
+{%- if rank is not none and rank is defined -%}
+<span class="rk" style="background:{{ rank|rank_color(n) }}" title="{{ title or ('Rank ' ~ rank ~ ' of ' ~ n) }}">{{ rank|ordinal }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{#- Stat tile: label, big value, optional rank chip and a small note under it.
+    `value` is printed as given (format it first: x|num(1), x|pct(1), ...). -#}
+{% macro tile(label, value, rank=None, n=30, sub=None, tip=None) -%}
+<div class="tile"{% if tip %} data-tip="{{ tip }}"{% endif %}>
+  <div class="lab">{{ label }}</div>
+  <div class="val"><span class="num-big">{{ value if value is not none and value != '' else DASH }}</span>{{ rank_chip(rank, n) }}</div>
+  {%- if sub %}<div class="note">{{ sub }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- Card panel (call block). `sub` (text or markup, e.g. a seg()) sits right-aligned in the
+    header. flush=True: no body padding, content scrolls sideways (tables); tall=True also caps
+    its height (sticky header). `cls` adds grid classes such as "span-8".
+      {% call s.card("Roster", sub="2026-27 · per game", cls="span-8", flush=True) %}<table ...>{% endcall %} -#}
+{% macro card(title, sub=None, cls="", flush=False, tall=False, id=None) -%}
+<section class="card{% if cls %} {{ cls }}{% endif %}"{% if id %} id="{{ id }}"{% endif %}>
+  <h3>{{ title }}{% if sub %} <span class="sub">{{ sub }}</span>{% endif %}</h3>
+  {%- if flush %}
+  <div class="scroll{% if tall %} tall{% endif %}">{{ caller() }}</div>
+  {%- else %}
+  <div class="body">{{ caller() }}</div>
+  {%- endif %}
+</section>
+{%- endmacro %}
+
+{#- Segmented control. options: [(value, label), ...] or plain strings (value == label), or
+    dicts {value, label, href}. With hrefs it renders links (server-side switch, no JS);
+    otherwise buttons that toggle [data-seg-panel=group][data-seg-value=value] panels
+    (stats.js). remember=True keeps the choice per device. -#}
+{% macro seg(group, options, active, remember=False, label=None) -%}
+<span class="seg" data-seg-group="{{ group }}"{% if remember %} data-seg-remember{% endif %} role="group"{% if label %} aria-label="{{ label }}"{% endif %}>
+{%- for o in options -%}
+  {%- if o is mapping -%}{% set v, l, h = o.value, o.label or o.value, o.href %}
+  {%- elif o is string -%}{% set v, l, h = o, o, None %}
+  {%- else -%}{% set v, l, h = o[0], o[1], None %}{%- endif -%}
+  {%- if h -%}
+  <a href="{{ h }}"{% if v == active %} class="on" aria-current="true"{% endif %}>{{ l }}</a>
+  {%- else -%}
+  <button type="button" data-seg-target="{{ v }}"{% if v == active %} class="on" aria-pressed="true"{% else %} aria-pressed="false"{% endif %}>{{ l }}</button>
+  {%- endif -%}
+{%- endfor -%}
+</span>
+{%- endmacro %}
+
+{#- A panel toggled by seg(group, ...): shown when `value` is active (several: "trad dk"). -#}
+{% macro panel(group, value, active) -%}
+<div data-seg-panel="{{ group }}" data-seg-value="{{ value }}"{% if active not in value.split() %} hidden{% endif %}>{{ caller() }}</div>
+{%- endmacro %}
+
+{#- Season switch as links: base ~ "?season=<s>" ~ extra (extra like "&type=playoffs").
+    Seasons default to the 3-season window (stats.seasons.seasons(today)). -#}
+{% macro season_seg(active, base="", extra="", options=None) -%}
+{%- set opts = [] -%}
+{%- for x in (options or stats_seasons()) -%}{% set _ = opts.append({"value": x, "label": x, "href": base ~ "?season=" ~ x ~ extra}) %}{%- endfor -%}
+{{ seg("season", opts, active, label="Season") }}
+{%- endmacro %}
+
+{#- The "not collected yet" state. Every card whose query returned no rows uses it. -#}
+{% macro empty(msg="Not collected yet.", detail=None) -%}
+<div class="empty-state" role="status"><b>{{ msg }}</b>{% if detail %}{{ detail }}{% endif %}</div>
+{%- endmacro %}
+
+{#- Page hero: badge, title, meta line; the call body (optional) fills the right side.
+    badge_team="DEN" paints the badge in team colours. -#}
+{% macro hero(title, meta=None, badge=None, badge_team=None) -%}
+<div class="hero">
+  {%- if badge_team %}{% set t = team(badge_team) %}
+  <div class="hero-badge team" style="--c1:{{ t.primary }};--c2:{{ t.secondary }};--bi:{{ t.ink }}" aria-hidden="true">{{ badge or t.code }}</div>
+  {%- elif badge %}
+  <div class="hero-badge" aria-hidden="true">{{ badge }}</div>
+  {%- endif %}
+  <div>
+    <h1>{{ title }}</h1>
+    {%- if meta %}<div class="meta">{{ meta }}</div>{% endif %}
+  </div>
+  {%- if caller is defined %}<div class="right">{{ caller() }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- Inline bar: value as a share of `max` (e.g. the column's leader). -#}
+{% macro hbar(value, max, text=None, neg=False) -%}
+{%- set w = (100.0 * value / max) if (value is not none and max) else 0 -%}
+<div class="hbar"><div class="track"><i{% if neg %} class="neg"{% endif %} style="width:{{ [[w, 0]|max, 100]|min|round(1) }}%"></i></div>{% if text is not none %}<b>{{ text }}</b>{% endif %}</div>
+{%- endmacro %}
+
+{#- Diverging bar around 0, clipped at +-scale (blue right = good, red left = bad). -#}
+{% macro diverge(value, scale=20, text=None) -%}
+{%- set w = ([((value or 0)|abs) / scale, 1]|min) * 50 -%}
+<span class="diverge" aria-hidden="true"><i class="{{ 'p' if (value or 0) >= 0 else 'n' }}" style="{{ 'left:50%' if (value or 0) >= 0 else 'left:' ~ (50 - w)|round(1) ~ '%' }};width:{{ w|round(1) }}%"></i></span>{% if text is not none %} {{ text }}{% endif %}
+{%- endmacro %}
+
+{#- Range bar: 80% band lo..hi, projection tick at mean, optional actual dot, on an axis
+    axis_lo..axis_hi (defaults: the band padded by 25%). -#}
+{% macro range_bar(lo, hi, mean, actual=None, axis_lo=None, axis_hi=None, tip=None) -%}
+{%- set pad = ((hi - lo) * 0.25) if (hi is not none and lo is not none and hi > lo) else 1 -%}
+{%- set a0 = axis_lo if axis_lo is not none else [lo - pad, 0]|max -%}
+{%- set a1 = axis_hi if axis_hi is not none else [hi, actual if actual is not none else hi]|max + pad -%}
+{%- set span = (a1 - a0) if a1 > a0 else 1 -%}
+{%- set xs = [] -%}
+{%- for v in (lo, hi, mean, actual if actual is not none else a0) -%}
+{%- set _ = xs.append(([[(v - a0) / span * 100, 0]|max, 100]|min)|round(1)) -%}
+{%- endfor -%}
+<div class="range"{% if tip %} data-tip="{{ tip }}"{% endif %}>
+  <div class="track"></div>
+  <div class="band" style="left:{{ xs[0] }}%;width:{{ (xs[1] - xs[0])|round(1) }}%"></div>
+  <div class="mean" style="left:{{ xs[2] }}%"></div>
+  {%- if actual is not none %}<div class="act" style="left:{{ xs[3] }}%"></div>{% endif %}
+  <div class="lbl" style="left:{{ xs[0] }}%">{{ lo|num(0) }}</div><div class="lbl" style="left:{{ xs[1] }}%">{{ hi|num(0) }}</div>
+</div>
+{%- endmacro %}
+
+{#- Legend: items = [(css background, label), ...]; prefix "dot:" on the colour draws a circle. -#}
+{% macro legend(items) -%}
+<div class="legend">{% for c, l in items %}<span><i{% if c.startswith('dot:') %} class="dot" style="background:{{ c[4:] }}"{% else %} style="background:{{ c }}"{% endif %}></i>{{ l }}</span>{% endfor %}</div>
+{%- endmacro %}
+
+{#- Links. -#}
+{% macro player_link(player_id, name) -%}
+<a class="link" href="/player/{{ player_id }}">{{ name }}</a>
+{%- endmacro %}
+{% macro team_link(code, full=False) -%}
+{%- set t = team(code) -%}
+<a class="link" href="/team/{{ t.code }}" title="{{ t.name }}">{{ t.name if full else t.code }}</a>
+{%- endmacro %}
+
+{#- Sortable numeric cells: data-v carries the raw number, the text is formatted.
+      {{ s.ntd(r.pts) }}  {{ s.ntd(r.ts, kind="pct") }}  {{ s.ntd(r.net, kind="signed") }} -#}
+{% macro ntd(value, nd=1, kind="num", cls="", rank=None, n=30) -%}
+<td{% if cls %} class="{{ cls }}"{% endif %} data-v="{{ '' if value is none else value }}">
+{%- if kind == "pct" %}{{ value|pct(nd) }}{% elif kind == "signed" %}{{ value|signed(nd) }}{% elif kind == "int" %}{{ value|int }}{% elif kind == "dollars" %}{{ value|dollars }}{% else %}{{ value|num(nd) }}{% endif %}
+{%- if rank is not none %}{{ rank_chip(rank, n) }}{% endif %}</td>
+{%- endmacro %}
+
+{#- ================================================================ percentiles (appended)
+    League percentile 0-100 next to the rank chips (stats/percentiles.py: same qualified pool
+    and direction as the ranks; 100 = best). Single-hue sequential blue, dim low -> bright high
+    (pro.css "percentile bars"); the number is always printed, so colour is never the signal.
+      {{ s.pct_bar(92) }}  {{ s.pct_bar(p.pct.net, label="pct", of="30 teams") }}
+    `cls`: pctb-tile (under a tile value), pctb-stack (second line in a table cell),
+    pctb-cell (inline after a value). -#}
+{% macro pct_bar(pct, label=None, of=None, cls="") -%}
+{%- if pct is defined and pct is not none -%}
+{%- set p = [[pct, 0]|max, 100]|min -%}
+{%- set pi = p|round|int -%}{#- fmt's int filter: a formatted string -#}
+{%- set q = 4 if p >= 80 else (3 if p >= 60 else (2 if p >= 40 else (1 if p >= 20 else 0))) -%}
+<span class="pctb{% if cls %} {{ cls }}{% endif %}" title="{{ pi|ordinal }} percentile{% if of %} of {{ of }}{% endif %}{% if label %} ({{ label }}){% endif %}">
+{%- if label %}<span class="pctb-l">{{ label }}</span>{% endif -%}
+<span class="pctb-t" aria-hidden="true"><i class="pq{{ q }}" style="width:{{ [p, 3]|max|round(1) }}%"></i></span><b>{{ pi }}</b></span>
+{%- endif -%}
+{%- endmacro %}
+
+{#- A stat tile (as tile()) with a small percentile bar under the value. -#}
+{% macro tile_pct(label, value, rank=None, n=30, pct=None, sub=None, tip=None, of=None) -%}
+<div class="tile"{% if tip %} data-tip="{{ tip }}"{% endif %}>
+  <div class="lab">{{ label }}</div>
+  <div class="val"><span class="num-big">{{ value if value is not none and value != '' else DASH }}</span>{{ rank_chip(rank, n) }}</div>
+  {%- if pct is defined and pct is not none %}{{ pct_bar(pct, of=of, cls="pctb-tile") }}{% endif %}
+  {%- if sub %}<div class="note">{{ sub }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- Sortable numeric cell (as ntd()) with rank chip and percentile.
+    group=None: the percentile sits on a second line under value + chip.
+    group="x": a "Ranks / Percentiles" switch, seg("x", [("rk", "Ranks"), ("pct", "Percentiles")])
+    shows either the chip (rk) or the bar (pct); `active` is the server-side default. -#}
+{% macro ntd_pct(value, nd=1, kind="num", cls="", rank=None, n=30, pct=None, group=None, active="rk", of=None) -%}
+<td{% if cls %} class="{{ cls }}"{% endif %} data-v="{{ '' if value is none else value }}">
+{%- if kind == "pct" %}{{ value|pct(nd) }}{% elif kind == "signed" %}{{ value|signed(nd) }}{% elif kind == "int" %}{{ value|int }}{% else %}{{ value|num(nd) }}{% endif %}
+{%- if group -%}
+{%- if rank is not none %}<span data-seg-panel="{{ group }}" data-seg-value="rk"{% if active != 'rk' %} hidden{% endif %}>{{ rank_chip(rank, n) }}</span>{% endif -%}
+{%- if pct is defined and pct is not none %}<span data-seg-panel="{{ group }}" data-seg-value="pct"{% if active != 'pct' %} hidden{% endif %}>{{ pct_bar(pct, of=of, cls="pctb-cell") }}</span>{% endif -%}
+{%- else -%}
+{%- if rank is not none %}{{ rank_chip(rank, n) }}{% endif -%}
+{%- if pct is defined and pct is not none %}{{ pct_bar(pct, of=of, cls="pctb-stack") }}{% endif -%}
+{%- endif -%}
+</td>
+{%- endmacro %}

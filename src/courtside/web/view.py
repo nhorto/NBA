@@ -206,8 +206,8 @@ def turning_view(facts: dict | None) -> dict | None:
 def hero_view(c: dict | None) -> dict | None:
     if not isinstance(c, dict) or not c.get("name"):
         return None
-    return {"name": c["name"], "team": identity(c.get("team")), "line": c.get("line") or "",
-            "short_line": short_line(c.get("line")), "bench": bool(c.get("bench")),
+    return {"name": c["name"], "player_id": c.get("id"), "team": identity(c.get("team")),
+            "line": c.get("line") or "", "short_line": short_line(c.get("line")), "bench": bool(c.get("bench")),
             "winner": bool(c.get("winner")), "minutes": c.get("minutes"),
             "plus_minus": c.get("plus_minus"), "on_off": c.get("on_off"),
             "ts_pct": c.get("ts_pct"), "stocks": c.get("stocks"), "score": c.get("score"),
@@ -322,7 +322,7 @@ def notable_view(facts: dict | None) -> list[dict]:
         if not isinstance(n, dict) or not n.get("name"):
             continue
         flags = [flag_label(f) for f in (n.get("flags") or [])]
-        out.append({"name": n["name"], "team": identity(n.get("team")),
+        out.append({"name": n["name"], "player_id": n.get("id"), "team": identity(n.get("team")),
                     "line": n.get("line") or "",
                     "flags": [{"label": lab, "neg": neg} for lab, neg in flags]})
     return out
@@ -867,8 +867,8 @@ def player_trend_view(p: dict, hot: bool) -> dict:
     vals = [v for v in (p.get("impact_baseline"), p.get("impact_recent")) if v is not None]
     hi = max(30, *(v + 2 for v in vals)) if vals else 30
     lo = min(0, *(v - 2 for v in vals)) if vals else 0
-    return {"player": p.get("player") or "", "team": identity(p.get("team")),
-            "window": p.get("window") or "", "z": p.get("z"), "hot": hot,
+    return {"player": p.get("player") or "", "player_id": p.get("player_id"),
+            "team": identity(p.get("team")), "window": p.get("window") or "", "z": p.get("z"), "hot": hot,
             "impact_recent": p.get("impact_recent"), "impact_baseline": p.get("impact_baseline"),
             "recent": rec, "season": sea,
             "d_pts": delta("pts"), "d_ts": delta("ts_pct", 100), "d_min": delta("min"),
@@ -891,8 +891,8 @@ def role_view(r: dict) -> dict:
     kinds = [k for k in r.get("kinds") or [] if isinstance(k, str)]
     details = [re.sub(r"\s*\((?:proxy|likely)[^)]*\)", "", d).split(":")[0].strip()
                for d in r.get("details") or [] if isinstance(d, str)]
-    return {"player": r.get("player") or "", "team": identity(r.get("team")),
-            "kinds": [{"label": ROLE_LABELS.get(k, k.replace("_", " ").capitalize()),
+    return {"player": r.get("player") or "", "player_id": r.get("player_id"),
+            "team": identity(r.get("team")), "kinds": [{"label": ROLE_LABELS.get(k, k.replace("_", " ").capitalize()),
                        "neg": k in ROLE_NEG} for k in kinds],
             "detail": polish(details[0]) if details else ""}
 
@@ -927,8 +927,8 @@ def status_class(s: str | None) -> str:
 
 
 def injury_row(e: dict) -> dict:
-    return {"player": e.get("player") or "", "team": identity(e.get("team")),
-            "status": e.get("status") or e.get("to_status") or "",
+    return {"player": e.get("player") or "", "player_id": e.get("player_id"),
+            "team": identity(e.get("team")), "status": e.get("status") or e.get("to_status") or "",
             "from_status": e.get("from_status"), "to_status": e.get("to_status"),
             "reason": fmt.injury_reason(e.get("reason")), "mpg": e.get("mpg"),
             "impact": e.get("impact"), "opponent": e.get("opponent"),
@@ -1203,7 +1203,8 @@ def stories_view(brief: dict) -> dict:
         text = text_of(e.get("text")) or fallback
         if not text:
             continue
-        rows.append({"player": e["player"], "team": identity(e.get("team")),
+        rows.append({"player": e["player"], "player_id": e.get("player_id"),
+                     "team": identity(e.get("team")),
                      "game_id": e.get("game_id"), "actual": dk.get("actual"),
                      "expected": dk.get("expected"), "diff": dk.get("diff"),
                      "above": (dk.get("diff") or 0) > 0, "dnp": bool(e.get("did_not_play")),
@@ -1303,8 +1304,8 @@ def impact_rows(facts: dict | None) -> list[dict]:
             if not isinstance(p, dict) or not p.get("name"):
                 continue
             key = p.get("id") or (p["name"], p.get("team"))
-            r = rows.setdefault(key, {"name": p["name"], "team": identity(p.get("team")),
-                                      "tags": []})
+            r = rows.setdefault(key, {"name": p["name"], "player_id": p.get("id"),
+                                      "team": identity(p.get("team")), "tags": []})
             for k in ("minutes", "plus_minus", "ts_pct", "on_off", "stocks", "game_score",
                       "line", "bench"):
                 if p.get(k) is not None and r.get(k) is None:

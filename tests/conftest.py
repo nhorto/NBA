@@ -36,6 +36,8 @@ os.environ.setdefault("COURTSIDE_PPLAYQ", "0")
 os.environ.setdefault("COURTSIDE_COPULA", "v0")
 # P8 usage v1 redistribution (+us): built OFF 2026-10-24 (tests/test_usage_switch.py).
 os.environ.setdefault("COURTSIDE_USAGE", "0")
+# the stats warm-up thread (stats/warm.py) stays off in tests; test_stats_cache.py starts its own
+os.environ.setdefault("COURTSIDE_WARM", "0")
 
 
 @pytest.fixture(autouse=True)

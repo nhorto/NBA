@@ -1,0 +1,61 @@
+/* Games section: the scoreboard (/games) and the box score on the game page (/game/<id>).
+   Builds on pro.css (.sc score cards, .ff four-factors bars, tables, cards). */
+
+/* ---------------------------------------------------------------- night picker */
+.pro .seg > a.off { opacity: .35; cursor: default; pointer-events: none; }
+.pro .jump { display: flex; justify-content: space-between; gap: 12px; padding: 0 14px 14px; margin: 0; font-size: 12.5px; }
+
+/* ---------------------------------------------------------------- scoreboard */
+.pro .games-board .sc { display: flex; flex-direction: column; text-decoration: none; }
+.pro .games-board .sc:hover { background: var(--surface-2); }
+.pro .games-board .sc .row.win .t, .pro .games-board .sc .row.win .s { color: var(--text-primary); font-weight: 800; }
+.pro .games-board .sc .row.lose .t, .pro .games-board .sc .row.lose .s { font-weight: 500; }
+.pro .games-board .sc .rec { margin-right: auto; }
+.pro .games-board .sc .foot { margin-top: auto; }
+.pro .games-board .sc .row:nth-of-type(2) { margin-bottom: 0; }
+.pro .games-board .sc .foot .tops { min-width: 0; }
+.pro .games-board .sc .foot .final { flex: none; }
+.pro .final.live { color: #6fd3a8; }
+
+/* ---------------------------------------------------------------- box score block */
+/* On the game page the block sits inside the light .wrap column; keep it a self-contained dark panel. */
+.pro.gbox { max-width: none; width: auto; margin: 14px 0; padding: 0; background: none; font-size: 13px; }
+.pro.gbox .scroll { overflow-x: auto; }
+.pro.gbox .card > .body { padding: 12px 14px; }
+.pro.gbox .box-players > .body { padding: 0 0 4px; }
+.pro.gbox .card .scroll th { position: static; }
+.pro.gbox .totals td:not(.l), .pro.gbox .totals th:not(.l) { text-align: right; }
+.pro.gbox .totals td.l { color: var(--text-secondary); }
+.pro.gbox .totals tbody tr:last-child { border-bottom: 0; }
+.pro.gbox .totals th a { color: var(--text-primary); font-weight: 700; }
+
+.pro.gbox .team-h { display: flex; align-items: baseline; gap: 8px; padding: 12px 14px 6px; }
+.pro.gbox .team-h + .scroll { border-top: 1px solid var(--line); }
+.pro.gbox .team-h ~ .team-h { border-top: 1px solid var(--line-2); margin-top: 6px; }
+.pro.gbox td.name { white-space: nowrap; }
+.pro.gbox .stm { display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: 3px; background: var(--surface-2); color: var(--text-muted); font: 700 9.5px/1.5 var(--sans); vertical-align: 1px; }
+.pro.gbox td.up { color: #6da7ec; } .pro.gbox td.dn { color: #f08a8a; }
+.pro.gbox tfoot td { background: var(--surface-1); }
+.pro.gbox .dnp { padding: 6px 14px 0; margin: 0; }
+.pro.gbox .foot-note { padding: 8px 14px 4px; margin: 0; }
+
+/* four factors */
+.pro.gbox .ff { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+.pro.gbox .ff .hbar { gap: 8px; min-width: 0; }
+.pro.gbox .ff .hbar .bar { flex: 1; min-width: 20px; }
+.pro.gbox .ff .v { min-width: 48px; }
+.pro.gbox .ff .v.side { min-width: 0; color: var(--text-muted); font-size: 11px; }
+.pro.gbox .ff .lab.strong { font-weight: 700; color: var(--text-muted); text-transform: uppercase; font-size: 10.5px; letter-spacing: .08em; }
+.pro.gbox .ff-note { margin: 10px 0 0; }
+
+/* sticky first column so the name stays put while a wide table scrolls on a phone */
+.pro.gbox .box-players th.l:first-child, .pro.gbox .box-players td.l:first-child { position: sticky; left: 0; z-index: 2; background: var(--surface-1); }
+.pro.gbox .box-players tbody tr:hover td.l:first-child { background: var(--row-hover); }
+
+@media (max-width: 1000px) {
+  .pro.gbox { margin: 12px 0; }
+  .pro.gbox .card > h3 .sub { flex-basis: 100%; }
+  .pro.gbox .team-h { padding: 10px 12px 6px; }
+}
+.pro.gbox .grid > .card:first-child { align-self: start; }
+@media (max-width: 1000px) { .pro.gbox .grid > .card:first-child { align-self: stretch; } }

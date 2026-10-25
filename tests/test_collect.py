@@ -87,6 +87,50 @@ def net(monkeypatch):
         return {"fetched": 4, "cached": 0, "failed": 0, "rows": {}, "errors": []}
 
     monkeypatch.setattr(backfill_mod, "backfill_gamelogs", fake_backfill)
+
+    # stats.nba.com extras of postgame (matchups per game, season tables once a day)
+    from courtside.sources import nba_players
+    n.matchups = J("nba_players/game_matchups.json")
+    n.matchups_empty: set[str] = set()
+    n.stats_block = False
+
+    n.tracking_empty: set[str] = set()
+    n.pt_empty = False
+    fixes = {"boxscorematchupsv3": ("game_matchups", "boxScoreMatchups"),
+             "boxscoreplayertrackv3": ("game_tracking", "boxScorePlayerTrack"),
+             "boxscorehustlev2": ("game_hustle", "boxScoreHustle")}
+
+    def game(kind, gid):
+        if n.stats_block:
+            from courtside.http import BlockedError
+            raise BlockedError("403 Forbidden", status=403)
+        n.calls[f"fetch_game.{kind}"] += 1
+        fix, root = fixes[kind]
+        if kind == "boxscorematchupsv3":
+            p = copy.deepcopy(J("nba_players/game_matchups_empty.json")
+                              if gid in n.matchups_empty else n.matchups)
+        elif gid in n.tracking_empty:
+            p = {root: {"gameId": gid, "homeTeam": {"players": []}, "awayTeam": {"players": []}}}
+        else:
+            p = copy.deepcopy(J(f"nba_players/{fix}.json"))
+        p[root]["gameId"] = gid
+        return p
+
+    def pt_day(day, season, stype, measure):
+        if n.stats_block:
+            from courtside.http import BlockedError
+            raise BlockedError("403 Forbidden", status=403)
+        p = J(f"nba_players/pt_day_{measure.lower()}.json")
+        if n.pt_empty:
+            p["resultSets"][0]["rowSet"] = []
+        return p
+
+    mk(nba_players, "fetch_game", game)
+    mk(nba_players, "fetch_pt_day", pt_day)
+    mk(nba_players, "fetch_synergy", lambda s, t, e, g, p: J(
+        "nba_players/synergy_player.json" if e == "P" else "nba_players/synergy_team.json"))
+    mk(nba_players, "fetch_league_season_matchups",
+       lambda s, t: J("nba_players/leagueseasonmatchups.json"))
     return n
 
 
@@ -475,3 +519,156 @@ def test_injury_report_unnamed_placeholder_rows_do_not_break_the_step(net, monke
     assert s["ok"], s["errors"]
     assert s["steps"]["official_injury_report"]["rows"] == 1
     assert s["steps"]["official_injury_report"]["skipped_unnamed"] == 1
+
+
+# ------------------------------------------------------------------ postgame: stats-site data
+
+def test_postgame_fills_stints_shots_and_matchups_once(post):
+    # the full (untrimmed) opener payloads, so the stints reconcile with the boxscore
+    post.pbp = archive.load_raw(FIX / "analytics/playbyplay_0022500001.json.gz")
+    post.box = archive.load_raw(FIX / "analytics/boxscore_0022500001.json.gz")
+    s = collect.run_postgame(PAST)
+    assert s["ok"], s["errors"]
+    st = s["steps"]
+    assert st["stints"]["stored"] == 1 and st["stints"]["failed"] == {}
+    assert st["shots"]["games"] == 1 and st["shots"]["shots"] == count("shots") > 150
+    assert st["starts"]["games"] == 1 and st["starts"]["rows"] == 10 == count("player_starts")
+    assert q("SELECT team, COUNT(*) FROM player_starts WHERE source='cdn' GROUP BY team "
+             "ORDER BY team") == [("HOU", 5), ("OKC", 5)]
+    assert st["matchups"]["games"] == 1 and st["matchups"]["requests"] == 1
+    assert count("stints") > 0 and count("player_matchups") == st["matchups"]["rows"] > 0
+    assert q("SELECT DISTINCT game_id FROM player_matchups") == [(GID,)]
+    assert archive.exists_final("nba_stats", "boxscorematchupsv3", PAST, GID)
+    # past season: no season-table refresh
+    assert st["season_tables"]["status"] == "skipped"
+    assert post.calls["nba_players.fetch_synergy"] == 0
+    s2 = collect.run_postgame(PAST)
+    assert s2["ok"], s2["errors"]
+    assert s2["steps"]["stints"]["already"] == 1 and s2["steps"]["shots"]["already"] == 1
+    assert s2["steps"]["starts"]["already"] == 1 and count("player_starts") == 10
+    assert s2["steps"]["matchups"]["status"] == "skipped"
+    assert post.calls["nba_players.fetch_game"] == 3          # matchups + tracking + hustle
+    for step in ("tracking", "hustle", "tracking_ext"):
+        assert s2["steps"][step]["status"] == "skipped", step
+    assert post.calls["nba_players.fetch_pt_day"] == 3
+
+
+def test_postgame_matchups_not_processed_yet_is_pending(post):
+    post.matchups_empty.add(GID)
+    s = collect.run_postgame(PAST)
+    assert s["ok"], s["errors"]
+    assert s["steps"]["matchups"]["pending"] == [GID] and count("player_matchups") == 0
+    assert not archive.exists_final("nba_stats", "boxscorematchupsv3", PAST, GID)
+    post.matchups_empty.clear()
+    s = collect.run_postgame(PAST)                          # the next run picks it up
+    assert s["steps"]["matchups"]["games"] == 1 and count("player_matchups") > 0
+
+
+def test_postgame_stats_block_fails_the_step_only(post):
+    post.stats_block = True
+    s = collect.run_postgame(PAST)
+    assert not s["ok"] and s["steps"]["matchups"]["status"] == "error"
+    assert "blocked" in s["steps"]["matchups"]["error"]
+    assert s["steps"]["shots"]["status"] == "ok" and s["steps"]["brief"]["status"] == "ok"
+    # the later stats.nba.com steps do not hit the blocked host again
+    for step in ("tracking", "hustle", "tracking_ext"):
+        assert s["steps"][step]["status"] == "skipped" and "blocked" in s["steps"][step]["reason"]
+    assert post.calls["nba_players.fetch_game"] == 1 and post.calls["nba_players.fetch_pt_day"] == 0
+
+
+def test_postgame_fills_tracking_hustle_ext_and_xfg(post):
+    post.pbp = archive.load_raw(FIX / "analytics/playbyplay_0022500001.json.gz")
+    post.box = archive.load_raw(FIX / "analytics/boxscore_0022500001.json.gz")
+    s = collect.run_postgame(PAST)
+    assert s["ok"], s["errors"]
+    st = s["steps"]
+    assert st["tracking"]["games"] == 1 and st["tracking"]["rows"] == count("player_tracking") > 0
+    assert st["hustle"]["games"] == 1 and count("player_hustle") > 0
+    assert archive.exists_final("nba_stats", "boxscoreplayertrackv3", PAST, GID)
+    assert archive.exists_final("nba_stats", "boxscorehustlev2", PAST, GID)
+    # same row format as `backfill players --per-game tracking` (proj/features/tracking.py)
+    from courtside.sources import nba_players
+    want = nba_players.parse_game_tracking(
+        {**J("nba_players/game_tracking.json"),
+         "boxScorePlayerTrack": {**J("nba_players/game_tracking.json")["boxScorePlayerTrack"],
+                                 "gameId": GID}})
+    assert q("SELECT player_id, reb_chances_total, passes FROM player_tracking ORDER BY 1") == \
+        sorted((r["player_id"], r["reb_chances_total"], r["passes"]) for r in want)
+    ext = st["tracking_ext"]
+    assert ext["days"] == 1 and ext["requests"] == 3 and ext["rows"] == 12   # 4 players x 3
+    assert q("SELECT COUNT(*), COUNT(pot_ast), COUNT(drives), COUNT(touches) "
+             "FROM player_tracking_ext WHERE game_id=?", GID) == [(4, 4, 4, 4)]
+    assert st["shot_xfg"]["season"] == "2025-26" and st["shot_xfg"]["fga"] == count("shots")
+    s2 = collect.run_postgame(PAST)
+    assert s2["steps"]["shot_xfg"]["status"] == "skipped"
+    assert s2["steps"]["tracking_ext"]["status"] == "skipped"
+
+
+def test_postgame_tracking_not_processed_yet_is_retried(post):
+    post.tracking_empty.add(GID)
+    post.pt_empty = True
+    s = collect.run_postgame(PAST)
+    assert s["ok"], s["errors"]
+    assert s["steps"]["tracking"]["pending"] == [GID] and count("player_tracking") == 0
+    assert not archive.exists_final("nba_stats", "boxscoreplayertrackv3", PAST, GID)
+    assert s["steps"]["matchups"]["games"] == 1            # other kinds are not held back
+    post.tracking_empty.clear()
+    s = collect.run_postgame(PAST)
+    assert s["steps"]["tracking"]["games"] == 1 and count("player_tracking") > 0
+
+
+def test_tracking_ext_current_season_catches_up_and_retries_incomplete_days(net):
+    net.espn_sb = {"events": []}
+    conn = db.connect()
+    for gid, d in (("0022600010", "2026-10-15"), ("0022600011", "2026-10-16")):
+        db.upsert_game(conn, game_id=gid, season="2026-27", nba_day=d, home="OKC", away="HOU",
+                       tipoff_utc=f"{d}T23:00:00Z", status="final")
+    conn.close()
+    net.pt_empty = True                       # nba.com has not processed the days yet
+    s = collect.run_postgame(date(2026, 10, 19))
+    ext = s["steps"]["tracking_ext"]
+    # two empty answers in a row stop the fetching; both days stay pending
+    assert ext["requests"] == 2 and set(ext["pending"]) == {"2026-10-15", "2026-10-16"}
+    assert not list((config.data_dir() / "raw" / "nba_stats").glob("leaguedashptstats/*/*"))
+    net.pt_empty = False
+    s = collect.run_postgame(date(2026, 10, 19))
+    ext = s["steps"]["tracking_ext"]
+    assert ext["days"] == 2 and ext["pending"] == {}
+    assert q("SELECT COUNT(DISTINCT game_id) FROM player_tracking_ext") == [(2,)]
+    s = collect.run_postgame(date(2026, 10, 19))
+    assert s["steps"]["tracking_ext"]["status"] == "skipped"
+
+
+def _seed_current_season_game():
+    conn = db.connect()
+    db.upsert_game(conn, game_id="0022600090", season="2026-27", nba_day="2026-10-19",
+                   tipoff_utc="2026-10-19T23:00:00Z", home="DET", away="BOS", status="scheduled")
+    conn.close()
+
+
+def test_postgame_season_tables_current_season_once_a_day(post):
+    _seed_current_season_game()
+    post.box_by_game["0022600090"] = copy.deepcopy(post.box)
+    post.box_by_game["0022600090"]["game"]["gameId"] = "0022600090"
+    s = collect.run_postgame(date(2026, 10, 19))
+    st = s["steps"]["season_tables"]
+    assert st["season"] == "2026-27" and st["season_types"] == ["Regular Season"]
+    assert st["requests"] == 41 and post.calls["nba_players.fetch_synergy"] == 40
+    assert post.calls["nba_players.fetch_league_season_matchups"] == 1
+    assert count("season_matchups") == 4
+    n_syn = count("synergy_playtypes")
+    assert n_syn > 0
+    assert q("SELECT DISTINCT season FROM synergy_playtypes") == [("2026-27",)]
+    s2 = collect.run_postgame(date(2026, 10, 19))             # same NBA day: no refetch
+    assert s2["steps"]["season_tables"]["status"] == "skipped"
+    assert s2["steps"]["season_tables"]["reason"] == "already refreshed today"
+    assert post.calls["nba_players.fetch_synergy"] == 40
+    assert count("synergy_playtypes") == n_syn and count("season_matchups") == 4
+
+
+def test_season_tables_skip_without_finished_games(net):
+    net.espn_sb = {"events": []}
+    s = collect.run_postgame(date(2026, 10, 19))
+    assert s["steps"]["season_tables"] == {"status": "skipped", "season": "2026-27",
+                                           "reason": "no finished games on this day"}
+    assert net.calls["nba_players.fetch_synergy"] == 0

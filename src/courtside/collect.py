@@ -18,6 +18,16 @@ Conventions
   the season's game logs are re-fetched (keeps `team_games`/`player_games` current for the model
   and trends); finally the Brief for day + 1 (the morning-of Brief) is built. Pregame ends with
   `predict_day` and a rebuild of today's Brief.
+* Stats-site data (docs/STATS_SITE.md "Data"), right after `game_facts`: `stints` and `shots`
+  are parsed from the archived play-by-play (no network), `starts` fills `player_starts`
+  (source 'cdn') from the archived boxscore's `starter` flags (no network); `matchups` fetches stats.nba.com
+  boxscorematchupsv3 once per finished game (+ a week of catch-up in the current season);
+  `tracking` / `hustle` do the same for player_tracking / player_hustle (boxscoreplayertrackv3 /
+  boxscorehustlev2, two weeks of catch-up: nba.com processes tracking with a lag); `tracking_ext`
+  fills player_tracking_ext (potential assists, drives, touches) from leaguedashptstats, 3
+  requests per finished day; `shot_xfg` refits the season's expected-FG% table after `shots`
+  (no network). After the game-log refresh, `season_tables` refreshes the current season's
+  synergy_playtypes and season_matchups at most once per NBA day (41 requests).
 * Pre-tip extras (props, referees, action_network, dfs_salaries) are archive-first sources
   whose data disappears at tip-off; see the "pre-tip extras" block below for their conventions
   (raw layout, change-log semantics, request volume).
@@ -842,6 +852,321 @@ def _facts_step(conn: sqlite3.Connection, run: _Run, day: date, *, force: bool =
     return {"computed": len(done), "already": len(skipped), "failed": failed}
 
 
+def _stints_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """Stints + on-court tallies (analytics/stints_store.py) for every archived game of `day`.
+    Games already stored are skipped; a game that does not reconcile with its boxscore is
+    listed (and in the stints_store data check), never fatal."""
+    from .analytics import stints_store
+    ids = list(run.summary.get("archived", []))
+    if not ids:
+        return {"status": "skipped", "reason": "no archived games"}
+    s = stints_store.build(conn, game_ids=ids)
+    return {"stored": s["validated"], "already": s["skipped"],
+            "failed": {f["game_id"]: "/".join(f["causes"]) for f in s["failures"]}}
+
+
+def _shots_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """`shots` rows (analytics/shots_store.py) for every archived game of `day`, re-parsed when
+    the play-by-play was fetched in this run. A failure on one game is listed, never fatal."""
+    from .analytics import shots_store
+    ids = list(run.summary.get("archived", []))
+    fetched = set(run.summary.get("fetched", []))
+    q = ",".join("?" * len(ids))
+    have = {r[0] for r in conn.execute(
+        f"SELECT DISTINCT game_id FROM shots WHERE game_id IN ({q})", ids)} if ids else set()
+    stored, already, failed = {}, 0, {}
+    for gid in ids:
+        if gid in have and gid not in fetched:
+            already += 1
+            continue
+        try:
+            stored[gid] = shots_store.store_game(conn, gid, day.isoformat())
+        except Exception as e:  # noqa: BLE001 - one game must never stop the job
+            log.exception("shots failed for %s", gid)
+            failed[gid] = f"{type(e).__name__}: {e}"
+    return {"games": len(stored), "shots": sum(stored.values()), "already": already,
+            "failed": failed}
+
+
+def _starts_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """`player_starts` (source 'cdn') for every archived game of `day`, from the archived
+    boxscore's `starter` flags (analytics/starts_store.py). Games that already have cdn rows are
+    skipped unless the boxscore was fetched in this run. A game without a clean 5+5 starter set is
+    listed as unusable, a failure on one game is listed; neither is fatal."""
+    from .analytics import starts_store
+    ids = list(run.summary.get("archived", []))
+    if not ids:
+        return {"status": "skipped", "reason": "no archived games"}
+    fetched = set(run.summary.get("fetched", []))
+    have = starts_store.stored_games(conn, ids)
+    stored, already, unusable, failed = {}, 0, [], {}
+    for gid in ids:
+        if gid in have and gid not in fetched:
+            already += 1
+            continue
+        try:
+            n = starts_store.store_game(conn, gid, day.isoformat())
+        except Exception as e:  # noqa: BLE001 - one game must never stop the job
+            log.exception("starts failed for %s", gid)
+            failed[gid] = f"{type(e).__name__}: {e}"
+            continue
+        if n:
+            stored[gid] = n
+        else:
+            unusable.append(gid)
+    return {"games": len(stored), "rows": sum(stored.values()), "already": already,
+            "unusable": unusable, "failed": failed}
+
+
+# stats.nba.com extras for the stats site (docs/STATS_SITE.md): per-game "who guarded whom"
+# (boxscorematchupsv3, one request per finished game, archived like the backfill:
+# raw/nba_stats/boxscorematchupsv3/<nba_day>/<game_id>.json.gz) and, once a day for the current
+# season only, the season tables synergy_playtypes (40 requests per season type) and
+# season_matchups (1 request). Both go through the shared stats.nba.com throttle (0.7 s); a block
+# (403 / HTML / 429 / timeout) stops the step at once (no long back-off at 3 AM: the 09:00 run
+# and the next night resume).
+MATCHUPS_KIND = "boxscorematchupsv3"
+MATCHUPS_CATCHUP_DAYS = 7     # current season: also retry finished games of the last week
+MATCHUPS_MAX_FETCH = 40       # network requests per run
+SEASON_TABLES = ("synergy", "lsm")
+_SLICE_KEYS = {"synergy_playtypes": ("season", "season_type", "entity", "grouping", "play_type"),
+               "season_matchups": ("season", "season_type")}
+
+
+def _is_stats_block(e: Exception) -> bool:
+    from .http import BlockedError
+    return isinstance(e, BlockedError) or (isinstance(e, FetchError)
+                                          and e.status in (None, 403, 429))
+
+
+# Per-game stats.nba.com kinds of the postgame: kind -> (step name, catch-up days). Tracking and
+# hustle lag more than matchups early in a season (2026-10-25: games of 10-23 still empty), so
+# their catch-up window is longer. Every step stops fetching after PER_GAME_EMPTY_STOP
+# not-processed answers in a row (later games will not be processed either).
+PER_GAME_KINDS = {"boxscorematchupsv3": ("matchups", MATCHUPS_CATCHUP_DAYS),
+                  "boxscoreplayertrackv3": ("tracking", 14),
+                  "boxscorehustlev2": ("hustle", 14)}
+PER_GAME_EMPTY_STOP = 3
+TRACKING_EXT_CATCHUP_DAYS = 14
+TRACKING_EXT_MAX_FETCH = 30      # leaguedashptstats requests per run (3 per day)
+
+
+def _per_game_targets(conn: sqlite3.Connection, run: _Run, day: date, table: str,
+                      catchup_days: int) -> list[tuple[str, str]]:
+    """[(game_id, nba_day)]: the day's archived games, plus (current season only) finished games
+    of the previous `catchup_days` days, all without rows in `table`."""
+    from .trends.common import season_of
+    out = [(g, day.isoformat()) for g in run.summary.get("archived", [])]
+    if season_of(day) == season_of(config.today_nba_day()):
+        lo = (day - timedelta(days=catchup_days)).isoformat()
+        out += [(r[0], r[1]) for r in conn.execute(
+            "SELECT game_id, nba_day FROM games WHERE status='final' AND nba_day>=? AND nba_day<? "
+            "ORDER BY nba_day, game_id", (lo, day.isoformat()))]
+    seen: set[str] = set()
+    todo = []
+    for gid, d in out:
+        if gid in seen:
+            continue
+        seen.add(gid)
+        if conn.execute(f"SELECT 1 FROM {table} WHERE game_id=? LIMIT 1",
+                        (gid,)).fetchone() is None:
+            todo.append((gid, d))
+    return todo
+
+
+def _matchup_targets(conn: sqlite3.Connection, run: _Run, day: date) -> list[tuple[str, str]]:
+    return _per_game_targets(conn, run, day, "player_matchups", MATCHUPS_CATCHUP_DAYS)
+
+
+def _per_game_step(conn: sqlite3.Connection, run: _Run, day: date, kind: str) -> dict:
+    """One stats.nba.com per-game box score kind (matchups / player tracking / hustle) for the
+    day's finished games, plus a catch-up of the current season's recent finals without rows.
+    An empty payload means stats.nba.com has not processed the game yet: nothing is archived and
+    the game is retried by the next run. A block (403 / HTML / 429 / timeout) stops the step
+    (error) and the later stats.nba.com per-game steps of the run skip; other steps go on."""
+    from .sources import nba_players as np_
+    name, catchup = PER_GAME_KINDS[kind]
+    table, parse = np_.GAME_PARSERS[kind]
+    if run.summary.get("stats_blocked"):
+        return {"status": "skipped",
+                "reason": f"stats.nba.com blocked earlier in this run ({run.summary['stats_blocked']})"}
+    todo = _per_game_targets(conn, run, day, table, catchup)
+    if not todo:
+        return {"status": "skipped", "reason": f"no finished games without {table} rows"}
+    stored, pending, failed, fetches, empty_run = {}, [], {}, 0, 0
+    blocked = None
+    for gid, d in todo:
+        path = archive.raw_path(np_.SOURCE, kind, d, gid)
+        try:
+            if path.exists():
+                payload = archive.load_raw(path)
+            else:
+                if fetches >= MATCHUPS_MAX_FETCH or empty_run >= PER_GAME_EMPTY_STOP:
+                    pending.append(gid)
+                    continue
+                fetches += 1
+                payload = np_.fetch_game(kind, gid)
+                if parse(payload):
+                    archive.save_raw(np_.SOURCE, kind, d, gid, payload)
+                    empty_run = 0
+                else:
+                    empty_run += 1
+            rows = parse(payload)
+            if not rows:
+                pending.append(gid)
+                continue
+            stored[gid] = db.upsert_rows(conn, table, rows)
+        except Exception as e:  # noqa: BLE001
+            if _is_stats_block(e):
+                blocked = f"{gid}: {type(e).__name__}: {e}"
+                run.summary["stats_blocked"] = name
+                break
+            log.exception("%s failed for %s", name, gid)
+            failed[gid] = f"{type(e).__name__}: {e}"
+    out = {"games": len(stored), "rows": sum(stored.values()), "pending": pending,
+           "failed": failed, "requests": fetches}
+    if blocked or failed:
+        raise RuntimeError(f"stats.nba.com {'blocked' if blocked else 'failures'}: "
+                           f"{blocked or list(failed.items())[:3]} (stored {len(stored)} games)")
+    return out
+
+
+def _matchups_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """player_matchups (who guarded whom), see _per_game_step."""
+    return _per_game_step(conn, run, day, MATCHUPS_KIND)
+
+
+def _tracking_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """player_tracking (boxscoreplayertrackv3: speed, distance, rebound chances, touches, passes,
+    contested FG, rim defense), see _per_game_step. Same rows as `backfill players --per-game
+    tracking`, which proj/features/tracking.py (F3) reads."""
+    return _per_game_step(conn, run, day, "boxscoreplayertrackv3")
+
+
+def _hustle_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """player_hustle (boxscorehustlev2: contests, deflections, screen assists, loose balls,
+    box-outs), see _per_game_step."""
+    return _per_game_step(conn, run, day, "boxscorehustlev2")
+
+
+def _tracking_ext_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """player_tracking_ext (potential assists, drives, touches by area) from the per-day
+    leaguedashptstats dashboards (analytics/tracking_ext_store.py): the day (when it had archived
+    games) plus, in the current season, earlier final days still missing a measure. 3 requests a
+    day, capped; an incomplete day is stored and retried; a block stops the step."""
+    from .analytics import tracking_ext_store as tx
+    from .sources import nba_players as np_
+    from .trends.common import season_of
+    if run.summary.get("stats_blocked"):
+        return {"status": "skipped",
+                "reason": f"stats.nba.com blocked earlier in this run ({run.summary['stats_blocked']})"}
+    current = season_of(day) == season_of(config.today_nba_day())
+    days = tx.catchup_days(conn, day, TRACKING_EXT_CATCHUP_DAYS) if current else []
+    if (run.summary.get("archived") and day.isoformat() not in days
+            and tx.days_missing(conn, [day.isoformat()])):
+        days.append(day.isoformat())
+    if not days:
+        return {"status": "skipped", "reason": "no finished days without tracking dashboards"}
+    budget = tx.Budget(max_fetch=TRACKING_EXT_MAX_FETCH, empty_stop=2)
+    done, pending, rows, requests = [], {}, 0, 0
+    for d in days:
+        try:
+            r = tx.process_day(conn, d, np_.fetch_pt_day, budget=budget,
+                               archive_incomplete=not current)
+        except Exception as e:  # noqa: BLE001
+            if _is_stats_block(e):
+                run.summary["stats_blocked"] = "tracking_ext"
+                raise RuntimeError(f"stats.nba.com blocked: {d}: {type(e).__name__}: {e} "
+                                   f"(done {len(done)} days)") from e
+            raise
+        rows += r["rows"]
+        requests += r["requests"]
+        if r["status"] == "pending":
+            pending[d] = r["pending"]
+        elif r["status"] == "done":
+            done.append(d)
+    return {"days": len(done), "rows": rows, "requests": requests, "pending": pending}
+
+
+def _shot_xfg_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """Refit the day's season of shot_xfg (analytics/xfg_store.py, ~1 s, no network) when the
+    shots step stored new games or the season has no fit yet."""
+    from .analytics import xfg_store
+    from .trends.common import season_of
+    season = season_of(day)
+    new = (run.summary.get("steps", {}).get("shots") or {}).get("games")
+    if not new and xfg_store.has_season(conn, season):
+        return {"status": "skipped", "reason": "no new shots", "season": season}
+    r = xfg_store.fit_season(conn, season)
+    if not r["fga"]:
+        return {"status": "skipped", "reason": "no shots for the season", "season": season}
+    return r
+
+
+def _replace_slice(conn: sqlite3.Connection, table: str, rows: list[dict]) -> int:
+    """Replace the (season, season_type[, entity, grouping, play_type]) slices present in `rows`
+    by `rows`, in one transaction (a refreshed season table mirrors the latest response)."""
+    keys = _SLICE_KEYS[table]
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+    with conn:
+        for sl in {tuple(r[k] for k in keys) for r in rows}:
+            conn.execute(f"DELETE FROM {table} WHERE "
+                         + " AND ".join(f"{k}=?" for k in keys), sl)
+        conn.executemany(
+            f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "
+            f"VALUES ({', '.join(':' + c for c in cols)})",
+            [{c: r.get(c) for c in cols} for r in rows])
+    return len(rows)
+
+
+def _season_tables_step(conn: sqlite3.Connection, run: _Run, day: date) -> dict:
+    """Current-season synergy_playtypes + season_matchups from stats.nba.com, at most once per
+    NBA day and only after a day with finished games: a response archived today (file date, ET)
+    is not fetched again. The archive file under the season's pseudo day is overwritten, like the
+    nightly game-log refresh does."""
+    from . import backfill_players as bp
+    from .trends.common import season_of
+    today = config.today_nba_day()
+    wall_day = config.nba_day(datetime.now(timezone.utc))    # the archive files' clock
+    season = season_of(day)
+    if season != season_of(today):
+        return {"status": "skipped", "reason": "day is not in the current season",
+                "season": season}
+    if not run.summary.get("archived"):
+        return {"status": "skipped", "reason": "no finished games on this day", "season": season}
+    stypes = ("Regular Season", "Playoffs") if day.month in (4, 5, 6) else ("Regular Season",)
+    jobs = list(bp.season_jobs(season, season, stypes, tables=SEASON_TABLES))
+    fetched, fresh, rows, failed = 0, 0, {}, {}
+    blocked = None
+    for job in jobs:
+        path = archive.raw_path(bp.SOURCE, job.kind, job.day, job.key)
+        if path.exists() and datetime.fromtimestamp(
+                path.stat().st_mtime, tz=config.NBA_TZ).date() == wall_day:
+            fresh += 1
+            continue
+        try:
+            payload = job.fetch()
+            archive.save_raw(bp.SOURCE, job.kind, job.day, job.key, payload)
+            fetched += 1
+            for table, rs in job.parse(payload).items():
+                if rs:
+                    rows[table] = rows.get(table, 0) + _replace_slice(conn, table, rs)
+        except Exception as e:  # noqa: BLE001
+            if _is_stats_block(e):
+                blocked = f"{job.kind}/{job.key}: {type(e).__name__}: {e}"
+                break
+            log.exception("season table %s/%s failed", job.kind, job.key)
+            failed[f"{job.kind}/{job.key}"] = f"{type(e).__name__}: {e}"
+    if blocked or failed:
+        raise RuntimeError(f"stats.nba.com {'blocked' if blocked else 'failures'} after "
+                           f"{fetched} requests: {blocked or list(failed.items())[:3]}")
+    if not fetched:
+        return {"status": "skipped", "reason": "already refreshed today", "season": season,
+                "requests": len(jobs)}
+    return {"season": season, "season_types": list(stypes), "requests": fetched,
+            "already_today": fresh, "rows": rows}
+
+
 def _season_types_for(day: date) -> tuple[str, ...]:
     """Only ask stats.nba.com for season types that can have games around `day`."""
     types = ["Regular Season"]
@@ -934,7 +1259,16 @@ def run_postgame(day: date) -> dict:
         run.summary.update(archived=[], fetched=[], pending=[], postponed=[])
         run.step("games", _games_step, conn, run, day)
         run.step("game_facts", _facts_step, conn, run, day)
+        run.step("stints", _stints_step, conn, run, day)
+        run.step("shots", _shots_step, conn, run, day)
+        run.step("shot_xfg", _shot_xfg_step, conn, run, day)
+        run.step("starts", _starts_step, conn, run, day)
+        run.step("matchups", _matchups_step, conn, run, day)
+        run.step("tracking", _tracking_step, conn, run, day)
+        run.step("hustle", _hustle_step, conn, run, day)
+        run.step("tracking_ext", _tracking_ext_step, conn, run, day)
         run.step("refresh_gamelogs", _refresh_gamelogs_step, conn, day)
+        run.step("season_tables", _season_tables_step, conn, run, day)
         run.step("dfs_grade", _dfs_grade_step, conn, day)
         run.step("shadow_grade", _shadow_grade_step, conn, day)
         run.step("prop_grade", _prop_grade_step, conn, day)

@@ -1,0 +1,101 @@
+/* Stats tools: Stat finder (/finder, stats_finder.html) and Lineup explorer (/lineups,
+   stats_lineups.html). Builds on pro.css tokens; scoped to .tl-page except the shared
+   "Tools" links row (.tools-row, _stats_tools.html), which also sits on /leaders and /players. */
+
+/* ---------------------------------------------------------------- tools row + head */
+.pro .tools-row { display: inline-flex; align-items: center; gap: 8px; }
+.tl-page .tl-head .tools-row { margin-left: auto; }
+.tl-page .tl-head.tl-sub { margin: 10px 0 12px; }
+.tl-page .tl-head.tl-sub .tools-row { margin-left: 0; }
+.tl-page .tl-head.tl-sub > .link { margin-left: auto; font-size: 12.5px; }
+.tl-page .tl-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: 12px; }
+.tl-page .tl-presets .lab { margin-right: 4px; }
+.tl-page .tl-presets .pill:hover { border-color: var(--line-2); color: var(--text-primary); }
+.tl-page .tl-presets .pill.tl-on { border-color: var(--accent); color: var(--text-primary); background: var(--accent-wash); }
+.tl-page .tl-notes { margin-bottom: 12px; padding: 8px 12px; border: 1px solid #4a3a1c; border-radius: 8px; background: var(--warn-wash); color: var(--warn); font-size: 12.5px; }
+
+/* ---------------------------------------------------------------- forms */
+.tl-page .tl-form { padding: 0; }
+.tl-page .tl-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.3fr) minmax(0, 1fr); }
+.tl-page .tl-box { margin: 0; padding: 12px 14px 14px; border: 0; min-width: 0; }
+.tl-page .tl-box + .tl-box { border-left: 1px solid var(--line); }
+.tl-page .tl-box legend { float: left; width: 100%; padding: 0 0 8px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--text-secondary); font-weight: 700; }
+.tl-page .tl-box legend + * { clear: both; }
+.tl-page .tl-cond { display: flex; gap: 6px; margin-bottom: 6px; }
+.tl-page .tl-cond select:first-of-type { flex: 1 1 auto; min-width: 0; }
+.tl-page .tl-op { width: 54px; flex: none; text-align: center; }
+.tl-page .tl-num { width: 84px; flex: none; }
+.tl-page .tl-int { width: 64px; }
+.tl-page .tl-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+.tl-page .tl-fields.tl-two .tl-num { width: 100%; }
+.tl-page .tl-fields.tl-row { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 0 14px 4px; }
+.tl-page .tl-f { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tl-page .tl-f select, .tl-page .tl-f input { width: 100%; }
+.tl-page .tl-fields.tl-row .tl-f select { width: auto; min-width: 150px; }
+.tl-page .tl-fields.tl-row .tl-f input { width: 90px; }
+.tl-page .tl-sort { margin-top: 10px; }
+.tl-page .tl-box .note { margin-top: 6px; line-height: 1.45; }
+.tl-page input[type="number"] { background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: 13px var(--sans); }
+.tl-page input[type="number"]:focus { outline: 0; border-color: var(--accent); }
+.tl-page .pro select, .tl-page .pro input[type="text"], .tl-page .pro input[type="number"] { height: 30px; padding-top: 0; padding-bottom: 0; }
+.tl-page .tl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.tl-page .tl-btn { height: 30px; padding: 0 16px; background: var(--accent); color: #fff; border: 0; border-radius: 6px; font: 700 12.5px var(--sans); cursor: pointer; }
+.tl-page .tl-btn:hover { filter: brightness(1.1); }
+.tl-page .tl-btn:focus-visible { outline: 2px solid #9fc5f4; outline-offset: 2px; }
+.tl-page .tl-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 14px 10px; font-size: 14px; color: var(--text-secondary); }
+.tl-page .tl-sentence select { min-width: 120px; }
+.tl-page .tl-sentence select.tl-op { min-width: 0; }
+.tl-page .card .scroll.tall { max-height: min(72vh, 900px); }
+.tl-page .tl-pick .scroll.tall { max-height: 520px; }
+
+/* ---------------------------------------------------------------- results */
+.tl-page .tl-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.tl-page .tl-pad { padding: 8px 14px 12px; margin: 0; line-height: 1.5; }
+.tl-page .tl-mt { margin: 10px 0 0; line-height: 1.5; }
+.tl-page .tl-t td.up { color: #6da7ec; }
+.tl-page .tl-t td.dn { color: #f08a8a; }
+.tl-page .tl-strip { display: inline-flex; gap: 2px; }
+.tl-page .tl-strip i { display: inline-grid; place-items: center; min-width: 24px; height: 20px; padding: 0 3px; border-radius: 3px; background: var(--surface-2); color: var(--text-muted); font: 600 10.5px/1 var(--mono); font-style: normal; }
+.tl-page .tl-strip i.hit { background: #1c3b63; color: #cde2fb; box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* ---------------------------------------------------------------- lineups */
+.tl-page .tl-teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
+.tl-page .tl-team { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-weight: 600; }
+.tl-page .tl-team:hover { border-color: var(--line-2); }
+.tl-page .tl-sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; flex: none; }
+.tl-page .tl-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.tl-page .tl-pick { display: flex; flex-direction: column; }
+.tl-page .tl-pick .scroll.tall { max-height: 520px; }
+.tl-page .tl-roster input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; vertical-align: middle; }
+.tl-page .tl-roster td.name { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+.tl-page .tl-roster tr.tl-is-on { background: #13243b; }
+.tl-page .tl-roster tr.tl-is-off { background: #2a1a1e; }
+.tl-page .tl-wy { display: inline-grid; place-items: center; width: 24px; height: 22px; border-radius: 5px; color: var(--text-muted); border: 1px solid var(--line); }
+.tl-page .tl-wy:hover { border-color: var(--line-2); color: var(--text-primary); }
+.tl-page .tl-wy.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tl-page .tl-minrow { display: flex; align-items: center; gap: 10px; padding: 10px 14px 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.tl-page .tl-minrow input[type="range"] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+.tl-page .tl-minrow output { min-width: 34px; text-align: right; font: 700 13px var(--mono); }
+.tl-page .tl-pick .tl-actions { border-top: 0; }
+.tl-page .tl-cmp { margin-top: 12px; }
+.tl-page .tl-wowy-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.tl-page .tl-wowy-head .link { margin-left: auto; font-size: 12px; }
+.tl-page .tl-wowy thead tr.tl-grp th { border-bottom: 0; padding-bottom: 0; color: var(--text-secondary); }
+.tl-page .tl-wowy thead tr.tl-grp + tr th { top: 22px; }
+.tl-page .tl-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.tl-page .tl-pair > div + div { border-left: 1px solid var(--line); }
+.tl-page .tl-cap { caption-side: top; text-align: left; padding: 9px 8px 5px; font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-secondary); font-weight: 700; }
+.tl-page .tl-five { white-space: nowrap; }
+
+/* ---------------------------------------------------------------- phone / narrow */
+@media (max-width: 1000px) {
+  .tl-page .tl-grid { grid-template-columns: minmax(0, 1fr); }
+  .tl-page .tl-box + .tl-box { border-left: 0; border-top: 1px solid var(--line); }
+  .tl-page .tl-head .tools-row { margin-left: 0; }
+  .tl-page .tl-pair { grid-template-columns: minmax(0, 1fr); }
+  .tl-page .tl-pair > div + div { border-left: 0; border-top: 1px solid var(--line); }
+  .tl-page select, .tl-page input[type="text"], .tl-page input[type="number"] { font-size: 16px; }
+  .tl-page .tl-pick .scroll.tall { max-height: 380px; }
+  .tl-page .tl-fields.tl-row .tl-f select { min-width: 0; width: 100%; }
+  .tl-page .tl-fields.tl-row .tl-f { flex: 1 1 140px; }
+}

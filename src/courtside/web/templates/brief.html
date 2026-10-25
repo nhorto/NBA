@@ -64,14 +64,14 @@
   </div>
   {% endif %}
   {% if ln.also %}
-  <h3 class="sub-head sub-plain">Also last night</h3>
-  <div class="card gm-list">
+  <div class="card gm-list" aria-label="Also last night">
+    <h3 class="card-title">Also last night <span class="sub">{{ ln.also|length }} {{ "game" if ln.also|length == 1 else "games" }}</span></h3>
     {% for c in ln.also %}{{ m.mini_card(c) }}{% endfor %}
   </div>
   {% endif %}
   {% if ln.blowouts %}
-  <h3 class="sub-head sub-plain">Decided early</h3>
-  <div class="card gm-list">
+  <div class="card gm-list" aria-label="Decided early">
+    <h3 class="card-title">Decided early <span class="sub">{{ ln.blowouts|length }} {{ "game" if ln.blowouts|length == 1 else "games" }}</span></h3>
     {% for c in ln.blowouts %}{{ m.mini_card(c) }}{% endfor %}
   </div>
   {% endif %}
@@ -80,17 +80,17 @@
   {% endif %}
   {% set ps = v.stories %}
   {% if ps.stories %}
-  <div class="strip-head" id="player-stories"><h3 class="sub-head sub-plain">Player stories</h3><span class="muted strip-hint">DK points vs our pre-game projection</span></div>
-  <div class="card">
+  <section class="card flush story-card" id="player-stories" aria-labelledby="player-stories-title">
+    <h3 class="card-title" id="player-stories-title">Player stories <span class="sub">DK points vs our pre-game projection</span></h3>
     <ul class="story-list">
       {% for s in ps.stories %}
       <li class="story">
-        <p class="story-top"><span><b>{{ s.player }}</b> <span class="team-tag">{{ m.dot(s.team) }}{{ s.team.code }}</span></span><span class="tabnum"><span class="muted">{{ s.expected|num }}</span> {{ m.icon("arrow") }} <b class="{{ 'pos' if s.above else 'neg' }}">{{ s.actual|num }}</b> <small class="muted">DK</small></span></p>
+        <p class="story-top"><span><b>{{ m.plink(s.player_id, s.player) }}</b> <span class="team-tag">{{ m.dot(s.team) }}{{ m.tlink(s.team) }}</span></span><span class="tabnum"><span class="muted">{{ s.expected|num }}</span> {{ m.icon("arrow") }} <b class="{{ 'pos' if s.above else 'neg' }}">{{ s.actual|num }}</b> <small class="muted">DK</small></span></p>
         <p class="story-text">{{ s.text }}</p>
       </li>
       {% endfor %}
     </ul>
-  </div>
+  </section>
   {% endif %}
 </section>
 
@@ -103,6 +103,7 @@
   {{ m.empty("Team trends are unavailable", "The trends engine didn’t produce numbers for this Brief.") }}
   {% else %}
   <div class="card rows trend-rows">
+    <h3 class="card-title">Rising &amp; sliding{% if tp.trending %} <span class="sub">net rating per 100, last 10 vs season</span>{% endif %}</h3>
     {% if tp.trending %}
     {% for t in tp.trending[:3] %}{{ m.trend_row(t) }}{% endfor %}
     {% if tp.trending|length > 3 %}
@@ -119,23 +120,25 @@
   </div>
 
   {% if tp.power %}
-  <div class="strip-head"><h3 class="sub-head sub-plain">Power ranking</h3><span class="muted strip-hint">Top 10 &middot; points per 100 vs average</span></div>
+  <section class="card flush power-card" aria-labelledby="power-title">
+  <h3 class="card-title" id="power-title">Power ranking <span class="sub">Top 10 &middot; points per 100 vs average</span></h3>
   <ol class="pstrip" aria-label="Power ranking, top 10">
     {% for r in tp.power %}
     <li class="ps">
-      <span class="ps-rank">{{ r.rank }}</span>
-      {{ m.badge(r.team_id, "sm") }}
+      <span class="ps-rank">{{ m.rank_chip(r.rank) }}</span>
+      {{ m.badge(r.team_id, "sm", link=True) }}
       <span class="ps-v"><b class="tabnum">{{ r.power|signed }}</b><small class="tabnum">{{ r.record|record }}{% if r.change_7d and r.change_7d > 0 %} <span class="mv mv-up">{{ m.icon("up") }}{{ r.change_7d }}</span>{% elif r.change_7d and r.change_7d < 0 %} <span class="mv mv-down">{{ m.icon("down") }}{{ -r.change_7d }}</span>{% endif %}</small></span>
     </li>
     {% endfor %}
   </ol>
+  </section>
   {% endif %}
   {% if tp.streaks or tp.movers %}
   <ul class="chips streak-chips" aria-label="Streaks and movers">
     {% if tp.streaks %}<li class="chips-k">Streaks</li>{% endif %}
-    {% for s in tp.streaks %}<li class="chip">{{ m.dot(s.team_id) }}<b>{{ s.team_id.code }}</b><span class="{% if s.streak[:1] == 'W' %}pos{% else %}neg{% endif %} strong">{{ s.streak }}</span></li>{% endfor %}
+    {% for s in tp.streaks %}<li class="chip">{{ m.dot(s.team_id) }}<b>{{ m.tlink(s.team_id) }}</b><span class="{% if s.streak[:1] == 'W' %}pos{% else %}neg{% endif %} strong">{{ s.streak }}</span></li>{% endfor %}
     {% if tp.movers %}<li class="chips-k">Movers</li>{% endif %}
-    {% for r in tp.movers %}<li class="chip">{{ m.dot(r.team_id) }}<b>{{ r.team_id.code }}</b>#{{ r.rank_7d_ago }}&nbsp;{{ m.icon("arrow") }}&nbsp;#{{ r.rank }}</li>{% endfor %}
+    {% for r in tp.movers %}<li class="chip">{{ m.dot(r.team_id) }}<b>{{ m.tlink(r.team_id) }}</b>#{{ r.rank_7d_ago }}&nbsp;{{ m.icon("arrow") }}&nbsp;#{{ r.rank }}</li>{% endfor %}
   </ul>
   {% endif %}
   {% endif %}
@@ -181,7 +184,7 @@
         <div class="tab-panel" role="tabpanel" id="panel-{{ cat.key }}" aria-labelledby="tab-{{ cat.key }}"{% if not loop.first %} hidden{% endif %}>
           <ol class="leader-list">
             {% for r in cat.rows %}
-            <li><span class="ll-rank">{{ loop.index }}</span><span class="ll-who"><strong>{{ r.player }}</strong> <span class="team-tag">{{ m.dot(r.team) }}{{ r.team.code }}</span><span class="ll-line">{{ r.line }}{% if r.games %} &middot; {{ r.games }} gp{% endif %}</span></span><span class="ll-val">{{ r.value }}</span></li>
+            <li><span class="ll-rank">{{ loop.index }}</span><span class="ll-who"><strong>{{ r.player }}</strong> <span class="team-tag">{{ m.dot(r.team) }}{{ m.tlink(r.team) }}</span><span class="ll-line">{{ r.line }}{% if r.games %} &middot; {{ r.games }} gp{% endif %}</span></span><span class="ll-val">{{ r.value }}</span></li>
             {% endfor %}
           </ol>
         </div>
@@ -192,7 +195,7 @@
         {% if pp.roles %}
         <div class="card roles">
           <h3 class="card-title">Role changes</h3>
-          {% macro role_li(r) %}<li><p class="rl-who"><strong>{{ r.player }}</strong> <span class="team-tag">{{ m.dot(r.team) }}{{ r.team.code }}</span></p>
+          {% macro role_li(r) %}<li><p class="rl-who"><strong>{{ m.plink(r.player_id, r.player) }}</strong> <span class="team-tag">{{ m.dot(r.team) }}{{ m.tlink(r.team) }}</span></p>
               <p class="rl-kinds">{% for k in r.kinds %}<span class="flag{% if k.neg %} flag-neg{% endif %}">{{ k.label }}</span>{% endfor %}</p>
               {% if r.detail %}<p class="rl-detail">{{ r.detail }}</p>{% endif %}</li>{% endmacro %}
           <ul class="role-list">{% for r in pp.roles[:6] %}{{ role_li(r) }}{% endfor %}</ul>
@@ -207,8 +210,8 @@
         <div class="card streak-strip">
           <h3 class="card-title">Streaks &amp; career highs</h3>
           <ul class="notes-list">
-            {% for s in pp.career_highs %}<li><span class="flag">Career high</span> <strong>{{ s.player }}</strong> <span class="team-tag">{{ m.dot(team(s.team)) }}{{ s.team }}</span> <span class="muted">{{ s.detail }}</span></li>{% endfor %}
-            {% for s in pp.streaks[:6] %}<li><span class="flag flag-plain">{{ s.games }} straight</span> <strong>{{ s.player }}</strong> <span class="team-tag">{{ m.dot(team(s.team)) }}{{ s.team }}</span> <span class="muted">{{ s.detail }}</span></li>{% endfor %}
+            {% for s in pp.career_highs %}<li><span class="flag">Career high</span> <strong>{{ m.plink(s.player_id, s.player) }}</strong> <span class="team-tag">{{ m.dot(team(s.team)) }}{{ m.tlink(team(s.team)) }}</span> <span class="muted">{{ s.detail }}</span></li>{% endfor %}
+            {% for s in pp.streaks[:6] %}<li><span class="flag flag-plain">{{ s.games }} straight</span> <strong>{{ m.plink(s.player_id, s.player) }}</strong> <span class="team-tag">{{ m.dot(team(s.team)) }}{{ m.tlink(team(s.team)) }}</span> <span class="muted">{{ s.detail }}</span></li>{% endfor %}
           </ul>
         </div>
         {% endif %}
@@ -275,7 +278,7 @@
   <div class="tn-grid">
     {% for t in tn.games %}{{ m.tonight_row(t) }}{% endfor %}
   </div>
-  <p class="footnote">Bars show our win probability; the dark tick is the market&rsquo;s. Tap a game for lines and factors. <a href="/players/{{ tn.day }}">Tonight&rsquo;s player cards</a></p>
+  <p class="footnote">Bars show our win probability; the white tick is the market&rsquo;s. Tap a game for lines and factors. <a href="/tonight/{{ tn.day }}">Tonight&rsquo;s player cards</a></p>
   {% else %}
   {{ m.empty("No games tonight", "Enjoy the night off. The next Brief picks up when the schedule does.") }}
   {% endif %}

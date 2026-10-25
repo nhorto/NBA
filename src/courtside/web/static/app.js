@@ -1,32 +1,7 @@
-/* Courtside: theme toggle, tabs, open-on-hash, active section in the section nav. No dependencies. */
+/* Courtside: tabs, open-on-hash, active section in the section nav. No dependencies. */
 (function () {
   "use strict";
   var root = document.documentElement;
-
-  // ---- theme: system by default, a click pins the opposite of what is showing
-  var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-  function effective() {
-    var t = root.dataset.theme;
-    if (t === "light" || t === "dark") return t;
-    return mq && mq.matches ? "dark" : "light";
-  }
-  var btn = document.querySelector(".theme-toggle");
-  if (btn) {
-    var label = function () {
-      btn.setAttribute("aria-label", effective() === "dark" ? "Switch to light theme" : "Switch to dark theme");
-    };
-    label();
-    btn.addEventListener("click", function () {
-      var next = effective() === "dark" ? "light" : "dark";
-      var sys = mq && mq.matches ? "dark" : "light";
-      try {
-        if (next === sys) { localStorage.removeItem("cs-theme"); delete root.dataset.theme; }
-        else { localStorage.setItem("cs-theme", next); root.dataset.theme = next; }
-      } catch (e) { root.dataset.theme = next; }
-      label();
-    });
-    if (mq && mq.addEventListener) mq.addEventListener("change", label);
-  }
 
   // ---- tabs (ARIA tablist; arrow keys move between tabs)
   document.querySelectorAll("[data-tabs]").forEach(function (box) {

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# Games: the scoreboard for a night (web/stats_games.py, queries in stats/games.py). #}
+{% block title %}Games &middot; {{ day|medium_date }} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-games.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page{% endblock %}
+{% block content %}
+<div class="pro">
+  <div class="filters">
+    <span class="seg" role="group" aria-label="Night">
+      {%- if prev_day %}<a href="/games/{{ prev_day }}" rel="prev" aria-label="Previous night: {{ prev_day|medium_date }}" title="{{ prev_day|medium_date }}">&lsaquo;</a>{% else %}<a class="off" aria-disabled="true" aria-label="No earlier night">&lsaquo;</a>{% endif -%}
+      <a class="on" href="/games/{{ day }}" aria-current="true">{{ day|medium_date }}</a>
+      {%- if next_day %}<a href="/games/{{ next_day }}" rel="next" aria-label="Next night: {{ next_day|medium_date }}" title="{{ next_day|medium_date }}">&rsaquo;</a>{% else %}<a class="off" aria-disabled="true" aria-label="No later night">&rsaquo;</a>{% endif -%}
+    </span>
+    <span class="note">{{ note }}{% if games and not all_final %} &middot; scores and box scores fill in as games finish{% elif all_final %} &middot; box scores load the morning after (postgame job){% endif %}</span>
+  </div>
+
+  {% if games %}
+  <div class="scores games-board">
+    {%- for g in games %}
+    {%- set fin = g.status == "final" %}
+    <a class="sc{% if fin %} is-final{% endif %}" href="/game/{{ g.game_id }}" aria-label="{{ team(g.away).name }} at {{ team(g.home).name }}">
+      {%- for side in ("away", "home") %}
+      {%- set code = g[side] %}
+      <div class="row {{ 'win' if g.winner == side else ('lose' if g.winner else '') }}"><span class="t" title="{{ team(code).name }}">{{ code }}</span><span class="rec">{{ g[side ~ '_rec']|record }}</span><span class="s">{{ g[side ~ '_score'] if g[side ~ '_score'] is not none else '' }}</span></div>
+      {%- endfor %}
+      <div class="foot">
+        <span class="tops">{% if g.top %}{% for p in g.top %}{{ p.name|last_name }}{% if p.pts %} {{ p.pts }}{% endif %}{% if not loop.last %} &middot; {% endif %}{% endfor %}{% elif fin %}&nbsp;{% else %}{{ g.tipoff_utc|tipoff }}{% endif %}</span>
+        {%- if fin %}<span class="final">Final{% if g.ot %}/{{ g.ot_label }}{% endif %}</span>
+        {%- elif g.status == "live" %}<span class="final live">Live</span>
+        {%- elif g.status == "postponed" %}<span class="final">Postponed</span>
+        {%- else %}<span class="final">Preview</span>{% endif %}
+      </div>
+    </a>
+    {%- endfor %}
+  </div>
+  {% else %}
+  {% call s.card("Scoreboard", sub=day|long_date) %}
+    {{ s.empty("No games on this night.", "The schedule has nothing for " ~ (day|long_date) ~ "." ) }}
+    {% if prev_day or next_day %}<p class="note jump">
+      {% if prev_day %}<a class="link" href="/games/{{ prev_day }}">&lsaquo; {{ prev_day|long_date }}</a>{% endif %}
+      {% if next_day %}<a class="link" href="/games/{{ next_day }}">{{ next_day|long_date }} &rsaquo;</a>{% endif %}
+    </p>{% endif %}
+  {% endcall %}
+  {% endif %}
+</div>
+{% endblock %}

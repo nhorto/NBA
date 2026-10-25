@@ -1,0 +1,10 @@
+{#- "Tools" links row: Finder · Lineups · Compare. Include inside a .pro page:
+      {% set tools_on = "finder" %}{% include "_stats_tools.html" %}
+    Styles: .tools-row in pro-tools.css (falls back to the plain .seg look without it). -#}
+{% set _on = tools_on|default("") %}
+<nav class="tools-row" aria-label="Stats tools"><span class="lab">Tools</span>
+<span class="seg">
+  <a href="/finder"{% if _on == "finder" %} class="on" aria-current="page"{% endif %}>Stat finder</a>
+  <a href="/lineups"{% if _on == "lineups" %} class="on" aria-current="page"{% endif %}>Lineups</a>
+  <a href="/compare"{% if _on == "compare" %} class="on" aria-current="page"{% endif %}>Compare</a>
+</span></nav>

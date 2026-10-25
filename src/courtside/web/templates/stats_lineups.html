@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# Lineup explorer (web/stats_lineups.py, queries stats/lineups.py from stints).
+   The picker is a plain GET form (on= / off= checkboxes); pro-tools.js only keeps a player
+   from being ticked both on and off and prints the slider value. #}
+{% block title %}Lineups{% if tcode %} · {{ t.name }} · {{ season }}{% endif %} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-tools.css?v={{ asset_v }}">
+<script src="/static/pro-tools.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block body_class %}pro-page tl-page{% endblock %}
+
+{% macro net_td(r) -%}
+{%- if r and r.net is not none -%}<td data-v="{{ r.net }}" class="hi {{ 'up' if r.net > 0.05 else ('dn' if r.net < -0.05 else '') }}">{{ r.net|signed(1) }}</td>
+{%- else -%}<td data-v="" class="dim">{{ DASH }}</td>{%- endif -%}
+{%- endmacro %}
+{% macro names_td(ids, nms) -%}
+<td class="l tl-five">{% for pid in ids %}<a class="link" href="/player/{{ pid }}" title="{{ nms[loop.index0] }}">{{ nms[loop.index0]|last_name }}</a>{% if not loop.last %}<span class="dim"> &middot; </span>{% endif %}{% endfor %}</td>
+{%- endmacro %}
+{% macro combo_table(rows, label) -%}
+<table data-sortable class="tl-t tl-combo">
+  <caption class="tl-cap">{{ label }}</caption>
+  <thead><tr><th class="l">Players</th><th>Poss</th><th>Min</th><th>ORtg</th><th>DRtg</th><th data-sorted="{{ 'desc' if 'Best' in label else 'asc' }}">Net</th></tr></thead>
+  <tbody>
+  {% for u in rows %}
+    <tr>{{ names_td(u.ids, u.names) }}{{ s.ntd(u.poss, nd=0) }}{{ s.ntd(u.min, nd=0) }}{{ s.ntd(u.ortg) }}{{ s.ntd(u.drtg) }}{{ net_td(u) }}</tr>
+  {% endfor %}
+  </tbody>
+</table>
+{%- endmacro %}
+
+{% block content %}
+<div class="pro">
+  <div class="crumbs"><a href="/teams">Teams</a> &rsaquo; {% if tcode %}<a href="/team/{{ tcode }}?season={{ season }}">{{ t.name }}</a> &rsaquo; {% endif %}<span>Lineups</span></div>
+
+  {% if not tcode %}
+  {# ---------------------------------------------------------------- team picker #}
+  <div class="filters tl-head">
+    <h1 class="page-title">Lineup explorer</h1>
+    {% set tools_on = "lineups" %}{% include "_stats_tools.html" %}
+  </div>
+  {% call s.card("Pick a team", sub=season ~ " · on/off, with-or-without and the best combos from play-by-play lineups") %}
+    <div class="tl-teams">
+    {% for c in teams %}{% set tt = team(c) %}
+      <a class="tl-team" href="/lineups?team={{ c }}&amp;season={{ season }}"><span class="tl-sw" style="background:{{ tt.primary }};box-shadow:inset 0 -3px 0 {{ tt.secondary }}"></span>{{ tt.name }}</a>
+    {% endfor %}
+    </div>
+  {% endcall %}
+
+  {% else %}
+  <div class="card">
+    {% set meta %}{{ type_label }} · {% if games %}{{ games }} of {{ data.team_gp }} games with lineup data{% else %}no lineup data yet{% endif %}{% endset %}
+    {% call s.hero("Lineups · " ~ t.name, meta=meta, badge_team=tcode) %}
+      {{ s.seg("season", season_opts, season, label="Season") }}
+      {{ s.seg("type", type_opts, stype, label="Season type") }}
+    {% endcall %}
+  </div>
+  <div class="filters tl-head tl-sub">{% set tools_on = "lineups" %}{% include "_stats_tools.html" %}
+    <a class="link" href="/team/{{ tcode }}?season={{ season }}">&lsaquo; {{ t.nickname }} team page</a></div>
+  {% if notices %}<div class="tl-notes" role="status">{% for n in notices %}<div>{{ n }}</div>{% endfor %}</div>{% endif %}
+
+  {% if not games %}
+  {% call s.card("Lineups") %}
+    {{ s.empty("Not collected yet.", " Lineups come from play-by-play stints; " ~ season ~ " " ~ type_label|lower ~ " has none for the " ~ t.nickname ~ " yet. Try another season.") }}
+  {% endcall %}
+  {% else %}
+  <div class="grid g-12">
+    {# -------------------------------------------------------------- picker #}
+    <form class="card span-4 tl-pick" action="/lineups" method="get" id="lu-form">
+      <h3>Players <span class="sub">tick on / off, then Apply</span></h3>
+      <input type="hidden" name="team" value="{{ tcode }}">
+      <input type="hidden" name="season" value="{{ season }}">
+      {% if stype == "Playoffs" %}<input type="hidden" name="type" value="playoffs">{% endif %}
+      {% if wowy_pid %}<input type="hidden" name="wowy" value="{{ wowy_pid }}">{% endif %}
+      <div class="scroll tall">
+      <table class="tl-t tl-roster">
+        <thead><tr><th class="l">Player</th><th data-tip="Minutes on the floor">Min</th><th class="c">On</th><th class="c">Off</th><th class="c" data-tip="With or without him, per teammate">WOWY</th></tr></thead>
+        <tbody>
+        {% for p in roster %}
+          <tr{% if p.on %} class="tl-is-on"{% elif p.off %} class="tl-is-off"{% endif %}>
+            <td class="name"><a href="/player/{{ p.player_id }}">{{ p.name }}</a></td>
+            {{ s.ntd(p.min, nd=0, cls="dim") }}
+            <td class="c"><input type="checkbox" name="on" value="{{ p.player_id }}" aria-label="{{ p.name }} on"{% if p.on %} checked{% endif %} data-pair="{{ p.player_id }}"></td>
+            <td class="c"><input type="checkbox" name="off" value="{{ p.player_id }}" aria-label="{{ p.name }} off"{% if p.off %} checked{% endif %} data-pair="{{ p.player_id }}"></td>
+            <td class="c"><a class="tl-wy{% if p.wowy %} on{% endif %}" href="{{ p.wowy_href }}" aria-label="With or without {{ p.name }}"{% if p.wowy %} aria-current="true"{% endif %}>{{ "✓" if p.wowy else "·" }}</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <div class="tl-minrow">
+        <label for="lu-min"><span class="lab">Combos: min possessions</span></label>
+        <input type="range" id="lu-min" name="min" min="0" max="600" step="10" value="{{ [min_poss, 600]|min }}" data-out="lu-min-out">
+        <output id="lu-min-out" for="lu-min">{{ min_poss }}</output>
+      </div>
+      <div class="tl-actions">
+        <button type="submit" class="tl-btn">Apply</button>
+        {% if on or off %}<a class="link" href="{{ clear_href }}">Clear on / off</a>{% endif %}
+      </div>
+    </form>
+
+    <div class="span-8 tl-col">
+      {# ------------------------------------------------------------ selection #}
+      {% set sub %}{% if sel %}{% if sel_names.on %}on: {{ sel_names.on|join(", ") }}{% endif %}{% if sel_names.on and sel_names.off %} · {% endif %}{% if sel_names.off %}off: {{ sel_names.off|join(", ") }}{% endif %}{% else %}per 100 possessions{% endif %}{% endset %}
+      {% call s.card("Selection" if sel else "Team overall", sub=sub, id="selection") %}
+        {% set r = sel.sel if sel else team_r %}
+        <div class="tiles boxed">
+          {{ s.tile("Possessions", r.poss|num(0), sub=((sel.sel.share|pct(0)) ~ " of the team's") if sel and sel.sel.share is not none else None) }}
+          {{ s.tile("Minutes", r.min|num(0)) }}
+          {{ s.tile("Off rating", r.ortg|num(1)) }}
+          {{ s.tile("Def rating", r.drtg|num(1)) }}
+          {{ s.tile("Net rating", r.net|signed(1), sub=("vs team " ~ sel.diff|signed(1)) if sel and sel.diff is not none else None) }}
+        </div>
+        {% if sel %}
+        <table class="tl-t tl-cmp">
+          <thead><tr><th class="l"></th><th>Poss</th><th>Min</th><th>ORtg</th><th>DRtg</th><th>Net</th></tr></thead>
+          <tbody>
+            <tr><td class="name">Selection</td>{{ s.ntd(sel.sel.poss, nd=0) }}{{ s.ntd(sel.sel.min, nd=0) }}{{ s.ntd(sel.sel.ortg) }}{{ s.ntd(sel.sel.drtg) }}{{ net_td(sel.sel) }}</tr>
+            <tr><td class="name" data-tip="Every other possession of the team">Rest of the time</td>{{ s.ntd(sel.rest.poss, nd=0) }}{{ s.ntd(sel.rest.min, nd=0) }}{{ s.ntd(sel.rest.ortg) }}{{ s.ntd(sel.rest.drtg) }}{{ net_td(sel.rest) }}</tr>
+            <tr><td class="name">{{ t.nickname }} overall</td>{{ s.ntd(sel.team.poss, nd=0) }}{{ s.ntd(sel.team.min, nd=0) }}{{ s.ntd(sel.team.ortg) }}{{ s.ntd(sel.team.drtg) }}{{ net_td(sel.team) }}</tr>
+          </tbody>
+        </table>
+        {% if sel.sel.poss == 0 %}{{ s.empty("Those players never shared the floor that way.") }}{% endif %}
+        {% else %}
+        <p class="note tl-mt">Tick players <b>On</b> (all of them on the floor) and <b>Off</b> (none of them on it), then Apply. Example: on = two starters, off = the starting center.</p>
+        {% endif %}
+      {% endcall %}
+
+      {# ------------------------------------------------------------ WOWY #}
+      {% if wy %}
+      {% set wl = wowy_name|last_name %}
+      {% call s.card("With or without " ~ wowy_name, sub="net per 100 possessions · per teammate", flush=True, id="wowy") %}
+        <div class="tl-wowy-head">
+          <span class="pill">{{ wl }} on <b>{{ wy.on.net|signed(1) }}</b> <span class="dim">{{ wy.on.poss|num(0) }} poss</span></span>
+          <span class="pill">{{ wl }} off <b>{{ wy.off.net|signed(1) }}</b> <span class="dim">{{ wy.off.poss|num(0) }} poss</span></span>
+          {% if wy.diff is not none %}<span class="pill">On &minus; off <b class="{{ 'up' if wy.diff > 0 else 'dn' }}">{{ wy.diff|signed(1) }}</b></span>{% endif %}
+          <a class="link" href="/lineups?team={{ tcode }}&amp;season={{ season }}{{ '&amp;type=playoffs' if stype == 'Playoffs' else '' }}">close</a>
+        </div>
+        {% if wy.mates %}
+        <div class="scroll">
+        <table data-sortable class="tl-t tl-wowy">
+          <thead>
+            <tr class="tl-grp"><th class="l" data-nosort></th><th colspan="2" class="c">Both on</th><th colspan="2" class="c" data-tip="{{ wowy_name }} on, the teammate off">{{ wl }} only</th><th colspan="2" class="c" data-tip="The teammate on, {{ wowy_name }} off">Teammate only</th></tr>
+            <tr><th class="l">Teammate</th><th data-sorted="desc">Poss</th><th>Net</th><th>Poss</th><th>Net</th><th>Poss</th><th>Net</th></tr>
+          </thead>
+          <tbody>
+          {% for m in wy.mates %}
+            <tr><td class="name"><a href="/player/{{ m.player_id }}">{{ m.name }}</a></td>
+              {{ s.ntd(m.both.poss, nd=0) }}{{ net_td(m.both) }}
+              {{ s.ntd(m.a_only.poss, nd=0, cls="dim") }}{{ net_td(m.a_only) }}
+              {{ s.ntd(m.b_only.poss, nd=0, cls="dim") }}{{ net_td(m.b_only) }}</tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+        <p class="note tl-pad">Net = points scored minus allowed per 100 possessions. Small samples swing a lot: check the possessions.</p>
+        {% else %}{{ s.empty("He never shared the floor with a teammate here.") }}{% endif %}
+      {% endcall %}
+      {% else %}
+      {% call s.card("With or without", id="wowy") %}
+        <p class="note">Pick a player in the WOWY column to see the team's net with him on and off, and for each teammate: both on, one without the other.</p>
+      {% endcall %}
+      {% endif %}
+    </div>
+
+    {# -------------------------------------------------------------- combos #}
+    {% set sub %}{{ s.seg("size", [("2", "2-man"), ("3", "3-man"), ("5", "5-man")], "5", label="Combo size") }}{% endset %}
+    {% call s.card("Best and worst combos", sub=sub, cls="span-12", flush=True, id="combos") %}
+      {% for k in [2, 3, 5] %}{% set cb = combos[k] %}
+      {% call s.panel("size", k|string, "5") %}
+        {% if cb.n %}
+        <div class="tl-pair">
+          <div class="scroll">{{ combo_table(cb.best, "Best " ~ cb.best|length ~ " by net") }}</div>
+          <div class="scroll">{% if cb.worst %}{{ combo_table(cb.worst, "Worst " ~ cb.worst|length ~ " by net") }}{% else %}<p class="note tl-pad">Every qualifying {{ k }}-man unit is in the best list.</p>{% endif %}</div>
+        </div>
+        <p class="note tl-pad">{{ cb.n }} {{ k }}-man unit{{ "" if cb.n == 1 else "s" }} with {{ min_poss }}+ possessions{% if min_poss != min_default %} (default {{ min_default }}){% endif %}. Change the minimum with the slider.</p>
+        {% else %}{{ s.empty("No " ~ k ~ "-man unit has " ~ min_poss ~ " possessions.", " Lower the minimum with the slider.") }}{% endif %}
+      {% endcall %}
+      {% endfor %}
+    {% endcall %}
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

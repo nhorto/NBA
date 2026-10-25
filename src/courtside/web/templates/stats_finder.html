@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# Stat finder (web/stats_finder.py, queries stats/finder.py): game search + streak screens.
+   Every control is a GET field, so each search is a bookmarkable URL. Information only. #}
+{% block title %}Stat finder{% if mode == "streak" %} · streaks{% endif %} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-tools.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page tl-page{% endblock %}
+
+{% macro fmtv(v, kind) -%}
+{%- if v is none %}{{ DASH }}{% elif kind == "pct" %}{{ v|pct(1) }}{% elif kind == "int" %}{{ v|num(0) if v == v|round(0) else v|num(1) }}{% elif kind == "dollars" %}{{ v|dollars }}{% else %}{{ v|num(1) }}{% endif -%}
+{%- endmacro %}
+{% macro opt(value, label, cur) -%}
+<option value="{{ value }}"{% if value == cur %} selected{% endif %}>{{ label }}</option>
+{%- endmacro %}
+{% macro season_select(vals, id) -%}
+<label class="tl-f"><span class="lab">Season</span>
+  <select name="season" id="{{ id }}">{{ opt("all", "Last 3 seasons", vals.season) }}{% for x in window %}{{ opt(x, x, vals.season) }}{% endfor %}</select></label>
+<label class="tl-f"><span class="lab">Type</span>
+  <select name="type">{% for k, l in types.items() %}{{ opt(k if k != "all" else "", l, vals.type if vals.type != "all" else "") }}{% endfor %}</select></label>
+{%- endmacro %}
+{% macro team_select(name, label, cur, any_label) -%}
+<label class="tl-f"><span class="lab">{{ label }}</span>
+  <select name="{{ name }}">{{ opt("", any_label, cur or "") }}{% for c in teams %}{{ opt(c, c ~ " · " ~ team_name(c), cur) }}{% endfor %}</select></label>
+{%- endmacro %}
+
+{% block content %}
+<div class="pro">
+  <div class="crumbs"><a href="/players">Players</a> &rsaquo; <span>Stat finder</span></div>
+  <div class="filters tl-head">
+    <h1 class="page-title">Stat finder</h1>
+    {{ s.seg("mode", mode_opts, mode, label="Search type") }}
+    {% set tools_on = "finder" %}{% include "_stats_tools.html" %}
+  </div>
+
+  <div class="tl-presets"><span class="lab">Saved screens</span>
+    {% for p in presets %}<a class="pill{% if p.on %} tl-on{% endif %}" href="{{ p.href }}"{% if p.on %} aria-current="true"{% endif %}>{{ p.label }}</a>{% endfor %}
+  </div>
+  {% if notices %}<div class="tl-notes" role="status">{% for n in notices %}<div>{{ n }}</div>{% endfor %}</div>{% endif %}
+
+  {% if mode == "games" %}
+  {# ================================================================ game finder #}
+  <form class="card tl-form" action="/finder" method="get" autocomplete="off">
+    <input type="hidden" name="mode" value="games">
+    {% if view == "players" %}<input type="hidden" name="view" value="players">{% endif %}
+    {% if vals.player is not none %}<input type="hidden" name="player" value="{{ vals.player }}">{% endif %}
+    <div class="tl-grid">
+      <fieldset class="tl-box tl-conds">
+        <legend>Stat line</legend>
+        {% for r in rows_form %}{% set i = loop.index %}
+        <div class="tl-cond">
+          <label class="sr" for="s{{ i }}">Stat {{ i }}</label>
+          <select name="s{{ i }}" id="s{{ i }}">{{ opt("", "Stat…", r.stat) }}{% for k in cond_stats %}{{ opt(k, stats[k][0] ~ (" (%)" if stats[k][3] else ""), r.stat) }}{% endfor %}</select>
+          <label class="sr" for="o{{ i }}">Comparison {{ i }}</label>
+          <select name="o{{ i }}" id="o{{ i }}" class="tl-op">{% for k, o in ops.items() %}{{ opt(k, o[1], r.op) }}{% endfor %}</select>
+          <label class="sr" for="v{{ i }}">Value {{ i }}</label>
+          <input type="text" inputmode="decimal" name="v{{ i }}" id="v{{ i }}" value="{{ r.value }}" placeholder="value" class="tl-num">
+        </div>
+        {% endfor %}
+        <div class="note">All rows must match. 10+ categories: 2 = double-double, 3 = triple-double. FG% / 3P% in percent.</div>
+      </fieldset>
+      <fieldset class="tl-box">
+        <legend>Game</legend>
+        <div class="tl-fields">
+          {{ season_select(vals, "g-season") }}
+          <label class="tl-f"><span class="lab">Where</span><select name="ha">{{ opt("", "Home or away", vals.ha or "") }}{{ opt("home", "Home", vals.ha) }}{{ opt("away", "Away", vals.ha) }}</select></label>
+          <label class="tl-f"><span class="lab">Result</span><select name="wl">{{ opt("", "Win or loss", vals.wl or "") }}{{ opt("w", "Win", vals.wl) }}{{ opt("l", "Loss", vals.wl) }}</select></label>
+          {{ team_select("team", "Team", vals.team, "Any team") }}
+          {{ team_select("opp", "Opponent", vals.opp, "Any opponent") }}
+          <label class="tl-f"><span class="lab">Role</span><select name="role">{{ opt("", "Starter or bench", vals.role or "") }}{{ opt("starter", "Started", vals.role) }}{{ opt("bench", "Off the bench", vals.role) }}</select></label>
+          <label class="tl-f"><span class="lab">Rest</span><select name="rest">{{ opt("", "Any rest", vals.rest or "") }}{% for k, v in rest.items() %}{{ opt(k, v[1], vals.rest) }}{% endfor %}</select></label>
+        </div>
+      </fieldset>
+      <fieldset class="tl-box">
+        <legend>DFS</legend>
+        <div class="tl-fields tl-two">
+          <label class="tl-f"><span class="lab">DK salary from</span><input type="text" inputmode="numeric" name="sal_min" value="{{ rng.sal_min }}" placeholder="$" class="tl-num"></label>
+          <label class="tl-f"><span class="lab">to</span><input type="text" inputmode="numeric" name="sal_max" value="{{ rng.sal_max }}" placeholder="$" class="tl-num"></label>
+          <label class="tl-f"><span class="lab">Real own% from</span><input type="text" inputmode="decimal" name="own_min" value="{{ rng.own_min }}" placeholder="%" class="tl-num"></label>
+          <label class="tl-f"><span class="lab">to</span><input type="text" inputmode="decimal" name="own_max" value="{{ rng.own_max }}" placeholder="%" class="tl-num"></label>
+        </div>
+        <div class="note">Only games with a DK classic salary / uploaded contest ownership can match (salaries since 2026-10-20 in this window).</div>
+        <label class="tl-f tl-sort"><span class="lab">Keep the top {{ cap }} by</span>
+          <select name="sort">{{ opt("date", "Newest", sort) }}{% for k in sorts if k != "date" %}{{ opt(k, stats[k][0], sort) }}{% endfor %}</select></label>
+      </fieldset>
+    </div>
+    <div class="tl-actions">
+      <button type="submit" class="tl-btn">Search</button>
+      <a class="link" href="/finder?mode=games">Reset</a>
+      <span class="note">Played games only (minutes &gt; 0), {{ window|last }} to {{ window|first }}.</span>
+    </div>
+  </form>
+  <div class="gap"></div>
+
+  {% if not active %}
+  {% call s.card("Search player games") %}
+    {{ s.empty("Add a stat condition or a game filter, then Search.", " Or start from a saved screen above. Every search is a link you can bookmark.") }}
+  {% endcall %}
+  {% elif timed_out %}
+  {% call s.card("Results") %}{{ s.empty("That search took too long and was stopped.", " Add a condition or pick one season to narrow it.") }}{% endcall %}
+  {% elif res %}
+  {% set sub %}{{ s.seg("view", view_opts, view, label="View") }}{% endset %}
+  {% set title = ("{:,}".format(res.count) ~ " game" ~ ("" if res.count == 1 else "s")) if res.count else "No games" %}
+  {% call s.card(title, sub=sub, flush=True, id="results") %}
+    <div class="tl-summary">{% for x in summary %}<span class="pill">{{ x }}</span>{% endfor %}
+      <span class="note">{{ "Last 3 seasons" if vals.season == "all" else vals.season }} · {{ types[vals.type]|lower }}{% if res.capped %} · showing {{ "the top " ~ cap ~ (" by " ~ stats[sort][0] if sort != "date" else " newest") if not res.group else "the " ~ cap ~ " players with the most games" }}{% endif %}{% if clear_player %} · <a class="link" href="{{ clear_player }}">all players</a>{% endif %}</span></div>
+    {% if not res.rows %}
+      {{ s.empty("No games match.", " Loosen a condition or widen the seasons.") }}
+    {% elif res.group %}
+    <div class="scroll tall">
+    <table data-sortable data-renumber class="tl-t">
+      <thead><tr><th data-nosort>#</th><th class="l">Player</th><th class="l">Team</th><th data-sorted="desc" data-tip="Games matching the search">Games</th><th>Last</th><th data-tip="Average points in those games">Pts</th><th data-tip="Average DK points in those games">DK</th><th data-nosort></th></tr></thead>
+      <tbody>
+      {% for r in res.rows %}
+        <tr><td class="rownum dim">{{ loop.index }}</td>
+          <td class="name">{{ s.player_link(r.player_id, r.name) }}</td>
+          <td class="l">{{ s.team_link(r.team) if r.team else "" }}</td>
+          <td class="hi" data-v="{{ r.games }}">{{ r.games }}</td>
+          <td data-v="{{ r.last }}">{{ r.last }}</td>
+          {{ s.ntd(r.avg_pts) }}{{ s.ntd(r.avg_dk) }}
+          <td class="l"><a class="link" href="{{ player_href(r.player_id) }}">games &rsaquo;</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="note tl-pad">{{ "{:,}".format(res.groups) }} player{{ "" if res.groups == 1 else "s" }}. Click a column to sort.</p>
+    {% else %}
+    <div class="scroll tall">
+    <table data-sortable class="tl-t">
+      <thead><tr>
+        <th class="l"{% if sort == "date" %} data-sorted="desc"{% endif %}>Date</th><th class="l">Player</th><th class="l">Team</th><th class="l">Opp</th><th class="l" data-tip="Team result">W/L</th>
+        {% for k, h in [("min", "Min"), ("pts", "Pts"), ("reb", "Reb"), ("ast", "Ast"), ("fg3m", "3PM"), ("stl", "Stl"), ("blk", "Blk"), ("tov", "TO")] %}<th{% if sort == k %} data-sorted="desc"{% endif %}{% if k == "tov" %} data-sort-first="asc"{% endif %}>{{ h }}</th>{% endfor %}
+        <th data-tip="Field goals made / attempted">FG</th>
+        <th{% if sort == "dk" %} data-sorted="desc"{% endif %} data-tip="DraftKings Classic points">DK</th><th{% if sort == "salary" %} data-sorted="desc"{% endif %} data-tip="DK classic salary that day">Salary</th><th{% if sort == "own" %} data-sorted="desc"{% endif %} data-tip="Real %drafted, mean over the day's uploaded classic contests">Own%</th>
+      </tr></thead>
+      <tbody>
+      {% for r in res.rows %}
+        <tr>
+          <td class="l" data-v="{{ r.game_date }}">{{ r.game_date }}{% if r.season_type != "Regular Season" %} <span class="note">{{ "PO" if r.season_type == "Playoffs" else "PI" }}</span>{% endif %}</td>
+          <td class="name">{{ s.player_link(r.player_id, r.player_name) }}</td>
+          <td class="l">{{ s.team_link(r.team) if r.team else "" }}</td>
+          <td class="l">{% if r.opp %}<span class="dim">{{ "vs" if r.is_home else "@" }}</span> {{ s.team_link(r.opp) }}{% endif %}</td>
+          <td class="l {{ 'up' if r.wl == 'W' else 'dn' }}">{{ r.wl or "" }}</td>
+          {{ s.ntd(r.min, nd=0) }}{{ s.ntd(r.pts, kind="int", cls="hi" if sort == "pts" else "") }}{{ s.ntd(r.reb, kind="int") }}{{ s.ntd(r.ast, kind="int") }}{{ s.ntd(r.fg3m, kind="int") }}{{ s.ntd(r.stl, kind="int") }}{{ s.ntd(r.blk, kind="int") }}{{ s.ntd(r.tov, kind="int") }}
+          <td class="dim" data-v="{{ r.fgm or 0 }}">{{ r.fgm|int }}-{{ r.fga|int }}</td>
+          {{ s.ntd(r.dk, cls="hi") }}{{ s.ntd(r.salary, kind="dollars") }}
+          {{ s.ntd(r.own) }}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="note tl-pad">Click a column to sort these rows. DK points use DraftKings Classic scoring (bonuses included). Rest = days off since the team's previous game of that season. Starter / bench needs lineup data for the game.</p>
+    {% endif %}
+  {% endcall %}
+  {% endif %}
+
+  {% else %}
+  {# ================================================================ streaks #}
+  <form class="card tl-form" action="/finder" method="get" autocomplete="off">
+    <input type="hidden" name="mode" value="streak">
+    <div class="tl-sentence">
+      <span>Players with</span>
+      <label class="sr" for="st-stat">Stat</label>
+      <select name="stat" id="st-stat">{% for k in streak_stats %}{{ opt(k, stats[k][0] ~ (" (%)" if stats[k][3] else ""), form.stat) }}{% endfor %}</select>
+      <label class="sr" for="st-op">Comparison</label>
+      <select name="op" id="st-op" class="tl-op">{{ opt("ge", "≥", form.op) }}{{ opt("le", "≤", form.op) }}</select>
+      <label class="sr" for="st-thr">Threshold</label>
+      <input type="text" inputmode="decimal" name="thr" id="st-thr" value="{{ form.thr }}" class="tl-num">
+      <span>in at least</span>
+      <label class="sr" for="st-k">k games</label>
+      <input type="number" min="1" max="82" name="k" id="st-k" value="{{ form.k }}" class="tl-num tl-int">
+      <span>of their last</span>
+      <label class="sr" for="st-n">n games</label>
+      <input type="number" min="1" max="82" name="n" id="st-n" value="{{ form.n }}" class="tl-num tl-int">
+      <span>games</span>
+    </div>
+    <div class="tl-fields tl-row">
+      {{ season_select(vals, "s-season") }}
+      {{ team_select("team", "Team", vals.team, "Any team") }}
+      <label class="tl-f"><span class="lab">Min games played</span><input type="number" min="1" max="300" name="gp" value="{{ form.gp }}" placeholder="{{ form.n }}" class="tl-num tl-int"></label>
+    </div>
+    <div class="tl-actions">
+      <button type="submit" class="tl-btn">Screen</button>
+      <span class="note">“Last n” = his last n games played within the seasons picked (they can cross into last season). Min games defaults to n.</span>
+    </div>
+  </form>
+  <div class="gap"></div>
+  {% if timed_out %}
+  {% call s.card("Results") %}{{ s.empty("That screen took too long and was stopped.", " Pick one season to narrow it.") }}{% endcall %}
+  {% elif res %}
+  {% set kind = stats[screen.stat][2] %}
+  {% call s.card(("{:,}".format(res.count) ~ " player" ~ ("" if res.count == 1 else "s")) if res.count else "No players", sub=screen.label() ~ " · " ~ ("last 3 seasons" if vals.season == "all" else vals.season) ~ " · " ~ types[vals.type]|lower, flush=True, id="results") %}
+    {% if res.rows %}
+    <div class="scroll tall">
+    <table data-sortable data-renumber class="tl-t tl-streak">
+      <thead><tr><th data-nosort>#</th><th class="l">Player</th><th class="l">Team</th>
+        <th data-sorted="desc" data-tip="Games reaching it, of his last {{ screen.n }}">Reached</th>
+        <th data-tip="Average over those last {{ screen.n }} games">Avg</th>
+        <th data-tip="Games in a row reaching it, up to his latest game">Run</th>
+        <th class="l" data-nosort data-tip="Oldest to newest; filled = reached">Last {{ [screen.n, 20]|min }} games</th>
+        <th>Last game</th><th data-tip="Games played in the seasons picked">GP</th></tr></thead>
+      <tbody>
+      {% for r in res.rows %}
+        <tr><td class="rownum dim">{{ loop.index }}</td>
+          <td class="name">{{ s.player_link(r.player_id, r.name) }}</td>
+          <td class="l">{{ s.team_link(r.team) if r.team else "" }}</td>
+          <td class="hi" data-v="{{ r.hits + r.hits / 100 / (r.n or 1) }}">{{ r.hits }}<span class="dim">/{{ r.n }}</span></td>
+          <td data-v="{{ r.avg }}">{{ fmtv(r.avg, "pct" if kind == "pct" else "num") }}</td>
+          <td data-v="{{ r.run }}">{{ r.run }}</td>
+          <td class="l"><span class="tl-strip" aria-label="Last games, oldest to newest: {% for x in r.seq %}{{ fmtv(x.v, kind) }}{% if x.hit %} reached{% endif %}{{ ', ' if not loop.last }}{% endfor %}">{% for x in r.seq[-20:] %}<i{% if x.hit %} class="hit"{% endif %}>{% if x.v is none %}{{ DASH }}{% elif kind == "pct" %}{{ (x.v * 100)|round|int }}{% else %}{{ fmtv(x.v, kind) }}{% endif %}</i>{% endfor %}</span></td>
+          <td data-v="{{ r.last }}">{{ r.last }}</td>
+          <td data-v="{{ r.gp }}" class="dim">{{ r.gp }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <p class="note tl-pad">History only: how often each player reached it lately. Sorted by games reaching it, then the average.{% if res.capped %} Showing the first {{ cap }}.{% endif %}</p>
+    {% else %}
+    {{ s.empty("No player qualifies.", " Lower the threshold or k, or pick “Last 3 seasons” (early in a season few players have " ~ screen.min_gp ~ " games).") }}
+    {% endif %}
+  {% endcall %}
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

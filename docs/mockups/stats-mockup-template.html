@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Courtside Stats — mockup</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#0c111b; --surface-1:#141a26; --surface-2:#1a2131; --line:#252e42; --line-2:#2f3a52;
+  --text-primary:#eef1f6; --text-secondary:#b4bccb; --text-muted:#7d879a;
+  --accent:#3987e5; --accent-2:#d95926;
+  --good:#3987e5; --bad:#e66767; --mid:#383835;
+  --pos:#1baf7a;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text-primary);font:13px/1.45 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.mockbar{background:#2a1f05;color:#f5d58a;font-size:12px;padding:6px 20px;border-bottom:1px solid #4a3a10}
+header.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:22px;padding:0 20px;height:52px;background:#0f1522;border-bottom:1px solid var(--line)}
+.brand{font-weight:800;letter-spacing:.14em;font-size:13px}
+.brand b{color:var(--accent)}
+nav.main{display:flex;gap:2px;height:100%}
+nav.main a{display:flex;align-items:center;padding:0 12px;color:var(--text-secondary);font-weight:600;border-bottom:2px solid transparent;cursor:pointer}
+nav.main a.on{color:var(--text-primary);border-bottom-color:var(--accent)}
+nav.main a .old{font-size:10px;color:var(--text-muted);margin-left:4px;font-weight:500}
+.search{margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:6px 10px;width:300px;color:var(--text-muted)}
+.search kbd{margin-left:auto;font:11px var(--mono);border:1px solid var(--line-2);border-radius:4px;padding:0 5px}
+main{padding:18px 20px 60px;max-width:1440px;margin:0 auto}
+.screen{display:none}.screen.on{display:block}
+.crumbs{color:var(--text-muted);font-size:12px;margin-bottom:10px}
+.crumbs span{color:var(--text-secondary)}
+.grid{display:grid;gap:14px}
+.g-12{grid-template-columns:repeat(12,1fr)}
+.span-3{grid-column:span 3}.span-4{grid-column:span 4}.span-5{grid-column:span 5}.span-6{grid-column:span 6}.span-7{grid-column:span 7}.span-8{grid-column:span 8}.span-12{grid-column:span 12}
+.card{background:var(--surface-1);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.card>h3{margin:0;padding:11px 14px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--text-secondary);font-weight:700;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.card>h3 .sub{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500;color:var(--text-muted)}
+.card .body{padding:12px 14px}
+.seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:2px;gap:2px}
+.seg button{background:none;border:0;color:var(--text-secondary);font:600 11px var(--sans);padding:4px 9px;border-radius:4px;cursor:pointer}
+.seg button.on{background:var(--line-2);color:var(--text-primary)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:6px 8px;text-align:right;white-space:nowrap}
+th{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);font-weight:700;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface-1);cursor:pointer;user-select:none}
+th:hover{color:var(--text-primary)}
+th.l,td.l{text-align:left}
+tbody tr{border-bottom:1px solid #1d2536}
+tbody tr:hover{background:#1b2232}
+td.name{font-weight:600;color:var(--text-primary)}
+td.dim{color:var(--text-muted)}
+.scroll{overflow:auto}
+.rk{display:inline-block;min-width:30px;padding:1px 5px;border-radius:4px;font:600 10.5px var(--mono);text-align:center;color:#fff}
+.num-big{font:700 26px/1.1 var(--sans);letter-spacing:-.01em}
+.tile{padding:12px 14px;border-right:1px solid var(--line)}
+.tile:last-child{border-right:0}
+.tile .lab{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);font-weight:700}
+.tile .val{display:flex;align-items:baseline;gap:8px;margin-top:4px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
+.hero{display:flex;align-items:center;gap:18px;padding:16px 18px}
+.badge{width:58px;height:58px;border-radius:12px;display:grid;place-items:center;font:800 17px var(--sans);letter-spacing:.04em;background:#0e2a4d;color:#9fc5f4;border:1px solid #23446f}
+.hero h1{margin:0;font-size:24px;letter-spacing:-.01em}
+.hero .meta{color:var(--text-secondary);margin-top:3px}
+.hero .right{margin-left:auto;display:flex;gap:10px;align-items:center}
+.pill{white-space:nowrap;display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border:1px solid var(--line);border-radius:999px;padding:3px 10px;color:var(--text-secondary);font-size:12px}
+.pill b{color:var(--text-primary)}
+.scores{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.sc{background:var(--surface-1);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
+.sc.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.sc .row{display:flex;align-items:center;gap:8px;padding:2px 0}
+.sc .t{font-weight:700;width:42px}
+.sc .rec{color:var(--text-muted);font-size:11px}
+.sc .s{margin-left:auto;font:700 16px var(--mono)}
+.sc .row.lose .t,.sc .row.lose .s{color:var(--text-muted)}
+.sc .foot{margin-top:6px;padding-top:6px;border-top:1px solid var(--line);color:var(--text-muted);font-size:11.5px;display:flex;justify-content:space-between;gap:8px}
+.sc .foot span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.final{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:var(--text-muted)}
+.qs td,.qs th{padding:4px 8px}
+.ff{display:grid;grid-template-columns:1fr auto 1fr;gap:6px 10px;align-items:center}
+.ff .bar{height:8px;border-radius:4px;background:var(--surface-2);position:relative;overflow:hidden}
+.ff .bar i{position:absolute;top:0;bottom:0;border-radius:4px;background:var(--accent)}
+.ff .bar.l i{right:0}.ff .bar.r i{left:0}
+.ff .lab{font-size:11px;color:var(--text-secondary);text-align:center;min-width:80px}
+.ff .v{font:600 12px var(--mono)}
+.ff .v.l{text-align:right}
+.note{color:var(--text-muted);font-size:11.5px}
+.hbar{display:flex;align-items:center;gap:8px}
+.hbar .track{flex:1;height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden}
+.hbar .track i{display:block;height:100%;background:var(--accent);border-radius:0 4px 4px 0}
+.diverge{position:relative;height:10px;background:transparent;width:120px;display:inline-block;vertical-align:middle}
+.diverge:before{content:"";position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--line-2)}
+.diverge i{position:absolute;top:1px;height:8px;border-radius:2px}
+.rangecard{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center}
+.range{position:relative;height:36px}
+.range .track{position:absolute;left:0;right:0;top:16px;height:4px;background:var(--surface-2);border-radius:2px}
+.range .band{position:absolute;top:12px;height:12px;background:#1c3b63;border:1px solid #2a5a94;border-radius:6px}
+.range .mean{position:absolute;top:8px;width:2px;height:20px;background:var(--accent)}
+.range .act{position:absolute;top:9px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:var(--accent-2);border:2px solid var(--surface-1)}
+.range .lbl{position:absolute;top:-2px;font-size:10.5px;color:var(--text-muted);transform:translateX(-50%)}
+.legend{display:flex;gap:14px;align-items:center;color:var(--text-secondary);font-size:11.5px;flex-wrap:wrap}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.tip{position:fixed;pointer-events:none;background:#0a0e16;border:1px solid var(--line-2);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--text-primary);z-index:50;display:none;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+.tip .m{color:var(--text-muted)}
+.filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.filters .lab{color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700}
+select{background:var(--surface-2);color:var(--text-primary);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:12px var(--sans)}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.split>div{padding:12px 14px}
+.split>div+div{border-left:1px solid var(--line)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;font-size:12.5px}
+.kv dt{color:var(--text-muted)}.kv dd{margin:0}
+.up{color:#6da7ec}.dn{color:#f08a8a}
+.ann{border:1px dashed #4a3a10;background:#1d1708;color:#e9cf8d;border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:12px}
+@media (max-width:1000px){
+  .g-12{grid-template-columns:1fr}
+  [class*="span-"]{grid-column:span 1}
+  .search{display:none}
+  nav.main{overflow-x:auto}
+  .hero{flex-wrap:wrap}.hero .right{margin-left:0;flex-wrap:wrap}
+  .split{grid-template-columns:1fr}.split>div+div{border-left:0;border-top:1px solid var(--line)}
+}
+</style>
+</head>
+<body>
+<div class="mockbar">MOCKUP · real Courtside data as of Sat Oct 24, 2026 · this season is only 2–5 games old, so current-season ranks are noisy · links inside a page are live, other pages are representative</div>
+<header class="top">
+  <div class="brand">COURT<b>SIDE</b></div>
+  <nav class="main" id="nav">
+    <a data-s="today">Today <span class="old">(Brief)</span></a>
+    <a data-s="games" class="on">Games</a>
+    <a data-s="teams">Teams</a>
+    <a data-s="player">Players</a>
+    <a data-s="leaders">Leaders</a>
+    <a data-s="dfs">DFS <span class="old">(existing)</span></a>
+  </nav>
+  <div class="search">⌕ Search players, teams, games <kbd>/</kbd></div>
+</header>
+<main>
+
+<!-- ============ GAMES ============ -->
+<section class="screen on" id="s-games">
+  <div class="filters">
+    <div class="seg"><button>‹</button><button class="on">Sat, Oct 24</button><button>›</button></div>
+    <span class="note">8 games · all final · box scores load the morning after (postgame job, 3 AM)</span>
+  </div>
+  <div class="scores" id="scores"></div>
+  <div style="height:14px"></div>
+  <div class="grid g-12">
+    <div class="card span-8">
+      <h3 id="box-title">Box score</h3>
+      <div class="body" style="padding:0">
+        <div class="split">
+          <div><table class="qs" id="qtable"></table></div>
+          <div><div class="ff" id="ff"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card span-4">
+      <h3>Game story <span class="sub">from the play-by-play</span></h3>
+      <div class="body" id="story"></div>
+    </div>
+    <div class="card span-12">
+      <h3><span id="box-view-title">Players</span>
+        <span class="sub"><span class="seg" id="boxview"><button data-v="trad" class="on">Traditional</button><button data-v="adv">Advanced</button><button data-v="dk">DFS</button></span></span>
+      </h3>
+      <div class="scroll" id="boxtables"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TEAMS ============ -->
+<section class="screen" id="s-teams">
+  <div class="crumbs">Teams › <span>Denver Nuggets</span></div>
+  <div class="card">
+    <div class="hero">
+      <div class="badge">DEN</div>
+      <div>
+        <h1>Denver Nuggets</h1>
+        <div class="meta" id="team-meta"></div>
+      </div>
+      <div class="right">
+        <span class="seg" id="tseason"><button data-v="cur" class="on">2026-27</button><button data-v="prev">2025-26</button></span>
+        <span class="seg" id="tsub"><button data-v="team" class="on">Team</button><button data-v="league">League table</button></span>
+      </div>
+    </div>
+    <div class="tiles" id="team-tiles" style="border-top:1px solid var(--line)"></div>
+  </div>
+  <div style="height:14px"></div>
+  <div id="team-main" class="grid g-12">
+    <div class="card span-8">
+      <h3>Roster <span class="sub" id="roster-sub"></span></h3>
+      <div class="scroll" id="roster"></div>
+    </div>
+    <div class="card span-4">
+      <h3>Defense vs position <span class="sub">DK pts allowed / game</span></h3>
+      <div class="body" id="dvp"></div>
+    </div>
+    <div class="card span-6">
+      <h3>On / off <span class="sub">2025-26 · net rating per 100 possessions</span></h3>
+      <div class="scroll" id="onoff"></div>
+    </div>
+    <div class="card span-6">
+      <h3>Top 5-man lineups <span class="sub">2025-26 · by possessions</span></h3>
+      <div class="scroll" id="lineups"></div>
+    </div>
+  </div>
+  <div id="team-league" class="card" style="display:none">
+    <h3>League table <span class="sub">click a column to sort · coloured chip = league rank (blue best → red worst)</span></h3>
+    <div class="scroll" id="league"></div>
+  </div>
+</section>
+
+<!-- ============ PLAYER ============ -->
+<section class="screen" id="s-player">
+  <div class="crumbs">Players › <span>Nikola Jokić</span></div>
+  <div class="card">
+    <div class="hero">
+      <div class="badge" style="background:#13304f">NJ</div>
+      <div>
+        <h1>Nikola Jokić</h1>
+        <div class="meta" id="p-meta"></div>
+      </div>
+      <div class="right">
+        <span class="pill">DK salary <b>$11,400</b></span>
+        <span class="pill">Next: <b>vs GSW · Mon</b></span>
+        <span class="pill">Status <b style="color:#6fd3a8">Active</b></span>
+      </div>
+    </div>
+    <div class="tiles" id="p-tiles" style="border-top:1px solid var(--line)"></div>
+  </div>
+  <div style="height:14px"></div>
+  <div class="grid g-12">
+    <div class="card span-5">
+      <h3>Our projection <span class="sub">last game, graded</span></h3>
+      <div class="body" id="proj"></div>
+    </div>
+    <div class="card span-7">
+      <h3>Season by season <span class="sub">regular season per game</span></h3>
+      <div class="scroll" id="pseasons"></div>
+    </div>
+    <div class="card span-12">
+      <h3>Game log <span class="sub"><span class="seg"><button class="on">Last 30</button><button>2026-27</button><button>2025-26</button><button>Playoffs</button></span></span></h3>
+      <div class="scroll" id="glog" style="max-height:430px"></div>
+    </div>
+    <div class="card span-7">
+      <h3>Versus a team <span class="sub"><select><option>New Orleans Pelicans</option><option>Oklahoma City Thunder</option><option>Minnesota Timberwolves</option></select></span></h3>
+      <div class="body" id="vs"></div>
+    </div>
+    <div class="card span-5">
+      <h3>Shot chart <span class="sub" id="shot-sub"></span></h3>
+      <div class="body" id="shots"></div>
+    </div>
+    <div class="card span-6">
+      <h3>Play types <span class="sub">2025-26 · offense · share of his possessions</span></h3>
+      <div class="body" id="ptypes"></div>
+    </div>
+    <div class="card span-6">
+      <h3>Real DFS ownership <span class="sub">from your uploaded standings</span></h3>
+      <div class="body" id="pown"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ LEADERS ============ -->
+<section class="screen" id="s-leaders">
+  <div class="filters">
+    <span class="lab">Stat</span>
+    <span class="seg" id="lstat"></span>
+    <span class="lab" style="margin-left:10px">Season</span>
+    <select><option>2026-27</option><option>2025-26</option><option>2024-25</option></select>
+    <select><option>Per game</option><option>Totals</option><option>Per 36</option></select>
+    <select><option>All games</option><option>Last 10</option><option>Last 5</option></select>
+    <span class="note" id="lnote"></span>
+  </div>
+  <div class="grid g-12">
+    <div class="card span-7">
+      <h3 id="ltitle">Leaders</h3>
+      <div class="scroll" id="ltable"></div>
+    </div>
+    <div class="card span-5">
+      <h3>Team leaders <span class="sub">best team in each</span></h3>
+      <div class="scroll" id="tleaders"></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen" id="s-today"><div class="ann">The existing Brief (last night, tonight, injuries, player stories) moves here unchanged, restyled in the new dark look.</div></section>
+<section class="screen" id="s-dfs"><div class="ann">The existing DFS pages (slates, lineups, contest builder, late swap, results) move here unchanged, restyled in the new dark look. Player names everywhere link to the new player pages.</div></section>
+
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const D=/*__DATA__*/null;
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const f1=v=>v==null?"–":(+v).toFixed(1), f0=v=>v==null?"–":Math.round(v), pct=v=>v==null?"–":(v*100).toFixed(1)+"%";
+const ts3=v=>v==null?"–":(+v).toFixed(3).replace(/^0/,"");
+const TEAMN={ATL:"Hawks",BOS:"Celtics",BKN:"Nets",CHA:"Hornets",CHI:"Bulls",CLE:"Cavaliers",DAL:"Mavericks",DEN:"Nuggets",DET:"Pistons",GSW:"Warriors",HOU:"Rockets",IND:"Pacers",LAC:"Clippers",LAL:"Lakers",MEM:"Grizzlies",MIA:"Heat",MIL:"Bucks",MIN:"Timberwolves",NOP:"Pelicans",NYK:"Knicks",OKC:"Thunder",ORL:"Magic",PHI:"76ers",PHX:"Suns",POR:"Trail Blazers",SAC:"Kings",SAS:"Spurs",TOR:"Raptors",UTA:"Jazz",WAS:"Wizards"};
+// rank chip: diverging blue (best) -> gray (middle) -> red (worst); text label carries the rank so colour is never alone
+function mix(a,b,t){const p=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));const A=p(a),B=p(b);return "#"+A.map((x,i)=>Math.round(x+(B[i]-x)*t).toString(16).padStart(2,"0")).join("")}
+function rkColor(rk,n=30){const t=(rk-1)/(n-1);return t<.5?mix("#2a6fc4","#3a3f4b",t*2):mix("#3a3f4b","#c44a4a",(t-.5)*2)}
+const rk=(r,n=30)=>r==null?"":`<span class="rk" style="background:${rkColor(r,n)}" title="rank ${r} of ${n}">${ordinal(r)}</span>`;
+function ordinal(n){const s=["th","st","nd","rd"],v=n%100;return n+(s[(v-20)%10]||s[v]||s[0])}
+const tip=$("#tip");
+function showTip(e,html){tip.innerHTML=html;tip.style.display="block";tip.style.left=(e.clientX+14)+"px";tip.style.top=(e.clientY+12)+"px"}
+function hideTip(){tip.style.display="none"}
+
+// generic sortable table
+function table(el,cols,rows,opt={}){
+  let key=opt.sort, dir=opt.dir||-1;
+  function draw(){
+    let rs=[...rows]; if(key){const c=cols.find(c=>c.k===key);rs.sort((a,b)=>{const va=c.sv?c.sv(a):a[key],vb=c.sv?c.sv(b):b[key];return ((va??-1e9)>(vb??-1e9)?1:-1)*dir})}
+    el.innerHTML=`<table><thead><tr>${cols.map(c=>`<th class="${c.l?'l':''}" data-k="${c.k}">${c.h}${key===c.k?(dir<0?' ▾':' ▴'):''}</th>`).join("")}</tr></thead><tbody>${
+      rs.map((r,i)=>`<tr>${cols.map(c=>`<td class="${c.l?'l':''} ${c.cls||''}">${c.f?c.f(r,i):r[c.k]??'–'}</td>`).join("")}</tr>`).join("")}</tbody>${opt.foot?`<tfoot>${opt.foot}</tfoot>`:""}</table>`;
+    el.querySelectorAll("th").forEach(th=>th.onclick=()=>{const k=th.dataset.k;if(key===k)dir=-dir;else{key=k;dir=-1}draw()});
+  }
+  draw();
+}
+
+// ---------- nav
+$$("#nav a").forEach(a=>a.onclick=()=>{$$("#nav a").forEach(x=>x.classList.remove("on"));a.classList.add("on");$$(".screen").forEach(s=>s.classList.remove("on"));$("#s-"+a.dataset.s).classList.add("on");window.scrollTo(0,0)});
+function go(s){$(`#nav a[data-s="${s}"]`).click()}
+
+// ---------- GAMES
+const rec=t=>{const r=D.records[t];return r?`${r[0]}–${r[1]}`:""};
+$("#scores").innerHTML=D.scoreboard.map(g=>{
+  const hw=g.home_score>g.away_score;
+  return `<div class="sc ${g.game_id==="0022600110"?"on":""}">
+   <div class="row ${hw?'lose':''}"><span class="t">${g.away}</span><span class="rec">${rec(g.away)}</span><span class="s">${g.away_score}</span></div>
+   <div class="row ${hw?'':'lose'}"><span class="t">${g.home}</span><span class="rec">${rec(g.home)}</span><span class="s">${g.home_score}</span></div>
+   <div class="foot"><span>${(g.top||[]).map(t=>t[0].split(" ").slice(-1)[0]+" "+t[2].split(" ")[0]).join(" · ")}</span><span class="final">FINAL${g.ot?"/OT":""}</span></div></div>`}).join("");
+const G=D.scoreboard.find(g=>g.game_id==="0022600110");
+$("#box-title").innerHTML=`Pelicans 135 @ Nuggets 141 <span class="sub">Final/OT · Ball Arena · Sat Oct 24</span>`;
+(function(){
+  const n=Math.max(G.home_q.length,G.away_q.length);
+  const hd=[...Array(n)].map((_,i)=>i<4?"Q"+(i+1):"OT"+(i-3>1?i-3:""));
+  const row=(t,q,s)=>`<tr><td class="l name">${t}</td>${q.map(x=>`<td>${x}</td>`).join("")}<td><b>${s}</b></td></tr>`;
+  $("#qtable").innerHTML=`<thead><tr><th class="l"></th>${hd.map(h=>`<th>${h}</th>`).join("")}<th>T</th></tr></thead><tbody>${row("NOP",G.away_q,G.away_score)}${row("DEN",G.home_q,G.home_score)}</tbody>`;
+  const T={};D.box.teams.forEach(t=>T[t.team]=t);
+  const items=[["eFG%","efg_pct",pct,1],["TOV%","tov_pct",pct,0],["OREB%","oreb_pct",pct,1],["FT rate","ftr",v=>v.toFixed(2),1],["Off rating","off_rating",f1,1],["Pace","pace",f1,1]];
+  T.NOP.ftr=T.NOP.fta/T.NOP.fga;T.DEN.ftr=T.DEN.fta/T.DEN.fga;
+  $("#ff").innerHTML=`<div class="v l" style="color:var(--text-muted);font-size:11px">NOP</div><div class="lab" style="font-weight:700;color:var(--text-muted)">FOUR FACTORS</div><div class="v" style="color:var(--text-muted);font-size:11px">DEN</div>`+
+   items.map(([lab,k,fmt,hi])=>{const a=T.NOP[k],b=T.DEN[k],m=Math.max(a,b)*1.15;return `<div class="hbar"><span class="v l" style="min-width:48px">${fmt(a)}</span><div class="bar l" style="flex:1"><i style="width:${a/m*100}%;${(hi?a>b:a<b)?'':'opacity:.45'}"></i></div></div><div class="lab">${lab}</div><div class="hbar"><div class="bar r" style="flex:1"><i style="width:${b/m*100}%;${(hi?b>a:b<a)?'':'opacity:.45'}"></i></div><span class="v" style="min-width:48px">${fmt(b)}</span></div>`}).join("")+
+   `<div></div><div class="note" style="text-align:center;grid-column:span 1">brighter bar = better side</div><div></div>`;
+  $("#story").innerHTML=`<dl class="kv"><dt>Turning point</dt><dd>Down 123–116 with 1:37 left, Denver ran 12–3 into OT (win chance 4% → 77%)</dd><dt>Top line</dt><dd><a class="name" onclick="go('player')" style="cursor:pointer;color:#9fc5f4">Nikola Jokić</a> 35 pts · 15 reb · 10 ast (44 min)</dd><dt>Also</dt><dd>Jamal Murray 42 pts on 43 min</dd><dt>Our pick</dt><dd>DEN 80% · <span class="up">✓ correct</span></dd><dt>Market</dt><dd>DEN −11.5 · total 239.5 → 276 (went over)</dd><dt>Biggest surprise</dt><dd>DeAndre Jordan 20 min (we had 1)</dd></dl><div class="note" style="margin-top:10px">Real version: win-probability chart and scoring runs here (already computed nightly for the Brief).</div>`;
+})();
+function boxTables(view){
+  const P=D.box.players;
+  const base=[{k:"player_name",h:"Player",l:1,cls:"name",f:r=>`<a ${r.player_id===203999?'onclick="go(\'player\')" style="cursor:pointer;color:#9fc5f4"':''}>${r.player_name}</a>`},{k:"min",h:"Min",f:r=>f0(r.min)}];
+  const V={
+   trad:[{k:"pts",h:"Pts"},{k:"reb",h:"Reb"},{k:"ast",h:"Ast"},{k:"stl",h:"Stl"},{k:"blk",h:"Blk"},{k:"tov",h:"TO"},{k:"fgm",h:"FG",f:r=>`${r.fgm}-${r.fga}`,sv:r=>r.fgm},{k:"fg3m",h:"3P",f:r=>`${r.fg3m}-${r.fg3a}`,sv:r=>r.fg3m},{k:"ftm",h:"FT",f:r=>`${r.ftm}-${r.fta}`,sv:r=>r.ftm},{k:"oreb",h:"OR"},{k:"pf",h:"PF"},{k:"plus_minus",h:"+/−",f:r=>r.plus_minus>0?"+"+r.plus_minus:r.plus_minus}],
+   adv:[{k:"off_rating",h:"OffRtg",f:r=>f1(r.off_rating)},{k:"def_rating",h:"DefRtg",f:r=>f1(r.def_rating)},{k:"net_rating",h:"Net",f:r=>f1(r.net_rating)},{k:"usg_pct",h:"USG%",f:r=>pct(r.usg_pct)},{k:"ts_pct",h:"TS%",f:r=>pct(r.ts_pct)},{k:"efg_pct",h:"eFG%",f:r=>pct(r.efg_pct)},{k:"ast_pct",h:"AST%",f:r=>pct(r.ast_pct)},{k:"reb_pct",h:"REB%",f:r=>pct(r.reb_pct)},{k:"pie",h:"PIE",f:r=>pct(r.pie)}],
+   dk:[{k:"dk",h:"DK pts",f:r=>`<b>${f1(r.dk)}</b>`},{k:"pts",h:"Pts"},{k:"reb",h:"Reb"},{k:"ast",h:"Ast"},{k:"stl",h:"Stl"},{k:"blk",h:"Blk"},{k:"tov",h:"TO"},{k:"fg3m",h:"3PM"},{k:"proj",h:"Our proj",f:r=>r.player_id===203999?"59.8":"…",cls:"dim"},{k:"sal",h:"Salary",f:r=>r.player_id===203999?"$11,400":"…",cls:"dim"},{k:"own",h:"Own%",f:()=>"…",cls:"dim"}]
+  }[view];
+  $("#boxtables").innerHTML=["NOP","DEN"].map(t=>`<div style="padding:10px 14px 2px;font-weight:700;color:var(--text-secondary)">${TEAMN[t]} <span class="note">${t==="DEN"?"141 · W":"135 · L"}</span></div><div id="bt-${t}"></div>`).join("")+`<div class="note" style="padding:8px 14px 12px">Click any column to sort. DFS view fills salary, projection and real ownership from our DFS data for every player in the real build.</div>`;
+  ["NOP","DEN"].forEach(t=>table($("#bt-"+t),base.concat(V),P.filter(p=>p.team===t&&p.min>0),{sort:"min"}));
+}
+boxTables("trad");
+$$("#boxview button").forEach(b=>b.onclick=()=>{$$("#boxview button").forEach(x=>x.classList.remove("on"));b.classList.add("on");boxTables(b.dataset.v)});
+
+// ---------- TEAMS
+let tsea="cur";
+function teamPage(){
+  const T=(tsea==="cur"?D.teams_cur:D.teams_prev), t=T.find(x=>x.team==="DEN");
+  const R=D.records.DEN;
+  $("#team-meta").innerHTML=tsea==="cur"?`${R[0]}–${R[1]} · Northwest · <span class="note">2 games played</span>`:`${t.w}–${t.gp-t.w} (2025-26) · Northwest`;
+  const tiles=[["Off rating","ortg",f1],["Def rating","drtg",f1],["Net rating","net",v=>(v>0?"+":"")+f1(v)],["Pace","pace",f1],["eFG%","efg",pct],["TOV%","tov",pct],["OREB%","oreb",pct],["Pts / game","ppg",f1],["Opp pts","oppg",f1]];
+  $("#team-tiles").innerHTML=tiles.map(([l,k,fmt])=>`<div class="tile"><div class="lab">${l}</div><div class="val"><span class="num-big">${fmt(t[k])}</span>${rk(t[k+"_rk"])}</div></div>`).join("");
+  const ro=tsea==="cur"?D.roster_cur:D.roster_prev;
+  $("#roster-sub").textContent=(tsea==="cur"?"2026-27":"2025-26")+" · per game · click a column to sort";
+  table($("#roster"),[{k:"name",h:"Player",l:1,cls:"name",f:r=>r.player_id===203999?`<a onclick="go('player')" style="cursor:pointer;color:#9fc5f4">${r.name}</a>`:r.name},{k:"gp",h:"GP"},{k:"min",h:"Min",f:r=>f1(r.min)},{k:"pts",h:"Pts",f:r=>f1(r.pts)},{k:"reb",h:"Reb",f:r=>f1(r.reb)},{k:"ast",h:"Ast",f:r=>f1(r.ast)},{k:"stl",h:"Stl",f:r=>f1(r.stl)},{k:"blk",h:"Blk",f:r=>f1(r.blk)},{k:"fg3m",h:"3PM",f:r=>f1(r.fg3m)},{k:"fg",h:"FG%",f:r=>pct(r.fg)},{k:"ts",h:"TS%",f:r=>pct(r.ts)},{k:"usg",h:"USG%",f:r=>pct(r.usg)},{k:"pm",h:"+/−",f:r=>f1(r.pm)}],ro,{sort:"min"});
+  const dv=D.dvp.DEN;
+  $("#dvp").innerHTML=[["G","Guards"],["F","Forwards"],["C","Centers"]].map(([k,l])=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)"><div style="width:80px;color:var(--text-secondary)">${l}</div><div class="num-big" style="font-size:20px;width:70px">${f1(dv[k])}</div>${rk(dv[k+"_rk"])}<span class="note">${dv[k+"_rk"]<=10?"gives up a lot":dv[k+"_rk"]>=21?"tough matchup":"average"}</span></div>`).join("")+
+   `<div class="note" style="margin-top:10px">1st = allows the most DK points (best matchup for DFS). Last + this season. The real build splits PG / SG / SF / PF / C using DK positions and adjusts for opponent strength.</div>`;
+  table($("#onoff"),[{k:"name",h:"Player",l:1,cls:"name"},{k:"on_poss",h:"Poss on"},{k:"on_net",h:"On",f:r=>(r.on_net>0?"+":"")+f1(r.on_net)},{k:"off_net",h:"Off",f:r=>r.off_net==null?"–":(r.off_net>0?"+":"")+f1(r.off_net)},{k:"diff",h:"On − off",sv:r=>r.on_net-(r.off_net??0),f:r=>{const d=r.on_net-(r.off_net??0),w=Math.min(Math.abs(d),20)/20*58;return `<span class="diverge"><i style="${d>=0?'left:50%':'right:50%'};width:${w}px;background:${d>=0?'var(--good)':'var(--bad)'}"></i></span> <span style="display:inline-block;width:44px">${(d>0?"+":"")+f1(d)}</span>`}}],D.onoff.rows,{sort:"on_poss"});
+  table($("#lineups"),[{k:"five",h:"Lineup",l:1,cls:"name"},{k:"poss",h:"Poss"},{k:"ortg",h:"ORtg",f:r=>f1(r.ortg)},{k:"drtg",h:"DRtg",f:r=>f1(r.drtg)},{k:"net",h:"Net",f:r=>(r.net>0?"+":"")+f1(r.net)}],D.lineups,{sort:"poss"});
+  table($("#league"),[{k:"rank",h:"#",f:(r,i)=>i+1,sv:r=>-r.net},{k:"team",h:"Team",l:1,cls:"name",f:r=>`${r.team} <span class="note">${TEAMN[r.team]}</span>`},{k:"w",h:"W–L",f:r=>`${r.w}–${r.gp-r.w}`},
+    ...[["ortg","ORtg",f1],["drtg","DRtg",f1],["net","Net",f1],["pace","Pace",f1],["efg","eFG%",pct],["tov","TOV%",pct],["oreb","OREB%",pct],["fg3a","3PA",f1],["ast","Ast",f1]].map(([k,h,fmt])=>({k,h,f:r=>`${fmt(r[k])} ${rk(r[k+"_rk"])}`,sv:r=>-r[k+"_rk"]}))],T,{sort:"net"});
+}
+teamPage();
+$$("#tseason button").forEach(b=>b.onclick=()=>{$$("#tseason button").forEach(x=>x.classList.remove("on"));b.classList.add("on");tsea=b.dataset.v;teamPage()});
+$$("#tsub button").forEach(b=>b.onclick=()=>{$$("#tsub button").forEach(x=>x.classList.remove("on"));b.classList.add("on");const lg=b.dataset.v==="league";$("#team-main").style.display=lg?"none":"grid";$("#team-league").style.display=lg?"block":"none"});
+
+// ---------- PLAYER
+(function(){
+  const b=D.player_bio[0]||{};
+  $("#p-meta").innerHTML=`Denver Nuggets · C · #15 · ${b.height||"6-11"} · ${b.weight||284} lb · ${b.country||"Serbia"} · drafted ${b.draft_year||2014} R${b.draft_round||2} #${b.draft_number||41}`;
+  const s=D.player_seasons["2025-26"], c=D.player_seasons["2026-27"], r=D.player_ranks_prev;
+  const tiles=[["Points","pts",r.pts],["Rebounds","reb",r.reb],["Assists","ast",r.ast],["DK pts","dk",r.dk],["TS%","ts",r.ts],["Minutes","min"],["Steals","stl"],["3PM","fg3m"]];
+  $("#p-tiles").innerHTML=tiles.map(([l,k,rr])=>`<div class="tile"><div class="lab">${l} <span style="font-weight:500;letter-spacing:0;text-transform:none">2025-26</span></div><div class="val"><span class="num-big">${k==="ts"?pct(s[k]):f1(s[k])}</span>${rr?rk(rr,180):""}</div><div class="note">this season ${k==="ts"?pct(c[k]):f1(c[k])}</div></div>`).join("");
+  // projection
+  const pr=D.proj[0], st=JSON.parse(pr.st), dkp=st.dk, act=81.75, lo=0, hi=100, X=v=>((v-lo)/(hi-lo)*100).toFixed(1)+"%";
+  $("#proj").innerHTML=`<div class="note" style="margin-bottom:6px">vs NOP · Sat Oct 24 · projected before tip (10 min before lock)</div>
+   <div class="rangecard"><div><div class="lab note" style="text-transform:uppercase;font-weight:700;letter-spacing:.08em;font-size:10.5px">DK points</div><div class="num-big">${f1(dkp[0])}</div><div class="note">actual <b style="color:var(--text-primary)">${act}</b></div></div>
+   <div class="range" onmousemove="showTip(event,'80% range ${f1(dkp[1])}–${f1(dkp[2])} · projection ${f1(dkp[0])} · actual ${act}')" onmouseleave="hideTip()"><div class="track"></div><div class="band" style="left:${X(dkp[1])};width:calc(${X(dkp[2])} - ${X(dkp[1])})"></div><div class="mean" style="left:${X(dkp[0])}"></div><div class="act" style="left:${X(act)}"></div>
+   <div class="lbl" style="left:${X(dkp[1])}">${f0(dkp[1])}</div><div class="lbl" style="left:${X(dkp[2])}">${f0(dkp[2])}</div></div></div>
+   <div class="legend" style="margin-top:6px"><span><i style="background:#1c3b63;border:1px solid #2a5a94"></i>80% range</span><span><i style="background:var(--accent)"></i>projection</span><span><i style="background:var(--accent-2);border-radius:50%"></i>actual</span></div>
+   <table style="margin-top:10px"><thead><tr><th class="l">Stat</th><th>Projected</th><th>Actual</th><th>Diff</th></tr></thead><tbody>
+   ${[["Minutes","min",44],["Points","pts",35],["Rebounds","reb",15],["Assists","ast",10],["3PM","fg3m",3]].map(([l,k,a])=>`<tr><td class="l">${l}</td><td>${f1(st[k][0])}</td><td>${a}</td><td class="${a>=st[k][0]?'up':'dn'}">${(a-st[k][0]>0?"+":"")+f1(a-st[k][0])}</td></tr>`).join("")}</tbody></table>
+   <div class="note" style="margin-top:8px">On game days this card shows tonight's projection, range and salary value instead. Overtime (+11 min) explains most of the miss.</div>`;
+  table($("#pseasons"),[{k:"s",h:"Season",l:1,cls:"name"},{k:"gp",h:"GP"},{k:"min",h:"Min",f:r=>f1(r.min)},{k:"pts",h:"Pts",f:r=>f1(r.pts)},{k:"reb",h:"Reb",f:r=>f1(r.reb)},{k:"ast",h:"Ast",f:r=>f1(r.ast)},{k:"stl",h:"Stl",f:r=>f1(r.stl)},{k:"blk",h:"Blk",f:r=>f1(r.blk)},{k:"tov",h:"TO",f:r=>f1(r.tov)},{k:"ts",h:"TS%",f:r=>pct(r.ts)},{k:"dk",h:"DK",f:r=>`<b>${f1(r.dk)}</b>`}],
+    Object.entries(D.player_seasons).map(([s,v])=>({s,...v})).reverse(),{});
+  table($("#glog"),[{k:"game_date",h:"Date",l:1,f:r=>r.game_date.slice(5)},{k:"opp",h:"Opp",l:1,cls:"name",f:r=>(r.is_home?"vs ":"@ ")+r.opp+(r.season_type==="Playoffs"?' <span class="note">PO</span>':"")},{k:"wl",h:"",l:1,f:r=>`<span class="${r.wl==='W'?'up':'dn'}">${r.wl}</span>`},{k:"min",h:"Min",f:r=>f0(r.min)},{k:"pts",h:"Pts"},{k:"reb",h:"Reb"},{k:"ast",h:"Ast"},{k:"stl",h:"Stl"},{k:"blk",h:"Blk"},{k:"tov",h:"TO"},{k:"fg3m",h:"3PM"},{k:"fgm",h:"FG",f:r=>`${r.fgm}-${r.fga}`,sv:r=>r.fgm/Math.max(r.fga,1)},{k:"ts_pct",h:"TS%",f:r=>pct(r.ts_pct)},{k:"plus_minus",h:"+/−",f:r=>r.plus_minus>0?"+"+r.plus_minus:r.plus_minus},{k:"dk",h:"DK",f:r=>`<b>${f1(r.dk)}</b>`},{k:"salary",h:"Salary",f:r=>r.salary?"$"+r.salary.toLocaleString():'<span class="note">–</span>'},{k:"val",h:"Value",sv:r=>r.salary?r.dk/r.salary*1000:null,f:r=>r.salary?`${(r.dk/r.salary*1000).toFixed(1)}x`:'<span class="note">–</span>'},{k:"own",h:"Own%",f:r=>r.own?r.own+"%":'<span class="note">–</span>'}],D.player_log,{});
+  // vs team
+  const V=D.vs_games, avg=k=>V.reduce((a,r)=>a+r[k],0)/V.length, s2=D.player_seasons["2025-26"];
+  $("#vs").innerHTML=`<div class="tiles" style="border:1px solid var(--line);border-radius:8px;margin-bottom:12px">${[["Games",V.length,null],["Pts","pts",s2.pts],["Reb","reb",s2.reb],["Ast","ast",s2.ast],["DK","dk",s2.dk]].map(([l,k,b])=>{const v=typeof k==="number"?k:avg(k);return `<div class="tile"><div class="lab">${l}</div><div class="val"><span class="num-big" style="font-size:20px">${typeof k==="number"?k:f1(v)}</span>${b!=null?`<span class="${v>=b?'up':'dn'}">${(v-b>0?"+":"")+f1(v-b)}</span>`:""}</div>${b!=null?`<div class="note">his avg ${f1(b)}</div>`:'<div class="note">last 3 seasons</div>'}</div>`}).join("")}</div>
+   <div class="split" style="border:1px solid var(--line);border-radius:8px"><div style="padding:0"><div style="padding:8px 10px;font-weight:700;color:var(--text-secondary);font-size:11px;letter-spacing:.08em;text-transform:uppercase">Games vs NOP</div><div id="vsg"></div></div>
+   <div style="padding:0"><div style="padding:8px 10px;font-weight:700;color:var(--text-secondary);font-size:11px;letter-spacing:.08em;text-transform:uppercase">Who guarded him</div><div id="vsd"></div></div></div>
+   <div class="note" style="margin-top:8px">“Who guarded him” comes from NBA tracking: possessions where that defender was on him, and what he scored on them.</div>`;
+  table($("#vsg"),[{k:"game_date",h:"Date",l:1,f:r=>r.game_date.slice(5)+"-"+r.game_date.slice(2,4)},{k:"pts",h:"Pts"},{k:"reb",h:"Reb"},{k:"ast",h:"Ast"},{k:"dk",h:"DK",f:r=>f1(r.dk)}],V,{});
+  table($("#vsd"),[{k:"name",h:"Defender",l:1,cls:"name"},{k:"poss",h:"Poss",f:r=>f0(r.poss)},{k:"pts",h:"Pts"},{k:"fg",h:"FG",f:r=>`${r.fgm}-${r.fga}`,sv:r=>r.fgm/Math.max(1,r.fga)},{k:"p100",h:"Pts/100",sv:r=>r.pts/r.poss,f:r=>f0(r.pts/r.poss*100)}],D.guarded_by.filter(g=>g.poss>=10),{sort:"poss"});
+  // shot chart
+  $("#shot-sub").textContent=`${D.shot_n.toLocaleString()} shots · ${D.shot_games} games we have play-by-play for`;
+  const W=500,Hh=420, sx=x=>x+250, sy=y=>y+47.5;
+  const hex=(cx,cy,r)=>[...Array(6)].map((_,i)=>{const a=Math.PI/180*(60*i-30);return `${(cx+r*Math.cos(a)).toFixed(1)},${(cy+r*Math.sin(a)).toFixed(1)}`}).join(" ");
+  const maxA=Math.max(...D.shot_hex.map(h=>h[2]));const cs=D.shot_hex.map(h=>h[2]).sort((a,b)=>a-b);const capA=cs[Math.floor(cs.length*.85)];
+  const seq=["#cde2fb","#9ec5f4","#6da7ec","#3987e5","#256abf","#184f95"].reverse();
+  const col=p=>{const t=Math.max(0,Math.min(.999,(p-.25)/.5));return ["#184f95","#256abf","#3987e5","#6da7ec","#9ec5f4","#cde2fb"][Math.floor(t*6)]};
+  const hexes=D.shot_hex.filter(h=>h[2]>=3).map(h=>{const r=3.5+9*Math.sqrt(Math.min(h[2],capA)/capA);const p=h[3]/h[2];return `<polygon points="${hex(sx(h[0]),sy(h[1]),r)}" fill="${col(p)}" data-t="${h[2]} shots · ${h[3]} made · ${(p*100).toFixed(0)}%"/>`}).join("");
+  const court=`<g fill="none" stroke="#2f3a52" stroke-width="2"><rect x="0" y="0" width="500" height="${Hh}"/><rect x="170" y="0" width="160" height="190"/><circle cx="250" cy="190" r="60"/><path d="M30 0 V140 A237.5 237.5 0 0 0 470 140 V0"/><path d="M210 47.5 A40 40 0 0 0 290 47.5"/><line x1="220" y1="40" x2="280" y2="40"/><circle cx="250" cy="47.5" r="7.5"/></g>`;
+  $("#shots").innerHTML=`<svg viewBox="0 0 500 ${Hh}" style="width:100%;max-width:520px;display:block;margin:0 auto" id="shotsvg">${court}<g stroke="#141a26" stroke-width="1.5">${hexes}</g></svg>
+   <div class="legend" style="margin-top:6px;justify-content:center"><span>FG%</span>${["25%","","","50%","","75%"].map((l,i)=>`<span><i style="background:${["#184f95","#256abf","#3987e5","#6da7ec","#9ec5f4","#cde2fb"][i]}"></i>${l}</span>`).join("")}<span class="note">bigger hex = more shots</span></div>
+   <table style="margin-top:8px"><thead><tr><th class="l">Zone</th><th>FGA</th><th>Share</th><th>FG%</th></tr></thead><tbody>${D.shot_zones.map(z=>`<tr><td class="l">${z[0]}</td><td>${z[1]}</td><td>${pct(z[1]/D.shot_n)}</td><td>${pct(z[2]/z[1])}</td></tr>`).join("")}</tbody></table>`;
+  $$("#shotsvg polygon").forEach(p=>{p.onmousemove=e=>showTip(e,p.dataset.t);p.onmouseleave=hideTip});
+  // play types
+  const PT={PRRollMan:"P&R roll man",PRBallHandler:"P&R ball handler",Postup:"Post-up",Spotup:"Spot-up",Isolation:"Isolation",Transition:"Transition",Cut:"Cut",OffRebound:"Putbacks",OffScreen:"Off screen",Misc:"Misc",Handoff:"Handoff"};
+  const mx=Math.max(...D.playtypes.map(p=>p.poss_pct));
+  $("#ptypes").innerHTML=`<table><thead><tr><th class="l">Play type</th><th class="l" style="width:40%">Share</th><th>Poss</th><th>Pts/poss</th><th>Percentile</th></tr></thead><tbody>${D.playtypes.map(p=>`<tr onmousemove="showTip(event,'${PT[p.play_type]||p.play_type}: ${p.poss} poss · ${p.ppp.toFixed(2)} pts per poss · better than ${Math.round(p.percentile*100)}% of players')" onmouseleave="hideTip()"><td class="l name">${PT[p.play_type]||p.play_type}</td><td class="l"><div class="hbar"><div class="track"><i style="width:${p.poss_pct/mx*100}%"></i></div><span style="width:40px;text-align:right">${pct(p.poss_pct)}</span></div></td><td>${p.poss}</td><td>${p.ppp.toFixed(2)}</td><td>${rk(Math.max(1,Math.round((1-p.percentile)*99)+1),100).replace(/>\d+\w+</,`>${Math.round(p.percentile*100)}<`)}</td></tr>`).join("")}</tbody></table>
+  <div class="note" style="margin-top:8px">Percentile vs all players with that play type (blue = elite).</div>`;
+  $("#pown").innerHTML=`<div class="note" style="margin-bottom:8px">Jokić hasn't been on a slate you uploaded standings for yet, so this shows the panel with real data for Naji Marshall:</div>
+   <table><thead><tr><th class="l">Date</th><th class="l">Contest</th><th>Field</th><th>Real own%</th><th>DK pts</th></tr></thead><tbody>
+   <tr><td class="l">10-24</td><td class="l">$20K And-One</td><td>23,781</td><td><b>66.2%</b></td><td>24.0</td></tr>
+   <tr><td class="l">10-24</td><td class="l">$4K Quarter Jukebox</td><td>16,812</td><td><b>66.3%</b></td><td>24.0</td></tr>
+   <tr><td class="l">10-23</td><td class="l">$2.1K mini-MAX</td><td>5,112</td><td>31.5%</td><td>34.0</td></tr>
+   <tr><td class="l">10-23</td><td class="l">$40K Sharpshooter</td><td>15,854</td><td>29.2%</td><td>34.0</td></tr>
+   <tr><td class="l">10-23</td><td class="l">$35K mini-MAX</td><td>83,234</td><td>29.1%</td><td>34.0</td></tr>
+   <tr><td class="l">10-23</td><td class="l">$20K And-One</td><td>23,781</td><td>28.0%</td><td>34.0</td></tr></tbody></table>
+   <div class="note" style="margin-top:8px">Grows every time you upload standings. The real build adds our pre-lock ownership estimate beside each row, so you can see where the crowd differed from what we expected.</div>`;
+})();
+
+// ---------- LEADERS
+const LS=[["pts","Points",f1],["reb","Rebounds",f1],["ast","Assists",f1],["stl","Steals",f1],["blk","Blocks",f1],["fg3m","3PM",f1],["dk","DK pts",f1],["ts","TS%",pct],["usg","Usage",pct]];
+let lstat="pts";
+$("#lstat").innerHTML=LS.map(([k,l])=>`<button data-k="${k}" class="${k==='pts'?'on':''}">${l}</button>`).join("");
+function leaders(){
+  const [k,l,fmt]=LS.find(x=>x[0]===lstat);
+  const rows=D.leaders.filter(r=>r[k]!=null).sort((a,b)=>b[k]-a[k]).slice(0,25), mx=rows[0][k];
+  $("#ltitle").innerHTML=`${l} per game <span class="sub">2026-27 · min 2 games, 20 min/game · ${D.leaders.length} qualified</span>`;
+  $("#lnote").textContent="Season is 2–5 games old, so leaders move a lot night to night.";
+  table($("#ltable"),[{k:"i",h:"#",f:(r,i)=>i+1},{k:"name",h:"Player",l:1,cls:"name",f:r=>r.player_id===203999?`<a onclick="go('player')" style="cursor:pointer;color:#9fc5f4">${r.name}</a>`:r.name},{k:"team",h:"Team",l:1,cls:"dim"},{k:"gp",h:"GP"},{k:"min",h:"Min",f:r=>f1(r.min)},
+    {k,h:l,f:r=>`<div class="hbar" style="justify-content:flex-end"><div class="track" style="max-width:120px"><i style="width:${r[k]/mx*100}%"></i></div><b style="width:52px;text-align:right">${fmt(r[k])}</b></div>`},
+    ...[["pts","Pts"],["reb","Reb"],["ast","Ast"],["dk","DK"]].filter(([c])=>c!==k).map(([c,h])=>({k:c,h,f:r=>f1(r[c]),cls:"dim"}))],rows,{});
+}
+leaders();
+$$("#lstat button").forEach(b=>b.onclick=()=>{$$("#lstat button").forEach(x=>x.classList.remove("on"));b.classList.add("on");lstat=b.dataset.k;leaders()});
+table($("#tleaders"),[{k:"cat",h:"Category",l:1,cls:"name"},{k:"team",h:"Team",l:1},{k:"v",h:"Value"}],
+  [["Off rating","ortg",1,f1],["Def rating","drtg",0,f1],["Net rating","net",1,f1],["Pace","pace",1,f1],["eFG%","efg",1,pct],["Fewest TOV%","tov",0,pct],["OREB%","oreb",1,pct],["3PA / game","fg3a",1,f1],["Assists","ast",1,f1]].map(([cat,k,hi,fmt])=>{const t=[...D.teams_cur].sort((a,b)=>hi?b[k]-a[k]:a[k]-b[k])[0];return {cat,team:`${t.team} <span class="note">${TEAMN[t.team]}</span>`,v:fmt(t[k])}}),{});
+if(location.hash)go(location.hash.slice(1));
+document.addEventListener("keydown",e=>{if(e.key==="/"){e.preventDefault()}});
+</script>
+</body>
+</html>

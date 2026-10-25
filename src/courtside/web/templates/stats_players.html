@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# Player directory (web/stats_players.py, queries stats/players.py).
+   ?q= is also the no-JS fallback of the top-bar search form. #}
+{% block title %}Players &middot; {{ season }} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-players.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page pl-page{% endblock %}
+{% block content %}
+{% set d = dir %}
+<div class="pro">
+  <form class="filters pl-dir-form" action="/players" method="get" role="search">
+    <h1 class="page-title">Players</h1>
+    <label class="sr" for="dir-q">Find a player</label>
+    <input id="dir-q" type="search" name="q" value="{{ q }}" placeholder="Find a player">
+    <label class="sr" for="dir-team">Team</label>
+    <select id="dir-team" name="team" onchange="this.form.submit()">
+      <option value="">All teams</option>
+      {% for code in d.teams %}<option value="{{ code }}"{% if code == team_code %} selected{% endif %}>{{ code }} &middot; {{ team(code).name }}</option>{% endfor %}
+    </select>
+    {% if season != seasons[0] %}<input type="hidden" name="season" value="{{ season }}">{% endif %}
+    {% if sort != "pts" %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+    <button type="submit" class="pl-btn">Search</button>
+    {{ s.seg("season", season_opts, season, label="Season") }}
+    {% if q or team_code %}<a class="link pl-clear" href="/players{% if season != seasons[0] %}?season={{ season }}{% endif %}">Clear</a>{% endif %}
+    {% include "_stats_tools.html" %}
+  </form>
+
+  {% if others %}
+  <div class="pl-others"><span class="lab">Also matching</span>
+    {% for h in others %}<a class="pill" href="{{ h.url }}">{{ h.name }}{% if h.sub %} <span class="dim">{{ h.sub }}</span>{% endif %}</a>{% endfor %}
+  </div>
+  {% endif %}
+
+  {% set sub %}<span class="pl-sortby"><span class="lab">Sort</span>{{ s.seg("sort", sort_opts, sort, label="Sort by") }}</span>{% endset %}
+  {% set title = "Player directory · " ~ season ~ " regular season" %}
+  {% call s.card(title, sub=sub, flush=True) %}
+    {% if d.rows %}
+    <table data-sortable data-renumber class="pl-dir">
+      <thead><tr>
+        <th data-nosort>#</th><th class="l">Player</th><th class="l">Team</th><th class="l">Pos</th>
+        <th{% if sort == 'gp' %} data-sorted="desc"{% endif %}>GP</th>
+        {% for key, h, tip in [("min", "Min", ""), ("pts", "Pts", ""), ("reb", "Reb", ""), ("ast", "Ast", ""), ("stl", "Stl", ""), ("blk", "Blk", ""), ("tov", "TO", ""), ("fg3m", "3PM", ""), ("ts", "TS%", "True shooting: points per 2 x (FGA + 0.44 FTA)"), ("pm", "+/−", ""), ("dk", "DK", "DraftKings points per game")] %}
+        <th{% if key == sort %} data-sorted="desc"{% endif %}{% if key == 'tov' %} data-sort-first="asc"{% endif %}{% if tip %} data-tip="{{ tip }}"{% endif %}>{{ h }}</th>
+        {% endfor %}
+      </tr></thead>
+      <tbody>
+      {% for r in d.rows %}
+      <tr>
+        <td class="rownum dim">{{ d.offset + loop.index }}</td>
+        <td class="l name"><a href="/player/{{ r.player_id }}">{{ r.name }}</a></td>
+        <td class="l">{% if r.team %}{{ s.team_link(r.team) }}{% endif %}</td>
+        <td class="l dim">{{ r.position or "" }}</td>
+        <td data-v="{{ r.gp }}"{% if not r.qualified %} class="dim" data-tip="Not ranked: {{ d.min_gp|round(0)|int }}+ games needed"{% endif %}>{{ r.gp }}</td>
+        {{ s.ntd(r.min) }}
+        {{ s.ntd(r.pts, rank=r.ranks.pts if sort == "pts" else None, n=d.n_qualified) }}
+        {{ s.ntd(r.reb, rank=r.ranks.reb if sort == "reb" else None, n=d.n_qualified) }}
+        {{ s.ntd(r.ast, rank=r.ranks.ast if sort == "ast" else None, n=d.n_qualified) }}
+        {{ s.ntd(r.stl, rank=r.ranks.stl if sort == "stl" else None, n=d.n_qualified) }}
+        {{ s.ntd(r.blk, rank=r.ranks.blk if sort == "blk" else None, n=d.n_qualified) }}
+        {{ s.ntd(r.tov) }}
+        {{ s.ntd(r.fg3m, rank=r.ranks.fg3m if sort == "fg3m" else None, n=d.n_qualified) }}
+        {{ s.ntd(r.ts, kind="pct", nd=1, rank=r.ranks.ts if sort == "ts" else None, n=d.n_qualified) }}
+        {{ s.ntd(r.pm, kind="signed") }}
+        {{ s.ntd(r.dk, cls="hi", rank=r.ranks.dk if sort == "dk" else None, n=d.n_qualified) }}
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="pl-pager">
+      <span class="note">{{ d.offset + 1 }}&ndash;{{ d.offset + d.rows|length }} of {{ d.total }} players · ranks among {{ d.n_qualified }} with {{ d.min_gp|round(0)|int }}+ games · click a column to sort this page</span>
+      {% if prev_href %}<a class="pill" href="{{ prev_href }}">&lsaquo; Prev</a>{% endif %}
+      {% if next_href %}<a class="pill" href="{{ next_href }}">Next &rsaquo;</a>{% endif %}
+    </div>
+    {% elif q or team_code %}
+    {{ s.empty("No " ~ season ~ " players match.", "Try another spelling, team or season.") }}
+    {% else %}
+    {{ s.empty("No games in " ~ season ~ " yet.") }}
+    {% endif %}
+  {% endcall %}
+</div>
+{% endblock %}

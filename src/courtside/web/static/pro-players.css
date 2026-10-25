@@ -1,0 +1,163 @@
+/* Players section: /players directory and /player/<id> (templates stats_players.html,
+   stats_player.html). Builds on pro.css tokens/components; everything is scoped to .pl-page. */
+
+/* ---------------------------------------------------------------- hero */
+.pl-page .pl-badge { background: var(--c1, #0e2a4d); color: #fff; border-color: rgba(255, 255, 255, .14); box-shadow: inset 0 -4px 0 var(--c2, transparent); }
+.pl-page .pl-status b { color: var(--warn); }
+.pl-page .pl-st-out b { color: var(--bad); }
+.pl-page .pl-switch { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; padding: 9px 18px; border-top: 1px solid var(--line); }
+.pl-page .pl-switch .lab { margin-right: 2px; }
+.pl-page .pl-hero > .tiles { border-top: 1px solid var(--line); }
+.pl-page .pl-ink { color: var(--text-primary); }
+
+/* ---------------------------------------------------------------- cards */
+.pl-page .pl-foot { margin-top: 8px; }
+.pl-page .pl-foot.pad { margin: 0; padding: 8px 14px 12px; }
+.pl-page .pl-proj-when { margin-bottom: 8px; }
+.pl-page .rangecard .lab { font-size: 10.5px; }
+.pl-page .rangecard + .legend { margin-top: 6px; }
+.pl-page .pl-proj-t { margin-top: 10px; }
+.pl-page .pl-seasons tr.pl-cur td { background: rgba(57, 135, 229, .08); }
+.pl-page .card > h3 .sub .seg + .seg { margin-left: 6px; }
+.pl-page tr.dim td { color: var(--text-muted); }
+.pl-page td.up, .pl-page span.up { color: #6da7ec; }
+.pl-page td.dn, .pl-page span.dn { color: #f08a8a; }
+
+/* versus a team */
+.pl-page .pl-vs-form { display: inline-flex; gap: 6px; align-items: center; }
+.pl-page .pl-vs-form select { max-width: 240px; }
+.pl-page .pl-vs-tiles { margin-bottom: 12px; }
+.pl-page .pl-vs-tiles .tile { padding: 10px 12px; }
+.pl-page .pl-vs-split > div.flushpad { padding: 0; }
+.pl-page .pl-subh { padding: 8px 10px; font-weight: 700; color: var(--text-secondary); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid var(--line); }
+.pl-page .pl-vs-scroll { max-height: 330px; }
+.pl-page .pl-vs-split table td.name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+
+/* shot chart */
+.pl-page .pl-court { display: block; width: 100%; max-width: 520px; margin: 0 auto; }
+.pl-page .pl-lines path, .pl-page .pl-lines circle { stroke: #2f3a52; stroke-width: 2; }
+.pl-page .pl-hex polygon { stroke: #141a26; stroke-width: 1.5; }
+.pl-page .pl-hex polygon:hover { stroke: #eef1f6; }
+.pl-page .pl-ramp { justify-content: center; margin-top: 6px; gap: 2px 10px; }
+.pl-page .pl-ramp i { margin-right: 3px; }
+.pl-page .pl-zones { margin-top: 8px; }
+
+/* play types */
+.pl-page .pl-ptypes th.pl-share { width: 38%; }
+.pl-page .pl-ptypes td .hbar { justify-content: flex-start; }
+.pl-page .pl-ptypes td .hbar .track { max-width: none; }
+.pl-page .pl-ptypes td .hbar b { width: 44px; text-align: right; font-weight: 500; }
+
+/* ownership */
+.pl-page .pl-contest { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------------------------------------------------------------- directory */
+.pl-page .pl-dir-form input[type="search"] { width: 220px; }
+.pl-page .pl-btn { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font: 600 12px var(--sans); cursor: pointer; }
+.pl-page .pl-btn:hover { color: var(--text-primary); border-color: var(--line-2); }
+.pl-page .pl-clear { font-size: 12px; }
+.pl-page .pl-others { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; margin: -2px 0 12px; }
+.pl-page .pl-others .lab { margin-right: 4px; }
+.pl-page .pl-sortby { display: inline-flex; align-items: center; gap: 8px; }
+.pl-page .pl-pager { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--line); }
+.pl-page .pl-pager .note { margin-right: auto; }
+.pl-page .pl-pager .pill:hover { color: var(--text-primary); border-color: var(--line-2); }
+
+/* ---------------------------------------------------------------- phone */
+@media (max-width: 1000px) {
+  .pl-page .pl-switch { padding: 9px 14px; }
+  .pl-page .pl-dir-form input[type="search"] { flex: 1 1 160px; width: auto; }
+  .pl-page .pl-vs-form select { max-width: 100%; }
+  .pl-page .pl-vs-split > div + div { border-top: 1px solid var(--line); }
+}
+
+/* ================================================================ research tools (pl2-*):
+   filters, recent-games chart, minutes, splits, clutch (stats/player_tools.py, pro-players.js) */
+.pl-page .pl2-groups { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
+.pl-page .pl2-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.pl-page .pl2-group > .lab { margin-right: 3px; }
+.pl-page .pl2-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--text-secondary); font: 600 11.5px/1.45 var(--sans); white-space: nowrap; }
+.pl-page .pl2-chip:hover { color: var(--text-primary); border-color: var(--line-2); }
+.pl-page .pl2-chip.on { background: #13243b; border-color: var(--accent); color: #cfe2fa; }
+.pl-page .pl2-selects select { max-width: 230px; }
+.pl-page .pl2-selects .lab + select { margin-right: 4px; }
+.pl-page .pl2-active { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.pl-page .pl2-active .lab { margin-right: 4px; }
+.pl-page .pl2-lognote { color: var(--text-muted); margin-right: 8px; }
+
+/* recent-games chart */
+.pl-page .pl2-summary { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.pl-page .pl2-lineform { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.pl-page .pl2-lineform input[type="number"] { width: 78px; background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: 600 13px var(--sans); }
+.pl-page .pl2-lineform input[type="range"] { flex: 1 1 160px; max-width: 320px; accent-color: var(--accent-2); }
+.pl-page .pl2-reset { color: var(--text-muted); font-size: 12px; }
+.pl-page .pl2-reset:hover { color: var(--link); }
+html.js .pl-page .pl2-nojs { display: none; }
+.pl-page .pl2-chart-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.pl-page .pl2-chart { display: block; width: 100%; height: auto; }
+.pl-page .pl2-chart text { font-family: var(--sans); fill: var(--text-muted); }
+.pl-page .pl2-grid line { stroke: var(--row-line); stroke-width: 1; }
+.pl-page .pl2-grid text { font-size: 10px; text-anchor: end; }
+.pl-page .pl2-base { stroke: var(--line-2); stroke-width: 1; }
+.pl-page .pl2-bar { cursor: pointer; outline: none; }
+.pl-page .pl2-bar .pl2-hitbox { fill: transparent; }
+.pl-page .pl2-bar:hover .pl2-hitbox, .pl-page .pl2-bar:focus-visible .pl2-hitbox { fill: rgba(255, 255, 255, .04); }
+.pl-page .pl2-bar path { fill: rgba(125, 135, 154, .14); stroke: #7d879a; stroke-width: 1.5; }
+.pl-page .pl2-bar.hit path { fill: var(--accent); stroke: var(--accent); }
+.pl-page .pl2-bar text.v { font-size: 11px; font-weight: 500; text-anchor: middle; fill: var(--text-muted); paint-order: stroke; stroke: var(--surface-1); stroke-width: 3px; stroke-linejoin: round; }
+.pl-page .pl2-bar.hit text.v { font-weight: 700; fill: var(--text-primary); }
+.pl-page .pl2-bar text.o { font-size: 10.5px; font-weight: 600; text-anchor: middle; fill: var(--text-secondary); }
+.pl-page .pl2-bar text.o.r { font-size: 9px; text-anchor: end; }
+.pl-page .pl2-bar text.d { font-size: 9.5px; text-anchor: middle; }
+.pl-page .pl2-line line { stroke: var(--accent-2); stroke-width: 2; stroke-dasharray: 6 4; }
+.pl-page .pl2-line text { fill: #f39a6d; font-size: 11px; font-weight: 700; text-anchor: start; }
+.pl-page .pl2-trend .legend { margin-top: 6px; }
+.pl-page .pl2-trend .legend span:last-child i { border: 1.5px solid #7d879a; }
+
+/* minutes */
+.pl-page .pl2-spark { display: block; width: 100%; height: auto; max-height: 110px; }
+.pl-page .pl2-spark polyline { fill: none; stroke: #6da7ec; stroke-width: 2; }
+.pl-page .pl2-spark .ref { stroke: var(--line-2); stroke-dasharray: 3 3; }
+.pl-page .pl2-spark text { fill: var(--text-muted); font: 9px var(--sans); text-anchor: end; }
+.pl-page .pl2-spark circle { stroke: var(--surface-1); stroke-width: 1.5; }
+.pl-page .pl2-spark circle.st { fill: var(--accent); }
+.pl-page .pl2-spark circle.bn { fill: var(--surface-1); stroke: #9fc5f4; }
+.pl-page .pl2-mleg { margin: 2px 0 8px; }
+.pl-page .pl2-hollow { background: transparent !important; border: 1.5px solid #9fc5f4; box-sizing: border-box; }
+.pl-page .pl2-kv { margin-top: 6px; }
+
+/* splits */
+.pl-page .pl2-split-t tr.pl2-gstart td { border-top: 1px solid var(--line-2); }
+.pl-page .pl2-split-t tr.pl2-small td { color: var(--text-muted); opacity: .6; }
+.pl-page .pl2-split-t td.name a { color: var(--link); font-weight: 600; }
+.pl-page .pl2-split-t td.name a:hover { text-decoration: underline; }
+
+/* clutch */
+.pl-page .pl2-ctiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pl-page .pl2-ctiles .tile { padding: 9px 12px; }
+.pl-page .pl2-ctiles .num-big { font-size: 20px; }
+.pl-page .pl2-cline { margin: 8px 0 4px; }
+.pl-page .pl2-cgames th, .pl-page .pl2-cgames td { padding: 4px 6px; }
+
+@media (max-width: 1000px) {
+  .pl-page .pl2-groups { gap: 8px 14px; }
+  .pl-page .pl2-selects select { max-width: 100%; flex: 1 1 140px; }
+  .pl-page .pl2-summary { font-size: 13px; }
+}
+@media (max-width: 600px) {          /* the chart scrolls sideways; keep its text readable */
+  .pl-page .pl2-chart { min-width: 520px !important; }
+  .pl-page .pl2-chart.wide { min-width: 900px !important; }
+  .pl-page .pl2-bar text.v { font-size: 15px; }
+  .pl-page .pl2-bar text.o { font-size: 14px; }
+  .pl-page .pl2-bar text.o.r { font-size: 12px; }
+  .pl-page .pl2-bar text.d { font-size: 12.5px; }
+  .pl-page .pl2-grid text { font-size: 13px; }
+  .pl-page .pl2-line text { font-size: 14px; }
+}
+
+/* similar players (_player_similar.html) */
+.pl-page .pl-sim-how { color: var(--link); cursor: help; }
+.pl-page .pl-sim-t tr.pl-sim-me td { background: rgba(57, 135, 229, .08); color: var(--text-secondary); }
+.pl-page .pl-sim-t th.pl-sim-sc { width: 190px; }
+.pl-page .pl-sim-t td .hbar { justify-content: flex-start; }
+.pl-page .pl-sim-t td .hbar b { width: 26px; text-align: right; }

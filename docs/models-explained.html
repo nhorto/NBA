@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Courtside: how the predictions are made</title>
+<style>
+:root{
+  --bg:#0c111b; --panel:#141a26; --panel2:#1a2232; --line:#26314a; --text:#eef1f6;
+  --muted:#9aa6bb; --dim:#6f7b91; --accent:#3987e5; --accent2:#7fb2f0; --ok:#4cc38a;
+  --warn:#e5b13a; --off:#e06c6c;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+a{color:var(--accent2);text-decoration:none}
+a:hover{text-decoration:underline}
+code,kbd{font:0.86em/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#0f1522;
+  border:1px solid var(--line);border-radius:4px;padding:0.05em 0.35em;color:#cfe0f7;white-space:nowrap}
+pre{background:#0f1522;border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;
+  font:0.85em/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#d8e4f5}
+pre code{border:0;padding:0;background:none;white-space:pre}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);gap:0;max-width:1400px;margin:0 auto}
+nav.toc{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;padding:22px 14px 40px 22px;
+  border-right:1px solid var(--line);font-size:0.86rem;line-height:1.35}
+nav.toc .brand{font-weight:700;letter-spacing:0.02em;margin-bottom:4px}
+nav.toc .sub{color:var(--dim);font-size:0.78rem;margin-bottom:14px}
+nav.toc ol{list-style:none;margin:0;padding:0}
+nav.toc li{margin:0}
+nav.toc a{display:block;padding:4px 8px;border-radius:6px;color:var(--muted)}
+nav.toc a:hover{background:var(--panel);color:var(--text);text-decoration:none}
+nav.toc a.active{background:var(--panel2);color:var(--text);box-shadow:inset 2px 0 0 var(--accent)}
+nav.toc ol ol a{padding-left:20px;font-size:0.8rem}
+nav.toc details summary{display:none}
+main{padding:28px 40px 80px 44px;min-width:0}
+.prose{max-width:78ch}
+h1{font-size:2rem;line-height:1.2;margin:0 0 6px}
+h2{font-size:1.5rem;margin:56px 0 10px;padding-top:12px;border-top:1px solid var(--line)}
+h3{font-size:1.18rem;margin:34px 0 8px;color:#dbe6f7}
+h4{font-size:1rem;margin:22px 0 6px;color:#cbd7ea}
+p{margin:0.6em 0}
+ul,ol{padding-left:1.3em}
+li{margin:0.25em 0}
+.meta{color:var(--muted);font-size:0.9rem}
+.src{color:var(--dim);font-size:0.8rem;margin:2px 0 12px;font-style:normal}
+.src::before{content:"source: ";color:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:16px 0}
+.panel.accent{border-left:3px solid var(--accent)}
+.panel.warn{border-left:3px solid var(--warn)}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;font-size:0.92rem}
+.kv div:nth-child(odd){color:var(--muted)}
+.formula{font-family:"Cambria Math","STIX Two Math","Times New Roman",serif;font-size:1.06rem;
+  background:#0f1522;border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:10px 0;
+  overflow-x:auto;white-space:nowrap;color:#e6eefb}
+.formula .c{font-family:-apple-system,"Segoe UI",sans-serif;font-size:0.82rem;color:var(--muted);margin-left:10px}
+.tablewrap{overflow-x:auto;margin:12px 0 16px;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:0.86rem;line-height:1.4}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+th{background:#111827;color:#c9d6ea;font-weight:600;position:sticky;top:0}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tbody tr:nth-child(even){background:#111725}
+.pill{display:inline-block;font-size:0.72rem;font-weight:700;letter-spacing:0.03em;padding:1px 7px;border-radius:999px;
+  vertical-align:1px;white-space:nowrap}
+.on{background:rgba(76,195,138,0.15);color:var(--ok);border:1px solid rgba(76,195,138,0.4)}
+.offp{background:rgba(224,108,108,0.12);color:#f09a9a;border:1px solid rgba(224,108,108,0.35)}
+.shadow{background:rgba(229,177,58,0.12);color:var(--warn);border:1px solid rgba(229,177,58,0.4)}
+.disp{background:rgba(57,135,229,0.14);color:var(--accent2);border:1px solid rgba(57,135,229,0.4)}
+.version{font:600 1.02rem ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#cfe0f7;
+  background:#0f1522;border:1px solid var(--accent);border-radius:8px;padding:8px 12px;display:inline-block;margin:6px 0;
+  overflow-wrap:anywhere}
+.figure{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;margin:18px 0}
+.figure svg{width:100%;height:auto;display:block}
+.caption{color:var(--muted);font-size:0.82rem;margin-top:8px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.unv{color:var(--warn);font-weight:600}
+.small{font-size:0.85rem}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+@media (max-width: 980px){
+  .layout{display:block}
+  nav.toc{position:sticky;top:0;z-index:20;height:auto;max-height:none;border-right:0;border-bottom:1px solid var(--line);
+    background:rgba(12,17,27,0.97);padding:8px 14px}
+  nav.toc .brand,nav.toc .sub{display:none}
+  nav.toc details summary{display:block;cursor:pointer;font-weight:600;color:var(--text);padding:6px 2px;list-style:none}
+  nav.toc details summary::-webkit-details-marker{display:none}
+  nav.toc details summary::after{content:" ▾";color:var(--muted)}
+  nav.toc details[open] summary::after{content:" ▴"}
+  nav.toc details[open] ol.top{max-height:65vh;overflow-y:auto;padding-bottom:8px}
+  main{padding:18px 16px 60px}
+  h1{font-size:1.55rem}
+  h2{font-size:1.3rem}
+}
+@media (min-width: 981px){ nav.toc details > ol{display:block} }
+@media (max-width:700px){code{word-break:break-all;white-space:normal}}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc" id="toc">
+  <div class="brand">Courtside: models explained</div>
+  <div class="sub">Last updated 2026-10-25</div>
+  <details id="tocdetails" open>
+  <summary>Contents</summary>
+  <ol class="top">
+    <li><a href="#top">Overview</a></li>
+    <li><a href="#big-picture">1. The big picture</a>
+      <ol>
+        <li><a href="#flow">Data flow diagram</a></li>
+        <li><a href="#schedule">Jobs and timing</a></li>
+        <li><a href="#version">The live version string</a></li>
+      </ol></li>
+    <li><a href="#game-model">2. Game model</a>
+      <ol>
+        <li><a href="#gm-engine">Inputs: player engine, Elo</a></li>
+        <li><a href="#gm-features">Features</a></li>
+        <li><a href="#gm-fit">Model, fit, calibration</a></li>
+        <li><a href="#gm-market">How the market enters</a></li>
+        <li><a href="#gm-results">Results vs the close</a></li>
+      </ol></li>
+    <li><a href="#chain">3. Player projection chain</a>
+      <ol>
+        <li><a href="#avail">3.1 Availability P(play)</a></li>
+        <li><a href="#minutes">3.2 Minutes</a></li>
+        <li><a href="#rates">3.3 Per-minute rates (EB)</a></li>
+        <li><a href="#usage">3.4 Usage redistribution</a></li>
+        <li><a href="#context">3.5 Context layer P+F2</a></li>
+        <li><a href="#env">3.6 Environment, reconciliation</a></li>
+        <li><a href="#copula">3.7 Joint distribution</a></li>
+        <li><a href="#rb">3.8 Role blend (+rb)</a></li>
+        <li><a href="#tr">3.9 Tail remap (+tr)</a></li>
+        <li><a href="#ep">3.10 Early-season prior (+ep)</a></li>
+        <li><a href="#suffixes">3.11 Every suffix decoded</a></li>
+      </ol></li>
+    <li><a href="#dfs">4. DFS engine</a>
+      <ol>
+        <li><a href="#scoring">Scoring rules</a></li>
+        <li><a href="#solver">Solver, cash, Top N</a></li>
+        <li><a href="#builder">Contest builder</a></li>
+        <li><a href="#ownership">Ownership and field</a></li>
+        <li><a href="#contestsim">Contest sim and payout</a></li>
+        <li><a href="#xfactor">X factor (xf-v2)</a></li>
+        <li><a href="#swap">Late swap</a></li>
+        <li><a href="#showdown">Showdown</a></li>
+      </ol></li>
+    <li><a href="#props">5. Props comparison</a></li>
+    <li><a href="#eval">6. Evaluation and safety</a>
+      <ol>
+        <li><a href="#walkforward">Walk-forward, leakage</a></li>
+        <li><a href="#metrics">Metrics</a></li>
+        <li><a href="#harness">T2.1 harness, T2.4 slice</a></li>
+        <li><a href="#shadows">Live shadows</a></li>
+        <li><a href="#realcalib">Real-results calibration</a></li>
+        <li><a href="#process">Ship process</a></li>
+      </ol></li>
+    <li><a href="#numbers">7. Current numbers</a></li>
+    <li><a href="#weak">8. Weaknesses and next</a></li>
+    <li><a href="#switches">Appendix A: switch table</a></li>
+    <li><a href="#drift">Appendix B: doc vs code notes</a></li>
+  </ol>
+  </details>
+</nav>
+
+<main>
+<div class="prose">
+<h1 id="top">How Courtside makes its predictions</h1>
+<p class="meta">Technical explainer for the owner. Last updated 2026-10-25. Every switch state
+below was read from the <code>*_DEFAULT</code> constants in code, not from a doc.</p>
+
+<div class="panel accent">
+<div class="kv">
+  <div>Live player model</div><div><span class="version">pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr</span></div>
+  <div>Live bundle (prod)</div><div><code>var/proj/bundle_2026-27_v1_cx_mf_ep_ms_c1r.json</code> + <code>corr_2026-27.json</code></div>
+  <div>Game models</div><div><code>gbm_market@v1-7edd944e</code> (headline P(win), margin, total), <code>gbm_opinion@v1-6e19e8ab</code> (no market inputs)</div>
+  <div>DFS layer</div><div>CP-SAT optimizer; contest builder <code>gpp-portfolio-1.0+split-gs</code>, objective <code>blend</code>; field <code>own-proxy-1.2</code> / <code>field-proxy-1.2</code>; X factor <code>xf-v2</code>; late swap <code>swap-contest-1</code></div>
+  <div>Sims</div><div>25,000 per projection run (shadows: 10,000), common random numbers across arms</div>
+</div>
+</div>
+
+<p>In one paragraph: a stacked LightGBM game model prices margin and total (with and without
+the market line). On the player side, a chain of separately fitted models produces, per player,
+P(play), a minutes distribution conditional on the game margin, shrunk per-minute rates with a
+learned context multiplier, and a usage bump when a star sits. A Path A simulator draws the game
+environment, availability scenarios and minutes, then per-stat count outcomes through a Gaussian
+copula; points are reconciled to the book team totals. Two post-draw corrections follow: a
+role-aware blend toward the last-10 average and an upper-tail remap. The sims feed a CP-SAT
+optimizer (cash, Top N), a contest builder scored against a modelled field, the X factor, late
+swap and a props comparison. Everything is fit walk-forward on seasons before the test season,
+and every change ships behind an environment switch with an OFF-is-bit-identical proof and the
+owner's sign-off.</p>
+</div>
+
+<!-- ================================================================ 1 -->
+<section id="big-picture">
+<div class="prose">
+<h2>1. The big picture</h2>
+<p class="src">src/courtside/proj/pipeline.py (module doc), deploy/schedule.sh, deploy/run-job.sh, src/courtside/collect.py, src/courtside/proj/dfs/runner.py, HANDOFF.md §1</p>
+</div>
+
+<div class="figure" id="flow">
+<svg viewBox="0 0 1080 830" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Courtside data flow">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7fb2f0"/>
+    </marker>
+    <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6f7b91"/>
+    </marker>
+    <style>
+      .bx{fill:#141a26;stroke:#2c3a57;stroke-width:1.2}
+      .bxa{fill:#152238;stroke:#3987e5;stroke-width:1.6}
+      .bxs{fill:#141a26;stroke:#e5b13a;stroke-width:1.2;stroke-dasharray:4 3}
+      .t{fill:#eef1f6;font:600 12.5px -apple-system,Segoe UI,sans-serif}
+      .s{fill:#9aa6bb;font:11px -apple-system,Segoe UI,sans-serif}
+      .lab{fill:#7fb2f0;font:700 11px -apple-system,Segoe UI,sans-serif;letter-spacing:0.06em;paint-order:stroke;stroke:#141a26;stroke-width:5px}
+      .ln{stroke:#7fb2f0;stroke-width:1.4;fill:none}
+      .lg{stroke:#4a5876;stroke-width:1.2;fill:none}
+      .tl{fill:#c9d6ea;font:10.5px -apple-system,Segoe UI,sans-serif}
+      .tlm{fill:#9aa6bb;font:10px -apple-system,Segoe UI,sans-serif;paint-order:stroke;stroke:#141a26;stroke-width:4px}
+      .tl{paint-order:stroke;stroke:#141a26;stroke-width:4px}
+    </style>
+  </defs>
+
+  <!-- Band A collectors -->
+  <text x="30" y="26" class="lab">COLLECTORS · pregame 10:00 13:30 17:00 18:30 20:00 22:00 ET · postgame 03:00 09:00 · DFS tick every 5 min</text>
+  <rect x="30" y="36" width="160" height="56" rx="8" class="bx"/><text x="40" y="58" class="t">stats.nba.com / NBA cdn</text><text x="40" y="76" class="s">box, PBP, stints, tracking</text>
+  <rect x="202" y="36" width="160" height="56" rx="8" class="bx"/><text x="212" y="58" class="t">Injury reports</text><text x="212" y="76" class="s">official PDF + ESPN</text>
+  <rect x="374" y="36" width="160" height="56" rx="8" class="bx"/><text x="384" y="58" class="t">Book lines</text><text x="384" y="76" class="s">spread, total, team totals</text>
+  <rect x="546" y="36" width="160" height="56" rx="8" class="bx"/><text x="556" y="58" class="t">Player props</text><text x="556" y="76" class="s">prop_snapshots (DK via ESPN)</text>
+  <rect x="718" y="36" width="160" height="56" rx="8" class="bx"/><text x="728" y="58" class="t">DraftKings capture</text><text x="728" y="76" class="s">slates, salaries, flags, payouts</text>
+  <rect x="890" y="36" width="160" height="56" rx="8" class="bx"/><text x="900" y="58" class="t">History</text><text x="900" y="76" class="s">RotoGuru 2014–21, preseason</text>
+
+  <!-- bus A->B -->
+  <path d="M110 92 V116 M282 92 V116 M454 92 V116 M626 92 V116 M798 92 V116 M970 92 V116" class="lg"/>
+  <path d="M110 116 H970" class="lg"/>
+  <text x="400" y="129" class="tlm">as-of joins: only rows dated strictly before the day (or captured before the run time)</text>
+  <path d="M115 116 V146" class="ln" marker-end="url(#ah)"/>
+  <path d="M322 116 V146" class="ln" marker-end="url(#ah)"/>
+  <path d="M529 116 V146" class="ln" marker-end="url(#ah)"/>
+  <path d="M736 116 V146" class="ln" marker-end="url(#ah)"/>
+  <path d="M954 116 V146" class="ln" marker-end="url(#ah)"/>
+
+  <!-- Band B state -->
+  <text x="30" y="142" class="lab">STATE &amp; FEATURES</text>
+  <rect x="30" y="148" width="170" height="56" rx="8" class="bx"/><text x="40" y="170" class="t">Availability cells</text><text x="40" y="188" class="s">Beta hierarchy, fringe logit</text>
+  <rect x="237" y="148" width="170" height="56" rx="8" class="bx"/><text x="247" y="170" class="t">Minutes panel</text><text x="247" y="188" class="s">role, return, coach, scenario</text>
+  <rect x="444" y="148" width="170" height="56" rx="8" class="bx"/><text x="454" y="170" class="t">EB rates + context feats</text><text x="454" y="188" class="s">rate_state; P + F2</text>
+  <rect x="651" y="148" width="170" height="56" rx="8" class="bx"/><text x="661" y="170" class="t">Market environment</text><text x="661" y="188" class="s">book team totals (median)</text>
+  <rect x="858" y="148" width="192" height="56" rx="8" class="bx"/><text x="868" y="170" class="t">Game features</text><text x="868" y="188" class="s">APM engine, Elo, schedule, form</text>
+
+  <path d="M115 204 V246" class="ln" marker-end="url(#ah)"/>
+  <path d="M322 204 V246" class="ln" marker-end="url(#ah)"/>
+  <path d="M529 204 V246" class="ln" marker-end="url(#ah)"/>
+  <path d="M736 204 V246" class="ln" marker-end="url(#ah)"/>
+  <path d="M954 204 V246" class="ln" marker-end="url(#ah)"/>
+
+  <!-- Band C player chain + game model -->
+  <text x="30" y="242" class="lab">MODELS · projection runs at lock−45 and lock−10 (and pregame shadows)</text>
+  <rect x="30" y="250" width="170" height="64" rx="8" class="bxa"/><text x="40" y="272" class="t">P(play)</text><text x="40" y="290" class="s">report cell, +p2, +pq</text><text x="40" y="305" class="s">→ availability scenarios</text>
+  <rect x="237" y="250" width="170" height="64" rx="8" class="bxa"/><text x="247" y="272" class="t">Minutes engine</text><text x="247" y="290" class="s">GBM plan, +mf, +ms, +rx</text><text x="247" y="305" class="s">margin curve g(|m|)</text>
+  <rect x="444" y="250" width="170" height="64" rx="8" class="bxa"/><text x="454" y="272" class="t">Per-minute rates</text><text x="454" y="290" class="s">EB × context × bump</text><text x="454" y="305" class="s">+ep preseason evidence</text>
+  <rect x="651" y="250" width="170" height="64" rx="8" class="bxa"/><text x="661" y="272" class="t">Env + reconcile</text><text x="661" y="290" class="s">(M,T) draw; Σ pts = implied</text><text x="661" y="305" class="s">c ∈ [0.75, 1.33]</text>
+  <rect x="858" y="250" width="192" height="64" rx="8" class="bxa"/><text x="868" y="272" class="t">Game model</text><text x="868" y="290" class="s">gbm_market / gbm_opinion</text><text x="868" y="305" class="s">margin, total, P(home)</text>
+
+  <path d="M200 282 H233" class="ln" marker-end="url(#ah)"/>
+  <path d="M407 282 H440" class="ln" marker-end="url(#ah)"/>
+  <path d="M614 282 H647" class="ln" marker-end="url(#ah)"/>
+  <path d="M858 282 H825" class="ln" marker-end="url(#ah)"/>
+  <text x="826" y="276" class="tlm">fallback</text>
+
+  <rect x="651" y="340" width="170" height="64" rx="8" class="bxa"/><text x="661" y="362" class="t">Copula sims (v1r)</text><text x="661" y="380" class="s">NB counts + shape map</text><text x="661" y="395" class="s">25k sims, exact DD/TD</text>
+  <rect x="444" y="340" width="170" height="64" rx="8" class="bxa"/><text x="454" y="362" class="t">Role blend (+rb)</text><text x="454" y="380" class="s">μ* = μ + β(r)(L10 − μ)</text><text x="454" y="395" class="s">shifts played sims</text>
+  <rect x="237" y="340" width="170" height="64" rx="8" class="bxa"/><text x="247" y="362" class="t">Tail remap (+tr)</text><text x="247" y="380" class="s">upper-half quantile map</text><text x="247" y="395" class="s">tier × minutes band</text>
+  <rect x="30" y="340" width="170" height="64" rx="8" class="bxa"/><text x="40" y="362" class="t">Stored projections</text><text x="40" y="380" class="s">player_projection_*</text><text x="40" y="395" class="s">sims npz (+ per-stat, scen.)</text>
+  <path d="M736 314 V336" class="ln" marker-end="url(#ah)"/>
+  <path d="M651 372 H618" class="ln" marker-end="url(#ah)"/>
+  <path d="M444 372 H411" class="ln" marker-end="url(#ah)"/>
+  <path d="M237 372 H204" class="ln" marker-end="url(#ah)"/>
+  <rect x="858" y="340" width="192" height="64" rx="8" class="bxs"/><text x="868" y="362" class="t">Live shadows</text><text x="868" y="380" class="s">champion + one switch each</text><text x="868" y="395" class="s">+us +gd +lf +tm +rs (files only)</text>
+
+  <!-- bus to consumers -->
+  <path d="M115 404 V430" class="lg"/>
+  <path d="M115 430 H970" class="lg"/>
+  <path d="M110 430 V452" class="ln" marker-end="url(#ah)"/>
+  <path d="M282 430 V452" class="ln" marker-end="url(#ah)"/>
+  <path d="M454 430 V452" class="ln" marker-end="url(#ah)"/>
+  <path d="M626 430 V452" class="ln" marker-end="url(#ah)"/>
+  <path d="M798 430 V452" class="ln" marker-end="url(#ah)"/>
+  <path d="M970 430 V452" class="ln" marker-end="url(#ah)"/>
+
+  <!-- Band D consumers -->
+  <text x="30" y="447" class="lab">CONSUMERS</text>
+  <rect x="30" y="456" width="160" height="58" rx="8" class="bx"/><text x="40" y="478" class="t">Cash + Top N</text><text x="40" y="496" class="s">CP-SAT, μ − 0.3(μ − p25)</text>
+  <rect x="202" y="456" width="160" height="58" rx="8" class="bx"/><text x="212" y="478" class="t">Contest builder</text><text x="212" y="496" class="s">field proxy, greedy 'blend'</text>
+  <rect x="374" y="456" width="160" height="58" rx="8" class="bx"/><text x="384" y="478" class="t">X factor (xf-v2)</text><text x="384" y="496" class="s">leverage, 4 noisy fields</text>
+  <rect x="546" y="456" width="160" height="58" rx="8" class="bx"/><text x="556" y="478" class="t">Late swap</text><text x="556" y="496" class="s">contest-aware, tip − 10</text>
+  <rect x="718" y="456" width="160" height="58" rx="8" class="bx"/><text x="728" y="478" class="t">Props vs market</text><text x="728" y="496" class="s">information only</text>
+  <rect x="890" y="456" width="160" height="58" rx="8" class="bx"/><text x="900" y="478" class="t">Brief, Tonight cards</text><text x="900" y="496" class="s">game model + projections</text>
+
+  <path d="M110 514 V536 M282 514 V536 M454 514 V536 M626 514 V536 M798 514 V536 M970 514 V536" class="lg"/>
+  <path d="M110 536 H970" class="lg"/>
+  <text x="372" y="549" class="tlm">box scores (postgame) · uploaded DK standings · prop results</text>
+  <path d="M110 536 V560" class="ln" marker-end="url(#ah)"/>
+  <path d="M282 536 V560" class="ln" marker-end="url(#ah)"/>
+  <path d="M454 536 V560" class="ln" marker-end="url(#ah)"/>
+  <path d="M626 536 V560" class="ln" marker-end="url(#ah)"/>
+  <path d="M798 536 V560" class="ln" marker-end="url(#ah)"/>
+  <path d="M970 536 V560" class="ln" marker-end="url(#ah)"/>
+
+  <!-- Band E grading -->
+  <text x="30" y="556" class="lab">GRADING &amp; MONITORING</text>
+  <rect x="30" y="564" width="160" height="58" rx="8" class="bx"/><text x="40" y="586" class="t">DFS grading</text><text x="40" y="604" class="s">MAE, CRPS, hindsight ratio</text>
+  <rect x="202" y="564" width="160" height="58" rx="8" class="bx"/><text x="212" y="586" class="t">Shadow grading</text><text x="212" y="604" class="s">arm − champion, 2-way SE</text>
+  <rect x="374" y="564" width="160" height="58" rx="8" class="bx"/><text x="384" y="586" class="t">Real-standings calib</text><text x="384" y="604" class="s">cash line, ownership</text>
+  <rect x="546" y="564" width="160" height="58" rx="8" class="bx"/><text x="556" y="586" class="t">Prop grading + G3</text><text x="556" y="604" class="s">ledger, blend test</text>
+  <rect x="718" y="564" width="160" height="58" rx="8" class="bx"/><text x="728" y="586" class="t">Game monitor</text><text x="728" y="604" class="s">LL vs market, z, PSI</text>
+  <rect x="890" y="564" width="160" height="58" rx="8" class="bx"/><text x="900" y="586" class="t">Weekly MLOps</text><text x="900" y="604" class="s">retrain if due, card</text>
+
+  <!-- Timeline -->
+  <text x="30" y="660" class="lab">ONE DAY (ET) · example main slate locking 19:00 ET</text>
+  <line x1="60" y1="720" x2="1040" y2="720" stroke="#4a5876" stroke-width="2"/>
+  <!-- hour ticks every 3h -->
+  <g class="tlm">
+    <line x1="60" y1="715" x2="60" y2="725" stroke="#4a5876"/><text x="52" y="740">00</text>
+    <line x1="182.5" y1="715" x2="182.5" y2="725" stroke="#4a5876"/><text x="176" y="740">03</text>
+    <line x1="305" y1="715" x2="305" y2="725" stroke="#4a5876"/><text x="299" y="740">06</text>
+    <line x1="427.5" y1="715" x2="427.5" y2="725" stroke="#4a5876"/><text x="421" y="740">09</text>
+    <line x1="550" y1="715" x2="550" y2="725" stroke="#4a5876"/><text x="544" y="740">12</text>
+    <line x1="672.5" y1="715" x2="672.5" y2="725" stroke="#4a5876"/><text x="666" y="740">15</text>
+    <line x1="795" y1="715" x2="795" y2="725" stroke="#4a5876"/><text x="789" y="740">18</text>
+    <line x1="917.5" y1="715" x2="917.5" y2="725" stroke="#4a5876"/><text x="911" y="740">21</text>
+    <line x1="1040" y1="715" x2="1040" y2="725" stroke="#4a5876"/><text x="1032" y="740">24</text>
+  </g>
+  <!-- DFS tick band 11:00-23:55 -->
+  <rect x="509.2" y="726" width="527.4" height="5" rx="2" fill="#3987e5" opacity="0.5"/>
+  <text x="515" y="754" class="tlm">DFS tick every 5 min, 11:00–23:55 (lock−45 / lock−10 / swap windows)</text>
+  <!-- pregame markers -->
+  <g fill="#4cc38a">
+    <circle cx="468.3" cy="720" r="5"/><circle cx="611.2" cy="720" r="5"/><circle cx="754.2" cy="720" r="5"/>
+    <circle cx="815.4" cy="720" r="5"/><circle cx="876.7" cy="720" r="5"/><circle cx="958.3" cy="720" r="5"/>
+  </g>
+  <text x="440" y="690" class="tl">pregame 10:00 · 13:30 · 17:00 · 18:30 · 20:00 · 22:00</text>
+  <text x="440" y="704" class="tlm">lines, injuries, props, DK capture, game-model predict, prop compare; then shadows (nice 10, 240 s)</text>
+  <!-- postgame -->
+  <g fill="#e5b13a"><circle cx="182.5" cy="720" r="5"/><circle cx="427.5" cy="720" r="5"/></g>
+  <text x="96" y="690" class="tl">postgame 03:00 · 09:00</text>
+  <text x="70" y="704" class="tlm">box/PBP/tracking, grading, rate_state, real-calib, G3</text>
+  <!-- weekly -->
+  <circle cx="264.2" cy="720" r="4" fill="#c58af0"/>
+  <text x="200" y="775" class="tlm">Mon 05:00 weekly MLOps</text>
+  <!-- lock example -->
+  <g>
+    <line x1="805.2" y1="728" x2="805.2" y2="790" stroke="#7fb2f0" stroke-dasharray="3 3"/>
+    <line x1="829.5" y1="728" x2="829.5" y2="805" stroke="#7fb2f0" stroke-dasharray="3 3"/>
+    <line x1="835.8" y1="728" x2="835.8" y2="820" stroke="#eef1f6"/>
+    <line x1="951.5" y1="728" x2="951.5" y2="805" stroke="#e06c6c" stroke-dasharray="3 3"/>
+    <text x="700" y="794" class="tl">lock−45 build 18:15</text>
+    <text x="712" y="809" class="tl">lock−10 build 18:50</text>
+    <text x="842" y="824" class="tl">lock 19:00</text>
+    <text x="958" y="809" class="tl">swap: later tip − 10</text>
+  </g>
+</svg>
+<div class="caption">Blue boxes are the live player chain; the dashed amber box is the pregame shadow process, which
+writes files only and is never served. "Fallback" on the game model arrow: the environment takes book team
+totals first, then spread and total, and uses <code>gbm_market</code> only when no book line exists.</div>
+</div>
+
+<div class="prose">
+<h3 id="schedule">Jobs and timing</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Job</th><th>When (ET)</th><th>What it does for the models</th></tr></thead>
+<tbody>
+<tr><td>pregame</td><td>10:00, 13:30, 17:00, 18:30, 20:00, 22:00</td><td>Captures odds (book spread / total / team totals), official report + ESPN injuries, props, DK lobby / draftables / payouts. Runs the game model (<code>predict</code>) and <code>prop_compare</code>. Then <code>courtside proj shadows run</code> in its own process at <code>nice 10</code>, 240 s budget, skipped near any lock window.</td></tr>
+<tr><td>dfs-tick</td><td>every 5 min, 11:00–23:55</td><td>Lock-relative builds: lock−45 when now ∈ [lock−47, lock−40]; lock−10 in [lock−12, lock−7], widened when builds are slow (starts no earlier than lock−25, aims to finish 3 min before lock; a missed lock−10 may still run until lock−2 if it fits). Late swap at each later tip − 10. Each build refreshes the report, ESPN and draftables first. Idempotent per (slate, kind).</td></tr>
+<tr><td>postgame</td><td>03:00, 09:00</td><td>Box scores, PBP, stints, shots, starters, matchups, tracking, hustle, game logs, season tables; then <code>dfs_grade</code>, <code>shadow_grade</code>, <code>prop_grade</code>, <code>rate_state</code> (EB state as of tomorrow), post-game why, Brief. After the job: <code>dfs real-calib --sims 2000</code> and <code>props-blend-eval --ledger</code>.</td></tr>
+<tr><td>weekly</td><td>Mon 05:00</td><td><code>mlops retrain --model all --if-due</code> (first weekly run of the month, or an open calibration / drift alert), <code>mlops shadows</code> (game-model online gate), <code>mlops card</code>, weekly DFS report.</td></tr>
+</tbody></table></div>
+<p class="small">Seeds: <code>stable_seed(slate_or_day, kind, SEED_VERSION)</code> with <code>SEED_VERSION = pathA-v0.2</code>, and every game draws from <code>SeedSequence([seed, crc32(game_id)])</code>. So two arms on the same slate share environment, availability and minutes draws (common random numbers), and a game's sims do not depend on which other games are on the slate.</p>
+
+<h3 id="version">The live version string</h3>
+<p>The version is composed in <code>pipeline._versions()</code>: bundle suffixes first, then model-version-only tags. With the current defaults it evaluates to:</p>
+<p><span class="version">pathA-v0.3 +mf +ep +ms +c1r +p2 +pq +rx +rb +tr</span></p>
+<p>Bundle file: <code>bundle_2026-27_v1_cx_mf_ep_ms_c1r.json</code>. Suffixes before <code>+p2</code> change fitted parameters (their own bundle); <code>+p2</code> onward change behaviour with the same bundle and seeds. Each suffix is decoded in <a href="#suffixes">§3.11</a>.</p>
+</div>
+</section>
+
+<!-- ================================================================ 2 -->
+<section id="game-model">
+<div class="prose">
+<h2>2. Game model (win probability, margin, total)</h2>
+<p class="src">docs/MODEL.md (rungs 1–3), docs/MODEL_CARD.md (2026-10-19), docs/research/game-calibration.md, src/courtside/model/gbm.py, model/features.py, model/players.py, injuries.py</p>
+
+<p>Production is "rung 3": a linear base plus a LightGBM residual, one model per target (margin,
+total), with P(home win) derived from the margin. Two production specs exist:
+<code>gbm_market</code> (uses the line; it drives the Brief's headline numbers and the player
+sims' fallback environment) and <code>gbm_opinion</code> (no market inputs; "our number").</p>
+
+<h3 id="gm-engine">Inputs: the player-strength engine and Elo</h3>
+<ul>
+<li><b>Data.</b> <code>team_games</code> (stats.nba.com league game log) 2000-01 → 2025-26, 33,447 games after validation; 2000-01 → 2002-03 are burn-in. Neutral sites, the bubble and franchise relocations are curated (<code>model/sites.py</code>, <code>teams.franchise</code>).</li>
+<li><b>Player engine (rung 2).</b> Ridge APM with a box-score prior, one causal pass day by day. Per player-game the on-court plus-minus has expectation (m<sub>i</sub>/48)·(r<sub>i</sub> + Σ<sub>teammates</sub> r<sub>k</sub>·4m<sub>k</sub>/(5G − m<sub>i</sub>) − Σ<sub>opp</sub> r<sub>j</sub>·m<sub>j</sub>/G + h), weight 48/m<sub>i</sub>. Posterior mean solves (A + λI) r = b + λμ with A, b accumulated with exponential decay. Box prior μ = β·(z − z̄), z = shrunk per-100 rates (600 pseudo-possessions) of 11 box stats plus minutes, evidence and rookie / sophomore flags; β refit each season by a predictive regression on the previous 6 seasons.</li>
+<li><b>Frozen engine hyperparameters</b> (tuned on 2000-01 → 2010-11 only): λ = 300, APM half-life 1,460 d, summer carry 0.8, box half-life 365 d, box carry 0.6, box n<sub>0</sub> = 600, minutes EWMA α 0.2 / 0.02.</li>
+<li><b>Elo</b>: K = 20, HCA = 90, summer carry 0.65, MOV multiplier (|MOV|+3)<sup>0.8</sup>/(7.5 + 0.006·Elo<sub>diff,winner</sub>); frozen on 2000-11.</li>
+<li><b>Availability.</b> Live: latest injury snapshot per player mapped by the hand-set <code>injuries.PLAY_PROB</code> (Out 0, Doubtful 0.10, Questionable 0.5, Day-to-day 0.6, Probable 0.9, Available 1). The player side's calibrated cells are <b>not</b> used here yet (IMPROVEMENTS B4). Backtest: <code>avail_tight</code>, the leak-safe oracle: regulars (projected ≥ 20 min) by who played, fringe players assumed available. The full "who played" oracle leaks game flow (56.5% ATS artefact) and is never used.</li>
+</ul>
+
+<h3 id="gm-features">Features (one causal row per game)</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Group</th><th>Features</th></tr></thead>
+<tbody>
+<tr><td>Player strength</td><td>home / away / diff of available-lineup strength; strength lost to absences per team (full recent roster minus available lineup)</td></tr>
+<tr><td>Rating</td><td>Elo difference</td></tr>
+<tr><td>Schedule</td><td>the ten elo_sched terms: home-court indicator (0 at neutral sites) and × postseason; home / away b2b, 3-in-4, 4-in-6; differences in rest, games in last 7 days, travel (1,000 km), |tz change|</td></tr>
+<tr><td>Form</td><td>opponent-adjusted net rating over 5 / 10 / 20 games; 10-game four-factor diffs (eFG, TOV%, OREB%, FT rate); 10-game pace, ORtg / DRtg, game totals</td></tr>
+<tr><td>Context</td><td>roster continuity; games played; day of season; league scoring and pace over the last 300 games</td></tr>
+<tr><td>Home-court drift</td><td><code>lg_hca</code> (league home margin over last 1,230 non-neutral games), <code>apm_hca</code> (APM home term)</td></tr>
+<tr><td>Market (gbm_market only)</td><td>closing spread and total in training; latest pre-tip line live; NaN without a line</td></tr>
+</tbody></table></div>
+
+<h3 id="gm-fit">Model, training window, calibration</h3>
+<ol>
+<li><b>Linear base</b> (weighted). Margin: the rung-2 design + home-court × drift interactions, no intercept. Total: intercept, league total, recent team totals, pace × ratings. The market variant adds the line; rows without one use a second fit without the market column.</li>
+<li><b>LightGBM on the residual</b> with the base as <code>init_score</code>.</li>
+<li><b>Inner walk-forward</b> over the last 3 training seasons picks the config and tree count (early stopping on time-ordered folds; zero trees allowed). Grid: leaves {7, 15} × recency half-life {none, 4 seasons}; lr 0.05, ≤ 400 trees, min leaf 300, L2 10, feature fraction 0.7, bagging 0.8.</li>
+<li><b>P(home win)</b> from the margin: Gaussian Φ(μ/σ) by maximum likelihood, Platt on (μ, μ×postseason) or isotonic, whichever wins leave-one-season-out on the inner OOF predictions. Gaussian won 12–13 of 14 folds.</li>
+</ol>
+<div class="tablewrap"><table>
+<thead><tr><th>Frozen production config (<code>gbm.FROZEN</code>)</th><th>Margin head</th><th>Total head</th></tr></thead>
+<tbody>
+<tr><td><code>gbm_market</code></td><td>7 leaves, no half-life, 22 trees</td><td>7 leaves, 4-season half-life, 12 trees</td></tr>
+<tr><td><code>gbm_opinion</code></td><td>15 leaves, no half-life, 89 trees</td><td>7 leaves, 4-season half-life, 31 trees</td></tr>
+</tbody></table></div>
+<p><b>Training window.</b> Production refits every morning on all games strictly before the day ("continuous training"; a refit is not a new version). Hyperparameters are fixed per registered version. The trees add almost nothing: gbm_market vs its linear base +0.0001 ± 0.0002 LL; gbm_opinion −0.0005 ± 0.0004.</p>
+
+<h3 id="gm-market">How the market enters: gbm_market vs gbm_opinion</h3>
+<ul>
+<li><code>gbm_market</code> carries the spread and total both in the linear base and as tree features. Training uses closing lines; live it is priced on the newest captured pre-tip line (pregame odds are captured in-run, about 1 minute old; IMPROVEMENTS G1). Fed the open instead of the close, it loses 0.008 LL on 879 2025-26 games, so early runs are noisier than the backtest.</li>
+<li><code>gbm_opinion</code> has no market input. It is used for "our number vs the market" and its departures from the close are mostly noise (b<sub>disagree</sub> 0.11, SE 0.05: about 11% of a departure is borne out).</li>
+<li>For player sims, the market enters primarily through the <b>book team totals</b> (§3.6), not through the game model.</li>
+<li>Built OFF: <code>+nsl</code> news-since-line shift (−0.0009 LL, 1.6 SE, post hoc only), <code>+as</code> absence scale (absence values are not 2× the market's: outcomes scale 1.29 ± 0.17, close 0.92 ± 0.04), a shrink-toward-close layer (−0.00089 ± 0.00039 LL, but 2024-25 +1.06 SE: misses the per-season rule; revisit after 2026-27).</li>
+</ul>
+
+<h3 id="gm-results">Results vs the market</h3>
+<p>Walk-forward 2012-13 → 2025-26, regular season, procedure re-run per fold (MODEL.md, MODEL_CARD.md 2026-10-19):</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Model</th><th class="num">LL</th><th class="num">Brier</th><th class="num">Acc</th><th class="num">Margin MAE</th><th class="num">LL − close (16,321 games)</th><th class="num">Last 3 seasons, LL − close</th></tr></thead>
+<tbody>
+<tr><td>closing line (de-vigged ML)</td><td class="num">0.5918</td><td class="num">0.2035</td><td class="num">68.1%</td><td class="num">9.90</td><td class="num">—</td><td class="num">—</td></tr>
+<tr><td><code>gbm_market</code></td><td class="num">0.5933</td><td class="num">0.2041</td><td class="num">68.1%</td><td class="num">9.91</td><td class="num">+0.0010 ± 0.0005</td><td class="num">+0.0000 ± 0.0009</td></tr>
+<tr><td><code>gbm_opinion</code></td><td class="num">0.6022</td><td class="num">0.2079</td><td class="num">67.2%</td><td class="num">10.06</td><td class="num">+0.0099 ± 0.0013</td><td class="num">+0.0086 ± 0.0025</td></tr>
+<tr><td>rung 2 leak-safe (<code>ps_elo_sched_mh_avail</code>)</td><td class="num">0.6029</td><td class="num">0.2081</td><td class="num">67.0%</td><td class="num">10.08</td><td class="num"></td><td class="num"></td></tr>
+<tr><td>rung 1 <code>elo_sched</code></td><td class="num">0.6131</td><td class="num">0.2126</td><td class="num">66.1%</td><td class="num">10.24</td><td class="num"></td><td class="num"></td></tr>
+</tbody></table></div>
+<ul>
+<li><b>Totals MAE</b> (last 3): gbm_market 14.32 vs closing total 14.30; gbm_opinion 15.06.</li>
+<li><b>Calibration</b>: logistic recalibration slope 0.98 (0.02) for gbm_market over all 14 seasons vs 1.00 (0.02) for the close; full 2025-26 day-by-day replay 0.97 (0.07). The "0.8 slope" once quoted was a replay window that stopped on 2026-02-20; Dec / Jan run overconfident for model and market alike every year. ECE 0.013 (market), 0.005 (opinion).</li>
+<li><b>Against the spread</b>: every row of the walk-forward is within noise and below the 52.4% break-even at −110 (gbm_opinion 50.5% [49.7, 51.2], n = 16,656). The model does not beat the closing line, and the product shows "our number vs the market" as information.</li>
+<li><b>Playoffs</b>: the market is clearly better (gbm_market +0.0056 ± 0.0032 LL vs close on 1,090 games).</li>
+<li><b>Live 2026-27</b>: no game-model live metric has been written to a doc yet. The MODEL_CARD "Live performance" table (season n = 838, LL 0.6216) is the 2025-26 replay through 2026-02-20, not this season (<a href="#drift">Appendix B</a>).</li>
+</ul>
+<p class="small"><b>Promotion policy</b> (MLOPS.md §4): a challenger must beat the champion on the frozen walk-forward procedure by &gt; 2 date-clustered paired SE of per-game LL (regular season only), be no worse on the most recent season beyond 2 SE, and not worsen ECE by &gt; 0.005; then shadow live for ≥ 100 games and be "not clearly worse" (mean diff ≤ 2 clustered SE) with no open critical alert. Rollback is one command.</p>
+</div>
+</section>
+
+<!-- ================================================================ 3 -->
+<section id="chain">
+<div class="prose">
+<h2>3. Player projection chain</h2>
+<p class="src">src/courtside/proj/pipeline.py, PLAYERS.md §4 and Phase 2 / 2F result blocks, IMPROVEMENTS.md §2</p>
+<p>Order inside one projection run (<code>pipeline.project_games</code> → <code>build_games</code> → <code>copula.simulate_game_v1</code> → <code>run_games</code>):
+P(play) per player → availability scenarios per team → minutes per scenario → EB rates × context multiplier (stars picked on EB rates) → usage bump → per-sim environment and minutes → per-stat counts via the copula → reconciliation of points to the implied totals → role blend → tail remap → summaries, stored sims. All parameters live in the bundle and are fit on seasons &lt; S (S = the season of the day).</p>
+
+<!-- 3.1 -->
+<h3 id="avail">3.1 Availability: P(play) <span class="pill on">p2 ON</span> <span class="pill on">pq ON</span> <span class="pill shadow">gd shadow</span></h3>
+<p class="src">src/courtside/proj/availability.py, availability_params.json, pplay_q_params.json, fringe_params.json; PLAYERS.md §4.1, P(play) v2 block; docs/research/pplay-q-refit.md</p>
+<p><b>Model type.</b> A Beta-binomial hierarchy per report status, with every level shrunk to its parent:</p>
+<div class="formula">posterior(cell) = (k + m · parent) / (n + m) <span class="c">k = games played, n = games, m = 20 pseudo-obs</span></div>
+<div class="tablewrap"><table>
+<thead><tr><th>Level</th><th>Cell</th><th>Prior / parent</th></tr></thead>
+<tbody>
+<tr><td>L1</td><td>status ∈ {out, doubtful, questionable, probable, available} + removed, unlisted, unlisted_noreport</td><td>the hand-set <code>PLAY_PROB</code> value, m1 = 20 (5 for removed / unlisted, priors 0.5 / 0.99 / 0.97)</td></tr>
+<tr><td>L2</td><td>× hours from the report used to the tip: &lt; 0.75 h, 0.75–2 h, 2–6 h, &gt; 6 h</td><td>L1 posterior</td></tr>
+<tr><td>L3</td><td>× reason class parsed from the report text (injury, management, illness, rest, personal, G League, suspension, other, none)</td><td>L2 posterior</td></tr>
+<tr><td>L4</td><td>× role by mean minutes of last 10 appearances (bench &lt; 15, rotation 15–26, starter ≥ 26)</td><td>L3 posterior</td></tr>
+</tbody></table></div>
+<ul>
+<li>L1–L2 are made monotone across the five listed statuses by weighted pool-adjacent-violators.</li>
+<li><b>Fit data</b>: official reports 2025-12-22 → 2026-04-12, 808 games, 93,851 rows, label = <code>player_games.min &gt; 0</code>. ESPN "Day-to-day" keeps 0.6 (no history). Decision rule: the latest report at or before the run time for that game day.</li>
+<li><b>Overrides</b>: DK starter flag → 0.99.</li>
+<li><b><code>+p2</code></b> (live since 2026-10-21): (1) a listed, not-Out player's P(plays | available) = 1, so his total P(play) is the report cell (the cells are fit on "played", which already includes coach's-decision DNPs; the old path counted DNP twice). His non-play is drawn as a scenario absence, so teammates are re-projected. (2) Fringe DK-pool players (not in the team's last 10 games, not on the report) get a logistic P(plays | available): mid-season features <code>avg10</code>, no-appearance flag (fit on the slice's 868 fringe rows, now refit leave-one-month-out); in a team's first 5 games, log appearances in 365 days and log(DK salary / 3000) plus a minimum-salary flag, fit on RotoGuru pools 2017-21 reweighted to the not-listed population. Players DK prices ≥ $4,500 keep the minutes engine's value in that early regime. Clamp [0.02, 0.97].</li>
+<li><b><code>+pq</code></b> (live since 2026-10-24): once ≥ 3 of a team's candidates carry the DK starter flag (lock−10), listed not-Out non-starters get a ridge-shrunk (ridge 4) logit offset by status × role on top of their cell, e.g. Q starter-role −1.48, Q bench −0.12, Probable / Available starter-role −0.46. Fit on 2025-26 lock−10 rows.</li>
+<li><b>Scenarios</b>: independent Bernoulli(P(available)) per player; per team at most 16 distinct absent sets (most frequent until 95% of sims are covered, plus "everyone uncertain plays"). Rarer sets collapse onto the kept subset with the most absentees; marginal P(play) stays exact.</li>
+</ul>
+<p><b>Validation.</b> CV log loss on D/Q/P 0.463 vs 0.503 for the hand-set map. T2.4 slice (§6) found the double-counted DNP: listed Q/P/Available projected 0.69 vs 0.79 played, DK bias −1.33. With <code>+p2</code>: listed P(play) 0.62 → 0.71 vs 0.71 played, fringe 0.66 → 0.25 vs 0.25; DK CRPS −0.073 (two-way z −4.68, out-of-sample fringe) at lock−45, −0.076 (z −4.96) at lock−10, every tier negative. <code>+pq</code>: lock−10 listed P(play) LL −3.2 SE walk-forward (−4.1 leave-month-out), DFS CRPS −2.7 SE on the lock−10 slice, no tier worse, lock−45 identical. <code>+gd</code> (rows keyed by game date, B8) is neutral (LL −0.0005 to −0.0012) and runs as a "not worse" shadow.</p>
+
+<!-- 3.2 -->
+<h3 id="minutes">3.2 Minutes <span class="pill on">v1</span> <span class="pill on">mf ON</span> <span class="pill on">ms ON</span> <span class="pill on">rx ON</span> <span class="pill offp">mr, pre, bo, rs OFF</span></h3>
+<p class="src">src/courtside/proj/minutes.py (module doc, <code>GBM_PARAMS</code>, <code>fit_spread</code>, <code>SPREAD_*</code>, <code>MF_*</code>); PLAYERS.md §4.2, §0.4, minutes-fix and blowout blocks; IMPROVEMENTS P6, B2b; docs/research/p4-p6.md, reserve-extras.md</p>
+<p>Minutes are modelled per team-game and per availability scenario, conditional on the game margin.</p>
+<h4>Base plan: E[regulation minutes | plays]</h4>
+<p>LightGBM regression (L2; lr 0.03, 63 leaves, min leaf 200, feature / bagging fraction 0.8, L2 5), refit per season on the 5 seasons &lt; S, rounds by leave-one-season-out early stopping. Players with no box history or too few games fall back to the v0.5 linear base.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Group</th><th>Features</th></tr></thead>
+<tbody>
+<tr><td>Role</td><td>fast / slow / α 0.5 EWMAs of minutes, last game, median of 5, volatility, minutes as starter / off the bench, season mean, starts in last 10, team minutes rank, last game's |margin| and fouls</td></tr>
+<tr><td>Return</td><td>games missed now, games since return, absence length</td></tr>
+<tr><td>Schedule</td><td>rest, b2b, games in last 3 days, age, team games into the season, new season / new team</td></tr>
+<tr><td>Coach</td><td>coach by date (curated stints), coach-level top-7 share and count of 30+ min players with 40 pseudo-games, carried across teams; team rotation EWMA</td></tr>
+<tr><td>Scenario</td><td>vacated minutes total / by position group / in his groups / newly absent / of absent expected starters; expected starters out; depth rank after removals overall and in group; rank gain; minutes slack; available rotation size; his group's starter target</td></tr>
+</tbody></table></div>
+<p>News features are not in the GBM (reports exist only from 2025-12-22). Preseason columns exist behind <code>+pre</code> (OFF).</p>
+<h4>Stage 2: promotion, P(plays), reconciliation, margin</h4>
+<ul>
+<li><b>Value-play promotion.</b> Per absent expected starter j, a softmax conditional logit gives each available non-starter u P(u replaces j) (same / secondary / adjacent group, EWMA, starts, his shrunk historical share of j's minutes when j sat); expected lift = P × (target − base)<sub>+</sub>, target = 0.5·team starter minutes for j's group + 0.5·own EWMA. Leftover k<sub>add</sub> of j's minutes is spread by group. The literal "top of group" rule is the real replacement only ~49% of the time.</li>
+<li><b>P(plays | available)</b>: a logit on the state plus depth rank among available players. Under <code>+mf</code> it also reads the GBM's plan for the night (log plan, plan / EWMAs / median of 5) and depth-rank dummies by plan, fit on out-of-fold plans. (A LightGBM classifier was dropped: it learns the oracle's "available regulars always play".)</li>
+<li><b>Team total</b>: 240 (+25 per OT) minus a reserve for players outside the candidate set. Reconciliation moves each player's expected minutes in proportion to Var<sub>i</sub> ∝ p·a·(0.2² + 1 − p), capped at 40 (+5 / OT); this beat proportional water-filling by ~0.1 min MAE on every season. Under <code>+rx</code>, when the candidates hold the DK pool the reserve is only career debutants' expected minutes by team games into the season (~14 min at game 1, ~0.15 from game 15).</li>
+<li><b>Margin curve</b>: minutes(m) = mean + g<sub>tier</sub>(|m|, won/lost) − c<sub>tier</sub>, g = mean residual by 5 tiers (edges 12 / 20 / 26 / 32 min) × |margin| bins (0, 5, 10, …, 30+) × result, fit on seasons &lt; S; evaluated at each sim's drawn margin.</li>
+</ul>
+<h4>Noise</h4>
+<div class="formula">min<sub>s</sub> = level × exp(μ<sub>tier</sub> + c + σ<sub>tier</sub>·s(ξ)·ξ), &nbsp; s(ξ) = s<sub>lo</sub> if ξ &lt; 0 else s<sub>hi</sub> <span class="c">two-piece normal in log space (+ms); c re-centres E[exp(noise)]</span></div>
+<ul>
+<li>Early exit with probability q<sub>0</sub> + q<sub>1</sub>·PF/36, scaled by U(0.35, 0.85); DNP-CD with probability 1 − p; then a per-sim proportional fill to the team total.</li>
+<li><b><code>+mf</code></b>: noise fit net of the margin curve (the old fit on log(actual/plan) double-counted the margin and moved ~0.6 min/game from stars to bench), then μ / σ per tier recalibrated by simulation so that played sims match actual minutes on average and the 10–90% interval covers 80%.</li>
+<li><b><code>+ms</code></b>: s<sub>lo</sub> = (q50 − q10)/z<sub>0.9</sub>, s<sub>hi</sub> = (q90 − q50)/z<sub>0.9</sub> from three LightGBM quantile models (objective quantile; lr 0.05, 15 leaves, min leaf 400, L2 5, 300 rounds) of log(actual / (plan + g(margin))), on the GBM's features plus log plan and plan vs EWMAs, rows played with plan ≥ 5; each divided by its tier's mean and clipped to [0.4, 2.5]; μ / σ recalibrated by simulation.</li>
+</ul>
+<p><b>Validation.</b> T1.2 tests: two starters out → the value play's projected rise +9.2 / +9.6 vs +8.9 / +8.8 realised; star absence → remaining top 6 +1.4 min (the per-minute bump supplies the rest of the DK effect). v1 walk-forward minutes MAE 4.49 / 4.40 vs v0.5 4.63 / 4.58. Live-like (T2.4) minutes MAE 4.457 (played, E[min|plays] ≥ 15). <code>+mf</code> vs OFF DK CRPS two-way z −5.19 / −4.61 (2023-24 / 2024-25), live −1.99, live10 −2.93, RotoGuru −3.48 / −2.90; every tier better. <code>+ms</code> on the live stack: DK CRPS z −8.2 / −6.2 harness, −5.3 / −5.3 live / live10, −6.8 / −10.5 RotoGuru; minutes CRPS z −8.1 to −11.0; 96–99% of the gain is the per-player shape. <code>+rx</code>: live DK CRPS z −2.4 / −3.2, held-back minutes 2.43 → 0.14 per team-game (actual 0.27).</p>
+<p class="small"><b>OFF and why</b>: <code>+mr</code> (minutes-ratio re-key; adds little over <code>+mf</code>, costs the bench), <code>+pre</code> (preseason minutes; first-15-games gain but star tier +1.4 / +2.6 SE full season), <code>+bo</code> (blowout stage; fixes star minutes at the actual margin but ~0 over <code>+mf</code>, CRPS −1.5 / −1.5 SE misses the bar), <code>+rs</code> (minutes-restriction cap; 3 flagged rows so far; shadow).</p>
+
+<!-- 3.3 -->
+<h3 id="rates">3.3 Per-minute rates: empirical Bayes state</h3>
+<p class="src">src/courtside/proj/state.py (<code>fit_params</code>, <code>KAPPA_GRID</code>, <code>H_GRID</code>, <code>RHO_GRID</code>); local var/proj/bundle_2026-27_v1.json; PLAYERS.md §4.3</p>
+<p>For each player and stat in {pts, fg3m, reb, oreb, dreb, ast, stl, blk, tov, fga, fta, pf} (plus derived DK/min, no bonuses), as of day d:</p>
+<div class="formula">r̂ = (Σ<sub>g</sub> w<sub>g</sub> x<sub>g</sub> + κ μ) / (Σ<sub>g</sub> w<sub>g</sub> min<sub>g</sub> + κ), &nbsp;&nbsp; w<sub>g</sub> = 2<sup>−(d − day<sub>g</sub>)/H</sup> · ρ<sup>(season<sub>d</sub> − season<sub>g</sub>)</sup></div>
+<ul>
+<li><b>κ</b> is in pseudo-minutes. <b>H</b> (calendar-day half-life, so the summer decays by itself), <b>ρ</b> (extra discount per season boundary) and κ are chosen per stat on grids (H ∈ {30 … 720} d, ρ ∈ {0.3, 0.5, 0.7, 0.85, 1.0}, κ ∈ {15 … 2,600}) by maximum NB log-likelihood of the next game's count given its actual minutes, on seasons &lt; S.</li>
+<li><b>Prior μ</b>: the season-to-date league rate of the player's cell = position group (G / F / C / unknown) × tier of his own decayed minutes per game (edges 12 / 20 / 26 / 32), each game using its pre-game tier, blended with last season's final cell rate (m<sub>0</sub> = 1,500 pseudo-minutes).</li>
+<li><b>Expected count given minutes</b>: rate × minutes × f<sub>stat</sub>(min / mpg), a piecewise-linear table on ratio edges 0.4 … 1.5 (short nights cost efficiency).</li>
+<li><b>Dispersion</b>: NB φ per (stat, minutes tier), Var = μ + φμ².</li>
+<li>Regular season, play-in and playoffs all feed the state. One vectorised pass; query rows are sorted before the same-day real row, so a state can never see its own day.</li>
+</ul>
+<div class="tablewrap"><table>
+<thead><tr><th>Stat</th><th class="num">H (days)</th><th class="num">ρ</th><th class="num">κ (min)</th><th>NB φ by tier (bench → star)</th></tr></thead>
+<tbody>
+<tr><td>pts</td><td class="num">90</td><td class="num">1.0</td><td class="num">65</td><td>0.212, 0.145, 0.111, 0.076, 0.055</td></tr>
+<tr><td>fg3m</td><td class="num">120</td><td class="num">1.0</td><td class="num">25</td><td>0.073, 0.010, 0.033, 0.024, 0.044</td></tr>
+<tr><td>reb</td><td class="num">180</td><td class="num">0.7</td><td class="num">65</td><td>0.031, 0.018, 0.015, 0.014, 0.012</td></tr>
+<tr><td>ast</td><td class="num">90</td><td class="num">1.0</td><td class="num">40</td><td>0.091, 0.051, 0.043, 0.025, 0.019</td></tr>
+<tr><td>stl</td><td class="num">360</td><td class="num">1.0</td><td class="num">250</td><td>0.110, 0.050, 0.054, 0.025, 0.021</td></tr>
+<tr><td>blk</td><td class="num">240</td><td class="num">1.0</td><td class="num">100</td><td>0.200, 0.114, 0.087, 0.075, 0.102</td></tr>
+<tr><td>tov</td><td class="num">180</td><td class="num">0.85</td><td class="num">100</td><td>0.051, 0.018, 0.005, 0.001, 0.001</td></tr>
+</tbody></table></div>
+<p class="small">Values from the 2026-27 OFF bundle on geekom1 (<code>bundle_2026-27_v1.json</code>, rate state fit on 2018-19 → 2025-26). The live arm adds the context layer and <code>+ep</code> on top of this state; I did not read the prod bundle on the Mac, so treat these as representative rather than verified prod values. Planned items not implemented: the S1 ridge prior (height, weight, age, draft slot) and an age curve; <code>+ep</code> tested age / rookie / role-change pieces and dropped them (§3.10).</p>
+
+<!-- 3.4 -->
+<h3 id="usage">3.4 Usage redistribution <span class="pill on">tier bump live</span> <span class="pill shadow">+us shadow</span></h3>
+<p class="src">src/courtside/proj/state.py (<code>fit_usage_bump</code>), proj/usage.py, pipeline.py module doc; IMPROVEMENTS P8; docs/research/p8-e3.md; mlops/shadow_registry.json</p>
+<p><b>Live (Phase 1 form).</b> When one of a team's top-2 regular stars (by DK/min × mpg; appeared in ≥ 7 of the last 10 team games or one of the last 3) is absent in a sim's scenario, role-tier per-minute multipliers apply, fit on star-absence natural experiments in seasons &lt; S. 2026-27 local bundle: other star DK/min ×1.057 (pts ×1.076, ast ×1.087, fta ×1.134, tov ×1.143), rotation ×1.035 (pts ×1.048, ast ×1.070). No per-minute shift when a third starter sits.</p>
+<p><b><code>+us</code> (usage v1, OFF, live shadow since 2026-10-24).</b> Per absent regular j, a log-additive factor on player i's rate of stat s:</p>
+<div class="formula">φ<sub>i,s</sub> = exp(clip(Σ<sub>j∈A</sub> l<sub>ij,s</sub>, ±0.4)), &nbsp; l<sub>ij,s</sub> = β<sub>s</sub>[cell(i,j)]·share<sub>j,s</sub> + λ<sub>s</sub>·log(1 + w<sub>st</sub>(R<sub>st</sub> − 1)) + log(1 + w<sub>bx</sub>(R<sub>bx</sub> − 1))</div>
+<p>with a tier / position-pair prior on j's share of team production, a stint on/off ratio (2019+, w = n<sub>off</sub>/(n<sub>off</sub> + K)) and a box with/without ratio. β, λ by an NB GLM given actual minutes; K by NB log-lik; all on seasons &lt; S. Results: DK CRPS two-way z −1.79 / −3.33 harness, −2.73 / −4.21 RotoGuru, but +0.28 live and −0.57 live10; value ranking better everywhere. Live is the deciding set: shadow bar z ≤ −2 on DK CRPS at the 13:30 run, ≥ 21 nights.</p>
+
+<!-- 3.5 -->
+<h3 id="context">3.5 Context layer P+F2 <span class="pill on">ON (pathA-v0.3)</span> <span class="pill offp">F3+F6 ext OFF</span></h3>
+<p class="src">src/courtside/proj/context.py (<code>LGB_PARAMS</code>, <code>CLIP</code>), proj/features/{player,opp_defense,tracking,schedule,matchups,shots}.py; PLAYERS.md Phase 2F (three ablations)</p>
+<div class="formula">rate<sub>s</sub> = EB rate<sub>s</sub> × m<sub>s</sub>(x), &nbsp; m<sub>s</sub> = clip(exp(f<sub>s</sub>(x) − f<sub>s</sub>(x<sub>ref</sub>)), [0.8, 1.25])</div>
+<ul>
+<li><b>Model</b>: one LightGBM per DK stat (pts, fg3m, reb, ast, stl, blk, tov), Poisson objective with offset log E<sub>s</sub>, where E<sub>s</sub> = r<sub>s</sub> × actual min × f<sub>s</sub>(min/mpg) × tier bump. The offset carries the minutes, so f learns per-minute context only; the Poisson gradient weights rows by expected count. x<sub>ref</sub> = league-average context.</li>
+<li><b>Hyperparameters</b>: lr 0.03, 15 leaves, depth 4, min leaf 1,500, min hessian 50, L2 50, feature / bagging 0.8, max_delta_step 0.7, max_bin 63, ≤ 1,500 rounds with early stopping (60) on the last training season then refit on all training seasons; monotone constraints on the stat's own DvP index; 1 thread at refit for byte-identical bundles. Fit on the 6 regular seasons &lt; S.</li>
+<li><b>P features</b> (player descriptors from the EB state): position group (categorical), mpg state, log(1 + decayed games), log(rate / cell prior) for DK/min and the stat (pts also uses fga, fta, fg3m; reb uses oreb, dreb), log(1 + evidence minutes).</li>
+<li><b>F2 features</b> (opponent defense, as-of, shrunk): residual DvP index per stat × position group, log(idx/league) with shrinkage group → team → league (K<sub>t</sub>, K<sub>g</sub> and half-life 120 d frozen on 2010-11 → 2013-14); 15 team box rates allowed / own (OREB% allowed, 3PA rate, FTA rate, assisted-FG rate, TOV forced, blocks per opp. 2PA, steals per possession, 3P% / 2P% allowed, points per possession, own OREB%, own TOV, 2PA and misses per possession, pace); pace beyond the market total.</li>
+</ul>
+<div class="tablewrap"><table>
+<thead><tr><th>Ablation (T2.1 harness, paired, date-clustered)</th><th>Season</th><th>DK MAE</th><th>DK CRPS</th><th>Decision</th></tr></thead>
+<tbody>
+<tr><td>P+F2 ON vs OFF</td><td>2023-24 / 2024-25</td><td>8.058 → 8.025 / 8.023 → 7.995</td><td>5.670 → 5.652 / 5.659 → 5.646 (5.5–9.5 SE)</td><td><span class="pill on">shipped 2026-10-21</span></td></tr>
+<tr><td>P+F2 ON vs OFF</td><td>RotoGuru 2019-20 / 2020-21</td><td>7.891 → 7.865 / 7.836 → 7.798</td><td>+0.0125 / +0.0181 gain</td><td>star bias −1.3 → −0.8</td></tr>
+<tr><td>F1 opponent availability</td><td>2024-25, 2019-20</td><td colspan="2">CRPS &lt; 1 SE in 2024-25, negative in 2019-20</td><td><span class="pill offp">dropped</span></td></tr>
+<tr><td>+F3 tracking (per minute)</td><td>2022-23 … 2025-26</td><td colspan="2">NB LL +7.7 … +10.3 SE; CRPS +2.7 … +4.2 SE</td><td>real per minute</td></tr>
+<tr><td>+F3+F6 vs P+F2 (end to end)</td><td>2023-24 / 2024-25</td><td>+0.0042 (1.9 SE) / +0.0052 (2.3 SE)</td><td>+0.0017 (1.3 SE) / +0.0041 (3.0 SE)</td><td><span class="pill offp">opt-in v0.4, OFF</span></td></tr>
+<tr><td>+F5 matchups on top of F3+F6</td><td>2023-24 / 2024-25</td><td>−0.5 / −0.2 SE</td><td>0.0 / −0.3 SE</td><td><span class="pill offp">dropped</span></td></tr>
+<tr><td>+F4 xFG / shooting luck on top</td><td>2023-24 / 2024-25</td><td>−0.6 / +0.1 SE</td><td>−0.5 / −0.4 SE</td><td><span class="pill offp">dropped</span></td></tr>
+</tbody></table></div>
+<p><b>Why F3+F6 is not live.</b> It cleared 2024-25 but only 1.3 SE in 2023-24 (F3 alone 0.6 SE), adds 0.06–0.10 DK to the star under-projection, and on the T2.4 live slice v0.4 showed no gain over v0.3 (DK MAE −0.016 vs −0.021 for v0.3 against v0.2). Its tracking inputs were also not being collected for 2026-27 until today, so it could not run live anyway. <b>F4</b>: the market reconciliation cancels the points part (points LL gain ≈ 0 after rescaling) and the 3PM part is too small in DK terms. Per-stat gains concentrate in ast, stl, 3PM; F6 acts almost entirely through season stage.</p>
+
+<!-- 3.6 -->
+<h3 id="env">3.6 Environment and reconciliation to implied totals</h3>
+<p class="src">src/courtside/proj/reconcile.py, copula.py (<code>fit_env</code>), pipeline.py (<code>environment</code>); PLAYERS.md §4.4; IMPROVEMENTS B2, B9, P4</p>
+<ul>
+<li><b>Implied team points</b>: live, the median across books of each book's latest <code>line_snapshots</code> row at or before the run time (team totals; else (T ± M)/2 from spread and total); then <code>gbm_market</code>; then the closing line; then a league default (data check). Backtests use the closing line.</li>
+<li><b>Environment draw per sim</b>: (margin, total) = market + bivariate normal error with sd(margin), sd(total), corr fit on closing-line residuals of the 3 regular seasons &lt; S (2026-27 local bundle: 13.66, 17.88, 0.004). One OT period when |M<sub>s</sub>| &lt; 1 (~6%). H<sub>s</sub> = (T<sub>s</sub> + M<sub>s</sub>)/2.</li>
+<li><b>Scaling</b>: per sim, points × g<sub>s</sub> = H<sub>s</sub>/E[H], other DK stats × g<sub>s</sub><sup>α</sup> (α = elasticity of non-points DK to team points, fit &lt; S; 0.555 in the local bundle). Then one team factor c on points (c<sup>α</sup> on other stats) makes Σ<sub>i</sub> E[pts<sub>i</sub>] equal the implied total exactly; it is computed on the same sims, so the residual is float error.</li>
+<li><b>Acceptance</b>: |Σ E[pts] − target| ≤ 0.5; c ∈ [0.75, 1.33]; a pre-reconciliation gap &gt; 6 raises a data check. Early-season pre-reconciliation team points ran 7–15 below the market (promoted / new players get low rates); the scaling absorbs it for points.</li>
+</ul>
+<p class="small"><b>OFF</b>: <code>+rr</code> (subtract the reserve's expected points; live team-sum bias worse; retire), <code>+rw</code> (gap split by rate uncertainty; the fit wants the uniform split, θ ≈ 0.01). <b>Shadow</b>: <code>+lf</code> (drop book lines older than 3 h or 1 h older than the newest book).</p>
+
+<!-- 3.7 -->
+<h3 id="copula">3.7 Joint distribution: copula v0 → v1 → v1r <span class="pill on">c1r ON</span></h3>
+<p class="src">src/courtside/proj/copula.py (v0 doc, section v1, section v1r), proj/corr.py; PLAYERS.md §4.5, T2.10 and c1r blocks; HANDOFF batch 6</p>
+<p><b>Path A per sim</b> (all arms share streams 1–4: environment, scenarios, minutes, player copula):</p>
+<ol>
+<li>Environment (M, T) draw (§3.6).</li>
+<li>Availability scenario per team (§3.1).</li>
+<li>Minutes at the sim's margin (§3.2).</li>
+<li>Outcomes given minutes, means = minutes × rate × f(min/mpg) × bump, scaled by the environment and reconciled.</li>
+</ol>
+<div class="grid2">
+<div class="panel"><b>v0</b> (<code>pathA-v0.x</code> without suffix). Draws DK points directly: normal when projected DK (played) ≥ 25, gamma below (Wilson–Hilferty transform), sd = CV(level)·μ with a CV-by-level table fit on residuals given actual minutes and actual team points. Gaussian copula across the game's players with teammate ρ by role-tier pair and one opponent value. DD/TD only in expectation.</div>
+<div class="panel"><b>v1 / v1r</b> (<code>+c1</code> / <code>+c1r</code>). Draws the 7 components (pts, fg3m, reb, ast, stl, blk, tov) as NB2 counts, Var = m + c²(m)·m², via inverse-CDF tables (4,096 cells × 321 mean rows, stochastic rounding so E[count] = mean exactly). Within-player 7×7 latent Gaussian correlation per role tier (fit by simulated moments). DK scored exactly from counts, so DD (+1.5) and TD (+3 more) are discrete jumps. Per-stat sims stored for props.</div>
+</div>
+<ul>
+<li><b>Across players (v1/v1r)</b>: the T2.7 causal tables <code>corr_&lt;S&gt;.json</code> (seasons S−3 … S−1, shrinkage k = 2,000; teammates by tier × position cell, opponents by tier pair) act on each player's latent DK direction: Z<sub>i</sub> = b<sub>i</sub>w<sub>i</sub> + E<sub>i</sub>, w ~ N(0, R<sub>players</sub>), b<sub>i</sub> = R<sub>w</sub>a<sub>i</sub>/√(a<sub>i</sub>′R<sub>w</sub>a<sub>i</sub>), so Var(Z<sub>i</sub>) = R<sub>w</sub> exactly. Causal residuals vs our pregame projection give teammate ρ ≈ −0.034 (the earlier +0.034 was hindsight), opponents ≈ 0. Stacking is a weak lever; the marginals and the shared margin draw matter most.</li>
+<li><b>What v1r changed vs v1</b> (<code>fit_copula_v1r</code>): (1) dispersion by level and within-player correlation fit on the <i>context arm's</i> residuals (EB rate × context multiplier, given actual minutes and team points); (2) a per-stat <b>shape map</b>: the CDF G of the randomised NB PIT of actual counts by level (16 level bins, 40 knots, shrunk to identity with k = 300 rows); tables are read at G<sup>−1</sup>(u), mean kept exact (points get a heavier left tail and shorter right tail than NB2); (3) no winner / loser per-minute shift unless the minutes carry the blowout stage (the shift, fit given actual minutes, added margin-driven spread on top of minutes that barely fall in simulated blowouts).</li>
+</ul>
+<p><b>Validation.</b> v1 vs v0: DK CRPS −0.3 / −0.9 SE, ranges slightly too wide (80% coverage +0.4–0.5 pp): not shipped. v1r vs OFF: DK CRPS −3.5 / −5.3 SE (2023-24 / 2024-25), live / live10 −8.3 / −6.9, worst tier +0.5 SE; per-stat 80% coverage 0.79–0.81 for pts / reb / ast / 3PM. E3 forward selection over <code>+us +c1r +mr +rw +bo +tm +rr</code> picked <code>+us</code> then <code>+c1r</code>; <code>+c1r</code> carries the live gain (−6.6 / −5.0 given <code>+us</code>). Caveat recorded: shape / shift choices were made looking at the harness seasons; only the 2025-26 slice was untouched. DK MAE slightly worse (+0.9 to +2.3 SE, mean up ~0.01 DK from the exact DD/TD bonus) while CRPS improves. Shipped 2026-10-24 after the last lock; rollback <code>COURTSIDE_COPULA=v0</code>.</p>
+
+<!-- 3.8 -->
+<h3 id="rb">3.8 Role blend <code>+rb</code> <span class="pill on">ON</span></h3>
+<p class="src">src/courtside/proj/role_blend.py, role_blend_params.json; IMPROVEMENTS P1, D1, B10; docs/research/role-blend.md, truth-beta-roles.md</p>
+<div class="formula">μ* = μ<sub>played</sub> + β(r)·(L10 − μ<sub>played</sub>), &nbsp; r = E[min | plays] / last-10 minutes</div>
+<ul>
+<li>Applied in <code>run_games</code> right after the draws: every played sim of the player moves by Δ = μ* − μ<sub>played</sub> (DNP sims stay 0). Display, cash, Top N, builder candidates and the contest builder all carry μ*, and <code>portfolio.truth_sims</code> skips its flat <code>TRUTH_BETA = 0.18</code> shift.</li>
+<li>β by ratio bucket, fit per season on harness rows of seasons &lt; S by minimising a CRPS proxy on a grid 0–0.30. 2026-27 values: r &lt; 0.8 → 0; 0.8–0.95 → 0.16; 0.95–1.05 → 0.14; 1.05–1.25 → 0.10; &gt; 1.25 → 0.06. Returning players (≥ 3 team games missed after an appearance this season) and players without history get β = 0. Role-aware so promoted players are not dragged to a stale average (B10).</li>
+<li>Results: CRPS two-way z −3.3 / −2.3 harness, −2.7 / −1.7 live / live10, −3.0 / −4.3 RotoGuru; −3.2 on the <code>+rx</code> arm live; no tier worse by 2 SE; lineup backtest neutral. A weekly refit (<code>refit_weekly</code>) exists but is not scheduled.</li>
+</ul>
+
+<!-- 3.9 -->
+<h3 id="tr">3.9 Tail remap <code>+tr</code> <span class="pill on">ON (v0 params)</span></h3>
+<p class="src">src/courtside/proj/tail_remap.py, tail_remap_params.json; IMPROVEMENTS D6; docs/research/tail-remap.md, xfactor.md §2</p>
+<div class="formula">x′ = Q<sub>played</sub>( g<sub>c</sub>( F<sub>played</sub>(x) ) ), &nbsp; g<sub>c</sub>: (0,0), (0.5,0.5), (v, q<sub>c</sub>(v)) for v ∈ {0.75, 0.90, 0.95, 0.98, 0.99}, (1,1)</div>
+<ul>
+<li>q<sub>c</sub>(v) = v-quantile of U, the PIT of the outcome in the player's played-sim distribution (u = (pit − (1 − p))/p), per cell c = model tier × E[min | plays] band (&lt; 8, 8–16, 16–24, 24–32, 32+), shrunk to the tier then pooled (prior weight 2,000 rows), fit walk-forward on seasons &lt; S.</li>
+<li>Identity at and below the median; it only re-labels the upper half of a player's own sims, so ranks and the copula's joint rank structure are unchanged. Mean shift −0.13 to −0.16 DK.</li>
+<li>Why: bench players at 16–24 min reached their simulated q99 0.35% of the time instead of 1%. CRPS z −1.2 / −4.4 harness, −6.2 / −6.1 live, −3.1 / −5.1 RotoGuru; pooled held-out tails within ±0.3 pt.</li>
+<li>Under <code>+c1r</code> the remap still reads the v0 params: the refit on c1r sims (<code>tail_remap_params_c1r.json</code>) exists but is not selected (<code>TR_PATHS_BY_COPULA</code> is empty) because it lost on the 2025-26 slice (z +2.4 live, +2.8 live10, mostly stars).</li>
+</ul>
+
+<!-- 3.10 -->
+<h3 id="ep">3.10 Early-season prior <code>+ep</code> <span class="pill on">ON</span></h3>
+<p class="src">src/courtside/proj/early_prior.py; docs/research/early-prior.md; IMPROVEMENTS P3</p>
+<div class="formula">r = (X<sub>cur</sub> + w·v·X<sub>pre</sub> + g·d·X<sub>prev</sub> + κ·m·μ) / (N<sub>cur</sub> + w·N<sub>pre</sub> + g·N<sub>prev</sub> + κ)</div>
+<ul>
+<li>Shipped parts: <b>w</b> (weight of a preseason game vs a regular-season game, decayed with the stat's half-life) and <b>v</b> (per-minute level of preseason production). d (age delta), m (rookie prior by draft bucket) and g (role-change weight) stay neutral: they hurt 2025-26 or showed no signal.</li>
+<li>Preseason rows: NBA teams only, no scrimmages, no games against non-NBA clubs, before the first regular-season day, row's own season only. Fit on seasons max(S−5, 2015-16) … S−1 by NB log-lik given actual minutes with the base H / ρ / κ / φ fixed; joint grid w ∈ [0, 2], v ∈ [0.70, 1.15]. 2026-27: pts w 1.0, v 0.875; reb 1.0 / 0.925; ast 1.0 / 0.875; dreb 0.8 / 0.9.</li>
+<li>Only r<sub>stat</sub> changes; n, prior, mpg and tier stay the base values (so the context layer inputs and star picks are unchanged).</li>
+<li>First-30-days DK CRPS z −3.4 / −2.8 harness, −1.9 / −2.9 RotoGuru; full season −2.4 / −1.9 / −0.8 / −1.6, live −2.1; the gain fades by about December. Registered shadow window ends 2026-11-19.</li>
+</ul>
+
+<!-- 3.11 -->
+<h3 id="suffixes">3.11 Every suffix in the live version, decoded</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Suffix</th><th>Code switch (default)</th><th>What it changes</th><th>Bundle?</th><th>Shipped</th><th>Rollback</th></tr></thead>
+<tbody>
+<tr><td><code>pathA-v0.3</code></td><td><code>CONTEXT_DEFAULT = True</code></td><td>Minutes v1 + P+F2 context layer on the EB rates</td><td><code>_v1_cx</code></td><td>2026-10-21</td><td><code>COURTSIDE_CONTEXT=0</code></td></tr>
+<tr><td><code>+mf</code></td><td><code>MINFIX_DEFAULT = True</code></td><td>P(plays | available) reads the GBM plan + depth rank; noise net of margin curve, calibrated by simulation</td><td><code>_mf</code></td><td>2026-10-23</td><td><code>COURTSIDE_MINFIX=0</code></td></tr>
+<tr><td><code>+ep</code></td><td><code>EARLY_PRIOR_DEFAULT = True</code></td><td>Preseason games as weighted evidence in the rate state (w, v)</td><td><code>_ep</code></td><td>2026-10-24</td><td><code>COURTSIDE_EARLY_PRIOR=0</code></td></tr>
+<tr><td><code>+ms</code></td><td><code>MIN_SPREAD_DEFAULT = True</code></td><td>Per-player two-piece minutes noise from LightGBM quantile models</td><td><code>_ms</code></td><td>2026-10-24</td><td><code>COURTSIDE_MIN_SPREAD=0</code></td></tr>
+<tr><td><code>+c1r</code></td><td><code>COPULA_DEFAULT = "v1r"</code></td><td>Per-stat NB counts with context-arm dispersion, shape map, no W/L shift; exact DD/TD</td><td><code>_c1r</code> + <code>corr_S.json</code></td><td>2026-10-24 (night)</td><td><code>COURTSIDE_COPULA=v0</code></td></tr>
+<tr><td><code>+p2</code></td><td><code>PPLAY_DEFAULT = "v2"</code></td><td>Listed players: total P(play) = report cell; fringe pool players: fitted logit</td><td>no</td><td>2026-10-21</td><td><code>COURTSIDE_PPLAY=v1</code></td></tr>
+<tr><td><code>+pq</code></td><td><code>PPLAYQ_DEFAULT = True</code> (availability.py)</td><td>Lock−10 logit offsets for listed non-starters</td><td>no</td><td>2026-10-24</td><td><code>COURTSIDE_PPLAYQ=0</code></td></tr>
+<tr><td><code>+rx</code></td><td><code>RESERVE_EXTRAS_DEFAULT = True</code> (minutes.py)</td><td>Minutes reserve = debutants only when the DK pool is in the candidates</td><td>no</td><td>2026-10-23</td><td><code>COURTSIDE_RESERVE_EXTRAS=0</code></td></tr>
+<tr><td><code>+rb</code></td><td><code>ROLE_BLEND_DEFAULT = True</code></td><td>Role-aware shift of played sims toward last-10 DK</td><td>no</td><td>2026-10-23</td><td><code>COURTSIDE_ROLE_BLEND=0</code></td></tr>
+<tr><td><code>+tr</code></td><td><code>TAIL_REMAP_DEFAULT = True</code></td><td>Upper-tail quantile remap per tier × minutes band</td><td>no</td><td>2026-10-24</td><td><code>COURTSIDE_TAIL_REMAP=0</code></td></tr>
+</tbody></table></div>
+</div>
+</section>
+
+<!-- ================================================================ 4 -->
+<section id="dfs">
+<div class="prose">
+<h2>4. DFS engine</h2>
+<p class="src">src/courtside/proj/dfs/ (optimizer.py, topn.py, runner.py, portfolio.py, field.py, xfactor.py, swap.py, swap_contest.py, showdown.py), sources/dfs.py; PLAYERS.md §5; IMPROVEMENTS §3</p>
+
+<h3 id="scoring">Scoring rules</h3>
+<p>DK Classic (<code>sources/dfs.CLASSIC_SCORING</code>): point 1, 3PM +0.5, rebound 1.25, assist 1.5, steal 2, block 2, turnover −0.5, double-double +1.5, triple-double +3 (a triple-double also gets the double-double bonus: +4.5 total; verified against FPPG and RotoGuru). Rosters PG/SG/SF/PF/C/G/F/UTIL, $50,000, ≥ 2 games and ≥ 2 teams; all rules read from the archived <code>rules_json</code> at build time. Showdown: CPT 1.5× salary and points + 5 UTIL, ≥ 2 teams, no late swap.</p>
+
+<h3 id="solver">Solver, cash, Top N</h3>
+<ul>
+<li><b>Optimizer</b>: OR-Tools CP-SAT, binary x[player, slot] over eligible slots; each slot group filled exactly; each player at most once; salary ≤ cap; ≥ min games and ≥ min teams via indicator variables; locks, bans, started-game players only if locked. Objective Σ score × multiplier × x with scores ×100 to integers; <code>num_workers = 1</code>, fixed seed (deterministic). Test oracle: pydfs-lineup-optimizer, equal optimal objective on 50 slates (and 33/33 Showdown slates).</li>
+<li><b>Cash (live)</b>: maximise Σ (μ<sub>i</sub> − 0.3·(μ<sub>i</sub> − p25<sub>i</sub>))·x<sub>i</sub> (<code>CASH_LAMBDA = 0.3</code>). At lock−45, players with P(play) &lt; 0.85 are excluded only if their game locks before the next run. The P(score ≥ cash line) objective from the plan is built OFF (<code>CASH_PCASH_DEFAULT = "off"</code>): on 281 RotoGuru slates it was −3.1 ± 2.6 pp vs the λ rule, because simulated and realised cash rates correlate only 0.03 within a slate.</li>
+<li><b>Top N</b>: k-best by no-good cuts Σ<sub>i∈L<sub>k</sub></sub> x<sub>i</sub> ≤ 8 − d (d = min different, default 1; N default 10). Ranked in solve order (by mean).</li>
+<li>Every mean used is μ* after the role blend.</li>
+</ul>
+
+<h3 id="builder">Contest builder (GPP portfolio)</h3>
+<ol>
+<li><b>Candidates</b>: CP-SAT solves on a thread pool, deduplicated: scenario objectives 0.5·μ<sub>i</sub> + 0.5·FP<sub>i,s</sub> for a random sim s; ownership-penalised μ<sub>i</sub> − λ·own<sub>i</sub>, λ ~ U(0, 0.5·sd(μ)); noise objectives μ<sub>i</sub>·exp(N(0, 0.12²)); the Top-N by mean; locked-player scenario solves for user minimums; leverage-tilted solves from xf-v2. Counts scale with N above 50.</li>
+<li><b>Scoring truth</b> (<code>truth_sims</code>): truth<sub>s,i</sub> = fp<sub>s,i</sub> + 1[plays]·(β·(FPPG<sub>i</sub> − μ<sub>i</sub>) + τ·sd<sub>i</sub>·z<sub>s,i</sub>), τ = 0.18 (residual sd exceeds sim sd by ~0.18 sd on harness rows). With <code>+rb</code> on, the β term is skipped (the blend already moved the mean).</li>
+<li><b>Field</b> at the contest's archetype (below), scored per sim with our N entries occupying ranks jointly.</li>
+<li><b>Greedy selection</b>: add the candidate with the largest marginal expected payout of the whole portfolio. Constraints: ≤ γ = 5 shared players with every chosen lineup (≥ #locks), exposure ≤ 60% from N ≥ 5, user min / max, locks in every lineup; refill solves under no-good cuts when the pool runs dry.</li>
+<li><b>Selection objective <code>blend</code></b> (<code>OBJ_DEFAULT</code>): the greedy scores a smoothed ladder where ranks in the top 1% pay (1 − 0.5)·prize + 0.5·mean top-1% prize; everything reported uses the real ladder. On 6 stored GPPs the held-out E[payout] was +0.5% ± 0.2 (N = 20) / +1.2% ± 0.3 (N = 150) with higher pick stability across sim halves.</li>
+<li><b>Sim split <code>gs</code></b> (<code>SPLIT_DEFAULT</code>): rows permuted; generation + selection on 55% (13,750 of 25,000), everything reported (E[payout], P(cash), P(top 1%), dupes, relative score, entries curve) on the disjoint 45%. Removes the winner's-curse inflation (OFF overstated E[payout] 6–12% on top-heavy GPPs); pick cost −1.0 ± 0.5% at N = 150.</li>
+<li><b>Output</b>: per lineup P(cash), P(top 1%), E[payout], dupes; per portfolio E[payout] ± SE, P(any cash), relative score vs the Top-N-by-projection set, exposure table; entries curve for N = 1, 3, 5, 10, 20, 50, 150 on the same sims with SEs. Dollar E[payout] / ROI stay in a "details (simulated, uncalibrated)" toggle until ≥ 10 slates of uploaded standings.</li>
+</ol>
+
+<h3 id="ownership">Ownership model and modelled field</h3>
+<p>The ownership proxy (<code>own-proxy-1.2</code>) is a hand-set public-information utility, not a fitted model:</p>
+<div class="formula">u<sub>i</sub> = conc · ( 1.10·z(value<sub>i</sub>) + (0.70 + 0.70·small)·z(proj<sub>i</sub>) + 0.20·z(total<sub>i</sub>) + 0.60·repl<sub>i</sub> − 0.80·Q<sub>i</sub> − 0.60·bench<sub>i</sub> )</div>
+<ul>
+<li>"Public projection" = 0.5·ours + 0.5·DK FPPG; value = public projection per $1k; total = team implied total; repl = our projected minutes ≥ 6 above recent; Q = DK status Q/GTD; bench = confirmed non-starter; small → 1 on a 2-game slate, 0 from 8 games.</li>
+<li>Allocation: softmax per roster slot, balanced Sinkhorn-style so each slot column sums to its count (Σ own = 800% Classic), row cap 0.92 GPP / 0.97 cash; a salary shadow price λ (bisection) makes expected spend = 99.7% of the cap.</li>
+<li>Archetypes (calibrated in direction on the 2026-10-20 standings, not fitted): cash conc 1.60, optimizer noise 0.03, optimizer share 0.40; small GPP 1.00 / 0.15 / 0.40; large GPP 0.90 / 0.18 / 0.20.</li>
+<li><b>Field proxy</b> (<code>field-proxy-1.2</code>): F lineups (≤ field size, 10–20k sample for big GPPs, each a weight of M/F entries); share = mix from ~200 CP-SAT solves on the public projection × exp(N(0, σ²)) resampled with replacement (reproduces optimizer dupes); the rest ownership-sampled in slot-scarcity order with salary feasibility, a spend floor and a few IPF steps so the whole field reproduces the proxy. Field "strength" (soft / medium / sharp) varies the share of ours in the public projection (−0.25 / 0 / +0.25), not the mix.</li>
+<li>OFF: <code>FIELD_K</code> (K = 4 fields with log-odds ownership noise, sd 0.86 GPP / 2.65 cash; held until 3+ more uploads), <code>SD_CPT</code> (Showdown captain utility; no Showdown standings yet). A refit from uploaded %Drafted (<code>fit_from_uploads</code>) starts at 10 slates; IMPROVEMENTS E8 asks for a log-odds objective first.</li>
+</ul>
+
+<h3 id="contestsim">Contest simulation and payout</h3>
+<ul>
+<li>Player DK sims are quantised to 1/32 point so lineup sums tie exactly; field scores are one BLAS matmul per chunk of sims, sorted once per sim.</li>
+<li>Per sim: cash line c<sub>s</sub> (score of the last paid rank among the M − 1 other entries), top-1% line, and the line at every payout-tier boundary of the contest's real <code>payoutSummary</code> (inferred double-up table round(0.435 × entries) for upload-only contests; presets otherwise).</li>
+<li>P(cash) = mean<sub>s</sub>[score<sub>s</sub> ≥ c<sub>s</sub>]; E[payout] from the rank within the field per sim → ladder, ties split; small fields draw M − 1 opponents per sim, big fields scale the sample with a Beta-binomial rank draw. Expected dupes not already in the sample (product form of ownerships, calibrated) are added to ties as a Poisson count.</li>
+<li>Slate-page P(cash) / P(top 1%) use the same calibrated truth and a live-like field; P(cash) is in a collapsed "details" toggle until ≥ 10 uploaded slates.</li>
+</ul>
+
+<h3 id="xfactor">X factor (<code>xf-v2</code>) <span class="pill on">ON</span></h3>
+<ul>
+<li><b>Leverage</b> against the modelled GPP field: LEV_K = 4 noisy fields (the D5 machinery, always on here), 4,000 truth-sim rows (sim s → field s mod 4). Per sim, the top 1% of the field's entries; a player's share = mean share of those entries holding him.</li>
+<li>lev = (share + a)/(own + a), a = 0.25%: the posterior mean under a Beta prior centred on the field's base rate (a 0.1%-owned player keeps 29% of his raw leverage, a 5% player 95%).</li>
+<li><b>Tag</b>: P(play) ≥ 0.85, lev ≥ 1.5, top-1% share ≥ 2%, modelled popularity &lt; 10%, not in the slate's 10 best <i>public</i> projections per $1k, at most 5 per slate. Precomputed into <code>dfs_runs.detail</code> at build time.</li>
+<li>The "big-night chance" column (DK ≥ 6 × salary/$1k, unconditional incl. DNP) is recalibrated by a per-tier logistic map logit p′ = a + b·logit p; while <code>+tr</code> is on it uses <code>STRETCH_TR</code> (e.g. bench (−0.272, 0.818)); <code>STRETCH_TR_C1R</code> exists but is not selected, matching the tail-remap params.</li>
+<li>RotoGuru walk-forward (281 dates, modelled fields): tagged leverage 1.89 ± 0.11 (v2) vs 1.20 ± 0.07 (v1). Teammate-out tag <code>ln-v1</code> (D4) and "with and without" splits (P10) feed the display.</li>
+</ul>
+
+<h3 id="swap">Late swap (contest-aware, <code>swap-contest-1</code>) <span class="pill on">ON</span></h3>
+<ul>
+<li>Fixed slots: game tipped, or DK's file says locked. Fixed players are pinned and every result re-checked.</li>
+<li>Sims: the run's stored sims scored as the builder scores them, conditioned on news: a now-known Out keeps only the sim rows where the run drew him out (P10 scenario arrays, if ≥ 1,000 rows), so teammates get that scenario's minutes; locked players at realised points when given (live has no in-game feed, so they keep their sims).</li>
+<li>Candidates per entry: the mean re-solve, 16 scenario solves (w = 0.5), and the entry as it stands. Objective: GPP entries by the joint E[payout] of all our entries in that contest (the builder's greedy marginal); cash by P(rank ≤ paid places). An entry changes only when a ruled-out player must go or the best candidate wins by &gt; 1 paired SE.</li>
+<li>Replay of 7 stored swap nights on held-out sims: builder sets +9.8% E[payout] vs the mean re-solve; saved Top N +11%; cash unchanged. The web swap runs as a background job (120 s cap). Output is a DK edit CSV; entry is never automated.</li>
+</ul>
+
+<h3 id="showdown">Showdown</h3>
+<p>The same CP-SAT model handles CPT / UTIL from <code>rules_json</code> (verified against pydfs on 33 slates, 63 equal objectives; DK CPT salary is exactly 1.5 × UTIL on all 250 captured rows). Because one game carries the shared margin draw and within-game correlation, the Showdown page points users to the contest builder (D10): on 15 stored slates the builder's E[payout] / Top N was 1.48 (SE 0.15) at N = 20, with fewer cashes (−3.7 pp). The captain ownership term (<code>+cpt</code>, B6) is built but OFF until Showdown standings exist.</p>
+</div>
+</section>
+
+<!-- ================================================================ 5 -->
+<section id="props">
+<div class="prose">
+<h2>5. Props comparison (information only)</h2>
+<p class="src">src/courtside/proj/props.py, proj/props_blend.py; docs/research/g3-preregistration.md; IMPROVEMENTS G3; PLAYERS.md §7.5</p>
+<p>For each main prop market (points, rebounds, assists, PRA, 3PM) the Tonight card shows the line, our chance the stat finishes above it and the market's chance, side by side. Nothing is framed as advice.</p>
+<ul>
+<li><b>Our chance</b>: from the newest pre-tip run with projections for the game. With copula v1/v1r runs (live since 10-25) it is the empirical pmf of the player's <i>played</i> per-stat sims (PRA summed per sim) when he has ≥ 200 played sims; otherwise an approximation: minutes from the run's played-minutes quantiles, stat | minutes ~ NB1 with variance φ·mean (φ fit on the 3 seasons &lt; S: pts 2.2–2.5, reb ~1.1, ast ~1.15, 3PM ~1.05). Conditional on playing (props on a player who sits are void).</li>
+<li><b>Lines and pushes</b>: half line L → P(Y ≥ ⌈L⌉). Integer line → P(Y &gt; L), P(Y = L), P(Y &lt; L); compared on the market's no-push basis P(Y &gt; L)/(1 − P(Y = L)).</li>
+<li><b>Market's chance</b>: proportional (multiplicative) no-vig, p = q<sub>above</sub>/(q<sub>above</sub> + q<sub>below</sub>), q = implied chance of the American price; hold = q<sub>above</sub> + q<sub>below</sub> − 1. A read-only check on 16,311 game closes found power de-vig worse (+0.0007 ± 0.0003 LL).</li>
+<li>Props are never features of the projection (rule L6). F9 (prop lines as features) is built and OFF pending an owner amendment to L6.</li>
+</ul>
+<div class="panel accent">
+<p><b>G3, the pre-registered blend test</b> (frozen; the evaluator pins the file's sha256).</p>
+<ul>
+<li><b>Question</b>: out of sample, does logit p<sub>blend</sub> = a·logit(m) + b·logit(o) (no intercept, m, o clipped to [0.001, 0.999]) predict "finishes above the line" with lower log loss than the de-vigged market m alone?</li>
+<li><b>Rows</b>: (game, player, stat) at the lock−45 state: the newest ok <code>lock45</code> run before tip, market state at that run's <code>created_at</code>; DraftKings provider; pushes, voids, hold outside [0, 0.25] excluded.</li>
+<li><b>Fit</b>: walk-forward per slate on all earlier graded rows, ≥ 1,000 training rows.</li>
+<li><b>Primary metric</b>: mean[LL(blend) − LL(m)], SE two-way game × player; PASS if z ≤ −2.0 on the first 60 scored slates; any stat at z ≥ +2 → owner review. No decision before 60.</li>
+<li><b>Timeline</b>: 10-20 … 10-24 are training only; scoring starts 2026-10-25 (amended because <code>+c1r</code> changes the props source from the approximation to sims). Decision around late December. A pass only allows proposing the blended chance as information.</li>
+<li><b>Interim, descriptive, in sample</b> (1,671 rows over the 4 pre-registration slates): LL market 0.6882 vs ours 0.7082 (ours − market +0.0200, z +3.2; reb and PRA worst); fitted a 0.73 (0.24), b 0.21 (0.08). The ledger holds 2,096 rows through 10-24.</li>
+</ul>
+</div>
+</div>
+</section>
+
+<!-- ================================================================ 6 -->
+<section id="eval">
+<div class="prose">
+<h2>6. Evaluation and safety</h2>
+<p class="src">PLAYERS.md §7, T2.1 / T2.4 blocks; IMPROVEMENTS E1–E5; MLOPS.md §6; docs/research/switch-ledger.md; src/courtside/proj/metrics.py, proj/backtest.py, proj/shadows.py</p>
+
+<h3 id="walkforward">Walk-forward protocol and leakage rules</h3>
+<p>Every learned coefficient and every simulation parameter for test season S is fit on seasons &lt; S. There is no random split anywhere. Game model: test seasons 2012-13 → 2025-26 with hyperparameters frozen on 2000-01 → 2010-11. Player side: box-path hyperparameters frozen on 2010-11 → 2013-14 (before every RotoGuru season), stint-path ones on 2019-21.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Rule</th><th>Content</th><th>How it is tested</th></tr></thead>
+<tbody>
+<tr><td>L1 no lookahead</td><td>Scrambling all box, PBP, salary, injury rows on or after a cut leaves projections and lineups up to the cut bit-identical</td><td>scramble tests per feature group (F3, F4, F5), <code>check_no_lookahead</code> for every game model plus a deliberately cheating model it must catch; prefix run = full run</td></tr>
+<tr><td>L2 fit &lt; S</td><td>All coefficients, σ<sub>tier</sub>, q's, κ, CV / dispersion, correlation matrices, ownership b's fit on seasons &lt; S</td><td>bundle per season; walk-forward assertions; truncation tests (rows after the cut deleted)</td></tr>
+<tr><td>L3 lagged aggregates</td><td>Season aggregates (matchup rollups, tracking, hustle, role tiers, correlation study) lagged one season or rebuilt causally</td><td>as-of joins (<code>common.ew_asof</code>)</td></tr>
+<tr><td>L4 availability</td><td>Backtest uses the <code>avail</code> oracle for regulars ≥ 20 min (= a perfect lock−10); the live-like slice uses real reports</td><td>leak probe: &lt; 0.5% MAE gain from availability-only features</td></tr>
+<tr><td>L5 starters</td><td>Lock−45 never sees starters; lock−10 uses actual starters as the announced-starter proxy (~99% identical)</td><td>protocol flags</td></tr>
+<tr><td>L6 never features</td><td>Salaries, props, same-game facts, closing lines beyond what the game model and team totals give</td><td>F9 OFF; note: DK FPPG enters <code>truth_sims</code> (only when <code>+rb</code> is off) and the ownership proxy</td></tr>
+</tbody></table></div>
+
+<h3 id="metrics">Metrics</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Metric</th><th>Definition used</th></tr></thead>
+<tbody>
+<tr><td>CRPS</td><td>From samples: E|X − y| − ½E|X − X′| (sorted formula, <code>crps_samples</code>); from stored quantiles via pinball loss for shadows. DK population: E[min] ≥ 10, DNP scored 0 (never filtered on actual minutes).</td></tr>
+<tr><td>NB log-lik</td><td>Per row, sum over the 7 DK stats of log NB2(y; μ, φ) given actual minutes; used for rate / context fits and ablations.</td></tr>
+<tr><td>MAE, bias</td><td>DK points; minutes MAE on played rows with E[min | plays] ≥ 15 and unconditional.</td></tr>
+<tr><td>Coverage</td><td>50% / 80% central intervals; target 77–83% for 80%, each role bucket 74–86%.</td></tr>
+<tr><td>PIT</td><td>Randomised for counts: u = F(y−1) + V·(F(y) − F(y−1)), V ~ U(0,1); deciles 8–12%.</td></tr>
+<tr><td>Hindsight ratio</td><td>Lineup actual / the optimal lineup of the slate pool solved with actual points under the same rules.</td></tr>
+<tr><td>Value ranking (E4)</td><td>corr(pred − salary-implied, actual − salary-implied), salary-implied = per-slate OLS of DK on salary; DFS population = salary ≥ $4k or projected ≥ 15 DK.</td></tr>
+<tr><td>SEs</td><td>Paired differences with two-way cluster-robust SEs (date × player or game × player, Cameron–Gelbach–Miller, <code>paired_cluster2</code>); two-way widened <code>+mf</code>'s SEs by 4–28%.</td></tr>
+</tbody></table></div>
+
+<h3 id="harness">T2.1 harness and T2.4 live slice</h3>
+<ul>
+<li><b>T2.1 harness</b> (<code>courtside proj backtest-dfs</code>): day-by-day walk-forward with causal state, <code>avail</code> protocol, closing lines, 4,000 sims, every date. Seasons 2023-24 / 2024-25 for projections; RotoGuru 2019-20 / 2020-21 for lineups (salaries, single positions). Baselines: season-to-date (= DK FPPG), last-10, salary-implied, rung-2 EWMA × rates; lineup baselines: the same optimizer fed FPPG or salary-implied.</li>
+<li><b>T2.4 live-like slice</b>: 104 regular-season dates 2025-12-22 → 2026-04-12, 808 games, each game run at its own tip − 45 (and tip − 10 for <code>live10</code>) on the live candidate path with the report published by then, P(play) cells fit leaving the date's month out, closing lines (no 2025-26 snapshots). This is where availability effects show; the oracle hides scenario redistribution. It sets the live alert baselines (<code>mlops/live_like_baseline.json</code>).</li>
+<li><b>What not knowing who plays costs</b> (live − avail): DK MAE +0.216 (0.048), CRPS +0.147 (0.032), minutes MAE +0.054 at lock−45; lock−10 recovers nearly all of it.</li>
+<li><b>Bar for a switch</b>: ≥ 2 SE better on both harness seasons (and live sets for availability / minutes changes), no tier worse by &gt; 2 SE (some items used 1 SE), OFF bit-identical. E3 tested the stack by forward selection rather than single toggles.</li>
+<li><b>Known reuse problem</b> (E1): 2023-24 / 2024-25, RotoGuru 2019-21 and the 2025-26 slice have each been reused for ~15–20 arms. Hence the live confirmatory set below.</li>
+</ul>
+
+<h3 id="shadows">Live shadows (2026-27 is the confirmatory set)</h3>
+<ul>
+<li>After every pregame job, the day's Classic slate with the most games still to tip is projected by the champion once and then by each active arm (champion + one switch, via the pipeline setter), same seed, 10,000 sims, read-only DB; output only to <code>&lt;data&gt;/proj/shadows/&lt;day&gt;/</code> (p_play, E[min], E[min | plays], E[DK], 100 mid-point DK quantiles). Never served.</li>
+<li>Guards: skip if any lock / swap window falls in [now − 10 min, now + budget + 2 min]; 240 s budget (SIGALRM per arm); an arm whose bundle is missing is skipped (a shadow never fits a bundle).</li>
+<li>Grading (postgame <code>shadow_grade</code>): arm − champion on identical rows, DNP = 0, accumulated over the season at the registered run slot; SE two-way night × player. Decision (<code>shadows.decide</code>): nothing before 14 nights; "lower" arms pass at z ≤ −2 with no tier z &gt; +2 and guards held, fail at z ≥ +2 or 60 nights; "not worse" arms pass at z ≤ +2. Repeated nightly looks make a pass easier than a single test, so a pass is the condition for asking the owner, not the flip itself.</li>
+<li>Registry today: active <code>+gd</code> (P(play) LL at 10:00, not worse), <code>+lf</code> (last run, 21 nights), <code>+tm</code> (not worse), <code>+rs</code> (minutes MAE on changed rows, ≥ 100 rows), <code>+us</code> (21 nights); shipped <code>+tr</code>, <code>+ep</code> (window to 11-19), <code>+pq</code>. As of 2026-10-24: 1 graded night, all pending.</li>
+</ul>
+
+<h3 id="realcalib">Real-results calibration from uploaded standings</h3>
+<ul>
+<li>Uploads: the owner's DK contest history and standings CSVs (rank, points, lineup, %Drafted per roster position). <code>courtside dfs real-calib</code> runs after each postgame job and fills the "Real contests vs our chances" card on /health/dfs.</li>
+<li>Unit = slate (all lineups of a night share one draw). Double-ups: percentile of (lineup score − real cash line) within its simulated distribution, which detects a 0.10 shift in ~33 slates; a plain cash rate needs ~45. Top-1%: needs 100+ slates, so mean finishing percentile is tracked instead. Ownership: per slate MAE, rank correlation and top-10 bias by contest type and slate size.</li>
+<li>Nightly, without standings: ours vs an FPPG-optimizer baseline (paired), share of the hindsight lineup, tail calibration by tier.</li>
+<li>Gates tied to it: ownership refit, dollar E[payout] / ROI headlines and P(cash) on the slate page all wait for ≥ 10 uploaded slates.</li>
+</ul>
+
+<h3 id="process">The ship process</h3>
+<ol>
+<li>Build the change behind an env switch whose <code>*_DEFAULT</code> is OFF, with its own bundle suffix if it changes fitted parameters and a version tag either way.</li>
+<li>Prove OFF is bit-identical: sha1 over every sim array and the players frame (Linux goldens; macOS rounds differently), on historical days and real slates.</li>
+<li>Evaluate paired with common random numbers on the harness, the live-like slice and RotoGuru; record hypothesis, metric, SEs (one- and two-way), sets, attempts and decision in <code>docs/research/switch-ledger.md</code>.</li>
+<li>Optionally register a live shadow with a pre-registered bar (bars change only before the first graded night).</li>
+<li>The owner approves; pre-fit bundles are copied to prod <code>var/proj/</code> before flipping the constant (so a switch-on never fits at lock time); the env variable remains as the rollback. Tests pin switches off in <code>tests/conftest.py</code>.</li>
+</ol>
+</div>
+</section>
+
+<!-- ================================================================ 7 -->
+<section id="numbers">
+<div class="prose">
+<h2>7. Current numbers</h2>
+<p>Only numbers found in docs or reports. "Report" means a file under the Mac's <code>var/reports/</code> as mirrored to <code>~/Backups/courtside/var/reports/</code> on 2026-10-25 04:32 ET.</p>
+</div>
+<div class="tablewrap"><table>
+<thead><tr><th>Area</th><th>Metric</th><th>Value</th><th>Source (date)</th></tr></thead>
+<tbody>
+<tr><td>Game model</td><td><code>gbm_market</code> LL − closing line, RS 2012-26 (16,321 games)</td><td class="num">+0.0010 ± 0.0005</td><td>MODEL.md, MODEL_CARD.md (2026-10-19)</td></tr>
+<tr><td>Game model</td><td>same, last 3 seasons (3,687)</td><td class="num">+0.0000 ± 0.0009</td><td>MODEL_CARD.md (2026-10-19)</td></tr>
+<tr><td>Game model</td><td><code>gbm_opinion</code> LL − close, RS</td><td class="num">+0.0099 ± 0.0013</td><td>MODEL_CARD.md (2026-10-19)</td></tr>
+<tr><td>Game model</td><td>calibration slope, 14 seasons (model / close)</td><td class="num">0.98 (0.02) / 1.00 (0.02)</td><td>research/game-calibration.md (2026-10-21)</td></tr>
+<tr><td>Game model</td><td>live 2026-27 LL vs market</td><td class="unv">not found in any doc</td><td>—</td></tr>
+<tr><td>Projections</td><td>Phase 1 gate, 2024-25: DK MAE gain vs season-to-date; cov80; minutes MAE</td><td class="num">+5.54% (SE 0.47); 0.825; 4.57</td><td>HANDOFF §3, <code>evallite_20261019.txt</code></td></tr>
+<tr><td>Projections</td><td>P+F2 harness DK MAE / CRPS (2023-24; 2024-25)</td><td class="num">8.025 / 5.652; 7.995 / 5.646</td><td>PLAYERS.md Phase 2F (2026-10-20)</td></tr>
+<tr><td>Projections</td><td>Live-like slice baseline: minutes MAE (lock−45, played ≥ 15); DK MAE p10/p50/p90 per night</td><td class="num">4.457; 7.37 / 8.10 / 9.15</td><td>PLAYERS.md T2.4, live_like_baseline.json (2026-10-21)</td></tr>
+<tr><td>Switches</td><td>DK CRPS two-way z of shipped switches (harness 23-24 / 24-25; live / live10)</td><td class="num small">+mf −5.2/−4.6; −2.0/−2.9 · +ms −8.2/−6.2; −5.3/−5.3 · +c1r −3.5/−5.3; −8.3/−6.9 (1-way) · +tr −1.2/−4.4; −6.2/−6.1 · +rb −3.3/−2.3; −2.7/−1.7 · +rx live −2.4/−3.2 · +p2 lock−45 −4.7, lock−10 −5.0</td><td>switch-ledger.md, IMPROVEMENTS §2–3 (2026-10-23/24)</td></tr>
+<tr><td>Live 2026-27</td><td>Opener main-slate lock−10 (n = 49): DK MAE vs DK FPPG; minutes MAE; cov80</td><td class="num">7.33 vs 7.25; 4.63; 0.857</td><td>HANDOFF §3 (2026-10-21)</td></tr>
+<tr><td>Live 2026-27</td><td>First 2 nights: DK MAE; minutes MAE (played ≥ 15); cov80</td><td class="num">8.72; 4.56; 83.9%</td><td>HANDOFF §3, weekly report (2026-10-22)</td></tr>
+<tr><td>Live 2026-27</td><td>Value ranking r, DFS rows 10-20…10-23 (n 476): ours vs DK FPPG</td><td class="num">0.227 vs 0.101 (SE game 0.061)</td><td>IMPROVEMENTS E4 (2026-10-24)</td></tr>
+<tr><td>Live 2026-27</td><td>Nightly lineups, 13 Classic slates: cash − FPPG-optimizer lineup; Top N − FPPG</td><td class="num">+43.3 (SE 14.2); +39.4 (SE 13.1)</td><td>reports/real_calib/real_calib.json (2026-10-25)</td></tr>
+<tr><td>Live 2026-27</td><td>Hindsight ratio: cash / Top N / FPPG optimizer</td><td class="num">0.735 / 0.725 / 0.616</td><td>real_calib.json (2026-10-25)</td></tr>
+<tr><td>Real contests</td><td>Double-ups (10-20): real cash rate vs simulated P(cash); line PIT</td><td class="num">0.60 vs 0.66; 0.52 (n = 1 slate)</td><td>real_calib.json (2026-10-25)</td></tr>
+<tr><td>Real contests</td><td>GPPs (3 slates): cash rate vs simulated; place PIT</td><td class="num">0.47 vs 0.63; 0.44 (SE 0.13)</td><td>real_calib.json (2026-10-25)</td></tr>
+<tr><td>Ownership</td><td>Proxy vs real %Drafted: GPP MAE, rank corr; DU top-10 MAE</td><td class="num">4.7–5.3 pp, 0.80–0.88; ~32 pp</td><td>real_calib.json (2026-10-25)</td></tr>
+<tr><td>Props</td><td>G3 scored slates; interim descriptive LL ours vs market</td><td class="num">0 of 60; 0.7082 vs 0.6882 (n 1,671)</td><td>IMPROVEMENTS G3 (2026-10-24)</td></tr>
+<tr><td>Shadows</td><td>graded nights / decisions</td><td class="num">1 night; all pending</td><td>reports/shadows/shadow_grades.json (2026-10-25)</td></tr>
+</tbody></table></div>
+<p class="prose small">These live numbers are a handful of nights. Simulated chances are against a modelled field; ROI is not shown as a headline until ≥ 10 uploaded slates.</p>
+</section>
+
+<!-- ================================================================ 8 -->
+<section id="weak">
+<div class="prose">
+<h2>8. Known weaknesses and what's next</h2>
+<p class="src">IMPROVEMENTS.md §0, §2, §7; HANDOFF §3; PLAYERS.md §0.4, T2.4; docs/research/return-minutes.md</p>
+<h3>Weaknesses</h3>
+<ul>
+<li><b>Minutes and availability dominate the error.</b> 39–57% of the played DK variance is minutes (c1r diagnosis). Lock−45 vs oracle costs +0.22 DK MAE; most of the live value-ranking gap to FPPG is availability; the opener's real X-factor nights (Drummond 43 DK at 0.3%, Green 26.5 at 0.4%) were minutes / P(play) misses, not tail misses. Planned demotions still carry P(play) +0.06–0.08 on demoted bench rows with E[min] ≥ 10 after <code>+mf</code>.</li>
+<li><b>Star under-projection.</b> Star tier bias −1.1 to −1.4 DK before P+F2, −0.6 to −0.9 after; <code>+mf</code> moved it to about −0.19 / −0.09 in the harness; live slice star bias −0.52 at lock−45. Stars in big wins run 2.0–2.6 DK low at the right minutes (a per-minute blowout effect), and F3 would add 0.06–0.10 DK more under-projection.</li>
+<li><b>Early-season data.</b> October rates are mostly last season's plus preseason (<code>+ep</code>); promoted / new players get low per-minute rates (pre-reconciliation team points 7–15 below the market). Live-like baselines come from Dec–Apr nights, so October may run worse.</li>
+<li><b>F3 tracking</b> was not collected for 2026-27 until today, so the F3+F6 extension could not run live and has no live evidence; its historical gain was 1.3 / 3.0 SE end to end.</li>
+<li><b>Ownership</b> is a hand-set proxy: real double-up fields are far more concentrated (30–35% of entries on one lineup), the misses are rising-role young players and stars back from layoffs (Harper 15% proxy vs 66–93% real). Only 3 slates of standings.</li>
+<li><b>Evaluation reuse</b>: about 20 decisions tuned on the same seasons; c1r's shape choices were made looking at the harness. 2026-27 live is the confirmatory set.</li>
+<li><b>Game model</b>: no live 2026-27 metric documented; P(play) inside the game model is still the hand-set map (B4); trained on the close but priced on earlier lines.</li>
+</ul>
+<h3>Candidates for a re-evaluation round</h3>
+<div class="tablewrap"><table>
+<thead><tr><th>Candidate</th><th>Why</th><th>State / gate</th></tr></thead>
+<tbody>
+<tr><td>Minutes and availability</td><td>The largest share of error; planned-demotion bias; returns and restrictions; blowout per-minute effect</td><td><code>+rs</code> shadow (needs ≥ 100 flags, Dec–Jan); <code>+gd</code> shadow; weekly P(play) refit not scheduled; <code>+mr</code> / <code>+bo</code> OFF; judge on live10</td></tr>
+<tr><td>F3 retest with live data</td><td>Strongest per-minute group (NB LL +7.7 to +10.3 SE)</td><td>Collection starts now; retest <code>COURTSIDE_CONTEXT_EXT=1</code> as a shadow once a few weeks of 2026-27 tracking exist</td></tr>
+<tr><td>Attempts × efficiency split</td><td>Points as FGA/FTA volume × make rates with separate shrinkage (P9)</td><td>Not built; F4 suggests reconciliation cancels much of the points part, so test end to end and on 3PM first</td></tr>
+<tr><td>Prop lines as features</td><td>Market information unused in projections (P2 / F9)</td><td>F9 built OFF; needs an owner amendment to L6; Bayesian blend of our mean with de-vigged prop medians, weights by stat × tier, keep the props display market-free</td></tr>
+<tr><td>Ownership calibration from real standings</td><td>Proxy wrong on who is concentrated; leverage lives in the low tail</td><td>Refit at ≥ 10 slates on log-odds (E8) with D7 features (recent form, salary change, news recency, contest type, consensus lineup); then <code>FIELD_K</code></td></tr>
+</tbody></table></div>
+</div>
+</section>
+
+<!-- ================================================================ A -->
+<section id="switches">
+<div class="prose">
+<h2>Appendix A: switch table (read from code)</h2>
+<p class="src">grep of <code>*_DEFAULT</code> constants in src/courtside/proj/, proj/dfs/, model/, injuries.py on 2026-10-25</p>
+</div>
+<div class="tablewrap"><table>
+<thead><tr><th>Constant</th><th>File</th><th>Value</th><th>Tag / env</th><th>State</th></tr></thead>
+<tbody>
+<tr><td><code>CONTEXT_DEFAULT</code></td><td>proj/pipeline.py</td><td>True</td><td><code>COURTSIDE_CONTEXT</code> → v0.3</td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>CONTEXT_EXT_DEFAULT</code></td><td>proj/pipeline.py</td><td>False</td><td><code>COURTSIDE_CONTEXT_EXT</code> → v0.4</td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>COPULA_DEFAULT</code></td><td>proj/pipeline.py</td><td>"v1r"</td><td><code>+c1r</code>, <code>COURTSIDE_COPULA</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>PPLAY_DEFAULT</code></td><td>proj/pipeline.py</td><td>"v2"</td><td><code>+p2</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>MINFIX_DEFAULT</code></td><td>proj/pipeline.py</td><td>True</td><td><code>+mf</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>MIN_SPREAD_DEFAULT</code></td><td>proj/pipeline.py</td><td>True</td><td><code>+ms</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>EARLY_PRIOR_DEFAULT</code></td><td>proj/early_prior.py</td><td>True</td><td><code>+ep</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>PPLAYQ_DEFAULT</code></td><td>proj/availability.py</td><td>True</td><td><code>+pq</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>RESERVE_EXTRAS_DEFAULT</code></td><td>proj/minutes.py</td><td>True</td><td><code>+rx</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>ROLE_BLEND_DEFAULT</code></td><td>proj/role_blend.py</td><td>True</td><td><code>+rb</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>TAIL_REMAP_DEFAULT</code></td><td>proj/tail_remap.py</td><td>True</td><td><code>+tr</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>XF_V2_DEFAULT</code></td><td>proj/dfs/xfactor.py</td><td>True</td><td><code>xf-v2</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>SPLIT_DEFAULT</code></td><td>proj/dfs/portfolio.py</td><td>"gs"</td><td><code>+split-gs</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>OBJ_DEFAULT</code></td><td>proj/dfs/portfolio.py</td><td>"blend"</td><td><code>+obj-blend</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>DEFAULT</code> (contest swap)</td><td>proj/dfs/swap_contest.py</td><td>True</td><td><code>swap-contest-1</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>SHADOWS_DEFAULT</code></td><td>proj/shadows.py</td><td>True</td><td><code>COURTSIDE_SHADOWS</code></td><td><span class="pill on">ON</span></td></tr>
+<tr><td><code>USAGE_DEFAULT</code></td><td>proj/usage.py</td><td>False</td><td><code>+us</code></td><td><span class="pill shadow">shadow</span></td></tr>
+<tr><td><code>INJ_GAMEDAY_DEFAULT</code></td><td>proj/availability.py</td><td>False</td><td><code>+gd</code></td><td><span class="pill shadow">shadow</span></td></tr>
+<tr><td><code>LINE_FRESH_DEFAULT</code></td><td>proj/pipeline.py</td><td>False</td><td><code>+lf</code></td><td><span class="pill shadow">shadow</span></td></tr>
+<tr><td><code>TIER_MATCH_DEFAULT</code></td><td>proj/copula.py</td><td>False</td><td><code>+tm</code></td><td><span class="pill shadow">shadow</span></td></tr>
+<tr><td><code>MIN_RESTRICT_DEFAULT</code></td><td>proj/min_restrict.py</td><td>False</td><td><code>+rs</code></td><td><span class="pill shadow">shadow</span></td></tr>
+<tr><td><code>MINRATIO_DEFAULT</code></td><td>proj/pipeline.py</td><td>False</td><td><code>+mr</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>PRESEASON_DEFAULT</code></td><td>proj/pipeline.py</td><td>False</td><td><code>+pre</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>BLOWOUT_DEFAULT</code></td><td>proj/pipeline.py</td><td>False</td><td><code>+bo</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>RECON_RESERVE_DEFAULT</code></td><td>proj/reconcile.py</td><td>False</td><td><code>+rr</code></td><td><span class="pill offp">OFF (retire)</span></td></tr>
+<tr><td><code>RECON_WEIGHTED_DEFAULT</code></td><td>proj/reconcile.py</td><td>False</td><td><code>+rw</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>FIELD_K_DEFAULT</code></td><td>proj/dfs/field.py</td><td>0</td><td><code>+k</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>SD_CPT_DEFAULT</code></td><td>proj/dfs/field.py</td><td>False</td><td><code>+cpt</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>CASH_PCASH_DEFAULT</code></td><td>proj/dfs/cash_pcash.py</td><td>"off"</td><td><code>cash-pcash-1</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>DEFAULT</code> (news since line)</td><td>model/line_news.py</td><td>False</td><td><code>+nsl</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>DEFAULT</code> (absence scale)</td><td>model/absence_scale.py</td><td>None</td><td><code>+as</code></td><td><span class="pill offp">OFF</span></td></tr>
+<tr><td><code>INJ_GAMEDAY_GAME_DEFAULT</code></td><td>injuries.py</td><td>False</td><td>game-side b2b rows</td><td><span class="pill offp">OFF</span></td></tr>
+</tbody></table></div>
+</section>
+
+<!-- ================================================================ B -->
+<section id="drift">
+<div class="prose">
+<h2>Appendix B: doc vs code notes</h2>
+<p>Places where a doc disagrees with the code or another doc (code taken as truth):</p>
+<ol>
+<li><b>Shadow budget.</b> MLOPS.md §6 says 90 s; <code>shadows.BUDGET_S = 240</code> (raised 2026-10-24; HANDOFF agrees with code).</li>
+<li><b>MODEL_CARD "Live performance".</b> The season row (n = 838, LL 0.6216) was generated 2026-10-19, before the opener; it is the 2025-26 day-by-day replay through 2026-02-20 (game-calibration.md §1), not live data.</li>
+<li><b>P(play) model.</b> PLAYERS.md §4.1 describes Beta cells with prior 20 and "n &lt; 30 falls back to status level", refit weekly. Code: a four-level hierarchy (status → hours bucket → reason → role) shrunk level by level with m = 20 (5 for removed / unlisted), PAVA-monotone, fit once on 2025-12-22 → 2026-04-12; the weekly refit is not scheduled.</li>
+<li><b>EB rates.</b> PLAYERS.md §4.3: 120-day half-life, last season × 0.6, κ by beta-binomial method of moments, S1 ridge prior. Code: H, ρ, κ chosen per stat by NB log-lik on grids (e.g. pts H 90 d, ρ 1.0, κ 65 min in the 2026-27 bundle; 120 / 0.6 / 300 are only cold-start defaults), prior = league position-group × minutes-tier cell blended with last season (m<sub>0</sub> 1,500); S1 not implemented.</li>
+<li><b>Usage bump size.</b> PLAYERS.md §4.3 quotes other star +7.6% / rotation +4.2% per minute, §0.4 +5.6% / +3.3%; the 2026-27 local bundle has DK/min ×1.057 / ×1.035.</li>
+<li><b>Cash objective and Top N order.</b> PLAYERS.md §5.3 / §5.4 specify P(score ≥ cash line) and ranking by P(cash); code uses μ − 0.3(μ − p25) and solve order (P(cash) variant built OFF). Known (D2).</li>
+<li><b>Ownership / field.</b> PLAYERS.md §5.5 describes a logit with position rank and salary_z and a 40/60 optimizer / greedy field with 20/80, 40/60, 70/30 strengths; code is a hand-set utility + Sinkhorn + salary shadow price, archetype optimizer shares 0.40 / 0.40 / 0.20, strengths by information share.</li>
+<li><b>DFS watcher window.</b> PLAYERS.md §5.6: every 5 min 16:00–23:59 ET; schedule.sh: 11:00–23:55; lock−10 window adapts up to lock−25.</li>
+<li><b>Game model availability map.</b> MODEL.md lists Doubtful 0.15 (players.py); <code>injuries.PLAY_PROB</code> has Doubtful 0.10, and neither uses the player side's fitted cells (B4, open).</li>
+<li><b>HANDOFF header.</b> "Last updated 2026-10-24 (live model …+ms+p2+pq+rx+rb+tr)" omits <code>+c1r</code>, which the batch-6 paragraph and code include.</li>
+<li><b>Stale "default OFF" docstrings.</b> pipeline.py's module doc (and those of availability, tail_remap, early_prior, role_blend, swap_contest, xfactor, portfolio) still describe shipped switches as "default OFF" / copula "v0" default; the constants are ON.</li>
+<li><b>G3 status line.</b> IMPROVEMENTS G3's older bullet says "first 60 scored slates from 2026-10-24"; the frozen pre-registration (amended) starts scoring 2026-10-25.</li>
+<li><b>Minutes noise.</b> PLAYERS.md §4.2 describes ξ ~ N(0, σ²<sub>tier</sub>); live is the <code>+mf</code>-calibrated, <code>+ms</code> two-piece per-player form.</li>
+<li><b>MLOPS.md registered arms</b> (2026-10-23) omit <code>+us</code>, registered 2026-10-24 in <code>shadow_registry.json</code>.</li>
+</ol>
+<p class="small">Unverified here: the "50,000 sims for N &gt; 20" portfolio rule (PLAYERS.md §4.5; Fable could not verify it either); prod bundle parameter values (only the geekom1 OFF bundle was read); any 2026-27 live game-model metric.</p>
+<hr>
+<p class="meta">Written from docs/HANDOFF.md, MODEL.md, MODEL_CARD.md, PLAYERS.md, IMPROVEMENTS.md, MLOPS.md, docs/research/*, and the code under src/courtside/. Last updated 2026-10-25.</p>
+</div>
+</section>
+
+</main>
+</div>
+
+<script>
+(function(){
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a[href^="#"]'));
+  var map = {};
+  links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var targets = Object.keys(map).map(function(id){ return document.getElementById(id); }).filter(Boolean);
+  function setActive(id){
+    links.forEach(function(a){ a.classList.remove('active'); });
+    if(map[id]) map[id].classList.add('active');
+  }
+  var ticking = false;
+  function onScroll(){
+    ticking = false;
+    var current = targets.length ? targets[0].id : null;
+    for(var i = 0; i < targets.length; i++){
+      if(targets[i].getBoundingClientRect().top <= 120){ current = targets[i].id; }
+    }
+    setActive(current);
+  }
+  window.addEventListener('scroll', function(){ if(!ticking){ ticking = true; window.requestAnimationFrame(onScroll); } }, {passive: true});
+  onScroll();
+  var det = document.getElementById('tocdetails');
+  var mq = window.matchMedia('(max-width: 980px)');
+  function syncDetails(){ if(mq.matches){ det.removeAttribute('open'); } else { det.setAttribute('open',''); } }
+  syncDetails();
+  if(mq.addEventListener){ mq.addEventListener('change', syncDetails); } else if(mq.addListener){ mq.addListener(syncDetails); }
+  links.forEach(function(a){ a.addEventListener('click', function(){ if(mq.matches){ det.removeAttribute('open'); } }); });
+})();
+</script>
+</body>
+</html>

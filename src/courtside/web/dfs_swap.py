@@ -110,6 +110,7 @@ def build(plan: SW.SwapPlan, *, day: str, slate_label: str, base: str, scope: st
             rows.append({
                 "slot": s.slot, "fixed": s.fixed, "fixed_why": s.fixed_why,
                 "changed": s.changed, "before": b.get("name") or fmt.DASH,
+                "before_id": b.get("player_id"), "after_id": a.get("player_id") if s.changed else None,
                 "before_team": b.get("team"), "before_out": bool(b.get("out")),
                 "before_proj": b.get("proj"), "after": a.get("name") if s.changed else None,
                 "after_team": a.get("team") if s.changed else None,
@@ -131,12 +132,12 @@ def build(plan: SW.SwapPlan, *, day: str, slate_label: str, base: str, scope: st
     used = {pid for r in plan.results for _, pid in r.entry.pairs if pid}
     for pid, why in plan.ruled_out.items():
         if pid in used:
-            out_in_entries.append({"name": names.get(pid, pid), "why": why})
+            out_in_entries.append({"name": names.get(pid, pid), "why": why, "id": pid})
     exposure = []
     for d in plan.portfolio.get("exposure", [])[:10]:
         if d["before"] == d["after"] and len(plan.results) < 2:
             continue
-        exposure.append({"name": names.get(d["player_id"], d["player_id"]),
+        exposure.append({"name": names.get(d["player_id"], d["player_id"]), "id": d["player_id"],
                          "before": f"{d['before']:.0%}", "after": f"{d['after']:.0%}",
                          "fixed": d["fixed"], "moved": d["before"] != d["after"]})
     groups = []
@@ -355,6 +356,7 @@ def register(app, *, store, render: Callable, not_found: Callable, today=None,
             s, label = slate_of(conn, day, slate_id)
             if s is None:
                 return not_found("Slate not found", f"There is no slate {slate_id} on {day}.")
+            nba = dfs_view.dk_to_nba(conn)      # DK id -> NBA id, for /player/<id> links only
             showdown = (s.get("tag") or "").lower() == "showdown"
             if not showdown and error is None:
                 if job_id:
@@ -370,7 +372,7 @@ def register(app, *, store, render: Callable, not_found: Callable, today=None,
         base = f"/dfs/{day}/{slate_id}"
         vm = {"day": day, "base": base, "scope": scope, "error": error,
               "scope_label": SCOPE_LABEL[scope], "filename": filename, "at": at or "",
-              "slate_label": label, "is_showdown": showdown}
+              "slate_label": label, "is_showdown": showdown, "nba": nba}
         if job is not None:
             st = job.wait(WAIT_S)
             if st == "ok":

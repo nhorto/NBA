@@ -566,7 +566,7 @@ def test_weekly_page_200(client):
     assert r.status_code == 200
     t = r.text
     assert "Weekly report" in t and "Week ending" in t
-    assert "table-scroll" in t and "Paper results" in t and "Real" in t
+    assert "dx-scroll" in t and "Paper results" in t and "Real" in t
     assert "No standings uploaded" in t
     assert "Projections" in t and "Lineups" in t
     r = c.get("/dfs/weekly/2026-10-25")

@@ -1,83 +1,98 @@
 {% extends "base.html" %}
-{% import "_macros.html" as m %}
+{% import "_stats.html" as st %}
 {% set r = v.rep %}
 {% block title %}Weekly report &middot; DFS &middot; Courtside{% endblock %}
 {% block description %}The weekly DFS report: how our projections and lineups did against DraftKings' own FPPG and a salary-only baseline, with standard errors across nights. Paper results and real contest results are kept apart.{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-dfs.css?v={{ asset_v }}">{% endblock %}
+{% block body_class %}pro-page dfs-page{% endblock %}
 
 {% block content %}
-<section class="wrap dfs-hero" aria-labelledby="wk-title">
-  <div class="mast-kicker">
-    <span class="kicker">DFS</span>
-    {% if r %}<time datetime="{{ v.week_end }}">Week ending {{ v.week_end|medium_date }}</time>{% endif %}
-  </div>
-  <h1 class="dfs-h1" id="wk-title">Weekly report</h1>
-  <p class="hm-sub">How the projections and lineups did against the real games. Lineups here are <b>paper results</b> (built and scored, never entered); real contest results come only from standings you upload.</p>
-  <nav class="rs-links" aria-label="DFS">
-    <a href="/dfs">Slates</a><a href="/health/dfs">DFS health</a><a href="/dfs/results">Real results</a><a href="/dfs/weekly" aria-current="page">Weekly report</a>
-  </nav>
-  {% if r %}
-  <nav class="daynav dfs-daynav" aria-label="Week">
-    <a class="daynav-a" href="/dfs/weekly/{{ v.prev_end }}">{{ m.icon("back") }} Week ending {{ v.prev_end|short_date }}</a>
-    {% if v.next_end %}<a class="daynav-a" href="/dfs/weekly/{{ v.next_end }}">Week ending {{ v.next_end|short_date }} {{ m.icon("arrow") }}</a>{% else %}<span></span>{% endif %}
-  </nav>
-  {% endif %}
-</section>
+<div class="pro dfs">
+  <div class="crumbs"><a href="/dfs">DFS</a> &rsaquo; <span>Weekly report</span></div>
+
+  <section class="card dx-hero" aria-labelledby="wk-title">
+    <div class="hero">
+      <div class="hero-badge" aria-hidden="true">WK</div>
+      <div>
+        <h1 id="wk-title">Weekly report</h1>
+        {% if r %}<div class="meta"><time datetime="{{ v.week_end }}">Week ending {{ v.week_end|medium_date }}</time></div>{% endif %}
+      </div>
+      {% if r %}
+      <div class="right">
+        <nav class="seg" aria-label="Week">
+          <a href="/dfs/weekly/{{ v.prev_end }}">&lsaquo; Week ending {{ v.prev_end|short_date }}</a>
+          {% if v.next_end %}<a href="/dfs/weekly/{{ v.next_end }}">Week ending {{ v.next_end|short_date }} &rsaquo;</a>{% endif %}
+        </nav>
+      </div>
+      {% endif %}
+    </div>
+    <p class="dx-lede">How the projections and lineups did against the real games. Lineups here are <b>paper results</b> (built and scored, never entered); real contest results come only from standings you upload.</p>
+    <nav class="dx-tools" aria-label="DFS">
+      <a href="/dfs">Slates</a><a href="/health/dfs">DFS health</a><a href="/dfs/results">Real results</a><a href="/dfs/weekly" aria-current="page">Weekly report</a>
+    </nav>
+  </section>
 
 {% if not v.has_db %}
-<section class="section wrap">{{ m.empty("No database yet", "The report can be built once the collector has created the database.") }}</section>
+  <section class="card"><h3>Weekly report</h3><div class="body">{{ st.empty("No database yet", "The report can be built once the collector has created the database.") }}</div></section>
 {% else %}
 
-<section class="section wrap" id="summary" aria-labelledby="summary-title">
-  {{ m.sec_head("summary", "00", "In short", r.window["from"]|short_date ~ " to " ~ r.window["to"]|short_date) }}
-  <div class="card wk-summary">
-    <ul class="wk-lines">
-      {% for ln in r.headline %}<li>{{ ln }}</li>{% endfor %}
-    </ul>
-    {% if r.window.n_nights < r.thresholds.min_nights and r.window.n_nights > 0 %}
-    <p class="caveat hm-caveat">Only {{ r.window.n_nights }} night{{ "s" if r.window.n_nights != 1 }} of grades so far. A difference is called a result only from {{ r.thresholds.min_nights }} nights and beyond 2 standard errors; until then these are descriptions, not findings.</p>
-    {% endif %}
-  </div>
-</section>
-
-<nav class="secnav" aria-label="Sections">
-  <div class="wrap secnav-in">
-    {% for sec in r.sections %}<a href="#{{ sec.id }}">{{ sec.nav }}</a>{% endfor %}
-  </div>
-</nav>
-
-{% for sec in r.sections %}
-<section class="section wrap" id="{{ sec.id }}" aria-labelledby="{{ sec.id }}-title">
-  {{ m.sec_head(sec.id, "%02d"|format(loop.index), sec.title) }}
-  {% if sec.id in ("real",) %}
-  <div class="rs-real-banner"><span class="rs-real-tag">Real</span> uploaded standings and your own entries <span class="wk-sim-tag">Simulated</span> our own model's field and the random-lineup proxy</div>
-  {% elif sec.id.startswith("lineups") %}
-  <div class="rs-real-banner"><span class="wk-sim-tag">Paper results</span> built and scored after the games, never entered</div>
-  {% endif %}
-  {% if sec.lede %}<p class="sec-lede">{{ sec.lede }}</p>{% endif %}
-  {% for t in sec.tables %}
-  <div class="card wk-card">
-    <div class="card-head-row"><h3 class="card-title">{{ t.title }}</h3>{% if t.note %}<span class="muted card-note">{{ t.note }}</span>{% endif %}</div>
-    <div class="table-scroll">
-    <table class="table dh-table wk-table">
-      <caption class="sr">{{ t.title }}</caption>
-      <thead><tr>{% for c in t.columns %}<th scope="col"{% if t.num[loop.index0] %} class="num"{% endif %}>{{ c }}</th>{% endfor %}</tr></thead>
-      <tbody>
-      {% for row in t.rows %}
-        <tr>{% for c in row %}{% if loop.first %}<th scope="row">{{ c }}</th>{% else %}<td{% if t.num[loop.index0] %} class="num"{% endif %}>{{ c }}</td>{% endif %}{% endfor %}</tr>
-      {% endfor %}
-      </tbody>
-    </table>
+  <section class="card" id="summary" aria-labelledby="summary-title">
+    <h3 id="summary-title">In short <span class="sub">{{ r.window["from"]|short_date ~ " to " ~ r.window["to"]|short_date }}</span></h3>
+    <div class="tiles">
+      {{ st.tile("Nights graded", r.window.n_nights) }}
+      {{ st.tile("From", r.window["from"]|short_date) }}
+      {{ st.tile("To", r.window["to"]|short_date) }}
     </div>
-  </div>
-  {% endfor %}
-  {% if sec.lines %}
-  <ul class="wk-lines wk-after">
-    {% for ln in sec.lines %}<li>{{ ln }}</li>{% endfor %}
-  </ul>
-  {% endif %}
-</section>
-{% endfor %}
+    <div class="body">
+      <ul class="dx-wk-lines">
+        {% for ln in r.headline %}<li>{{ ln }}</li>{% endfor %}
+      </ul>
+      {% if r.window.n_nights < r.thresholds.min_nights and r.window.n_nights > 0 %}
+      <p class="dx-callout is-warn"><span class="dx-ico" aria-hidden="true">!</span><span>Only {{ r.window.n_nights }} night{{ "s" if r.window.n_nights != 1 }} of grades so far. A difference is called a result only from {{ r.thresholds.min_nights }} nights and beyond 2 standard errors; until then these are descriptions, not findings.</span></p>
+      {% endif %}
+    </div>
+  </section>
 
-<p class="wrap footnote wk-foot">Standard errors cluster by NBA date. They appear from {{ r.thresholds.min_nights }} nights; a difference is a result only at 2 standard errors or more. Report version {{ r.version }}, built {{ r.generated }}. Same numbers as <code>courtside proj weekly-report</code>.</p>
+  <nav class="secnav" aria-label="Sections">
+    <span class="seg">{% for sec in r.sections %}<a href="#{{ sec.id }}">{{ sec.nav }}</a>{% endfor %}</span>
+  </nav>
+
+  {% for sec in r.sections %}
+  <section class="card dx-wk-sec" id="{{ sec.id }}" aria-labelledby="{{ sec.id }}-title">
+    <h3 id="{{ sec.id }}-title">{{ sec.title }}</h3>
+    {% if sec.id in ("real",) %}
+    <div class="dx-wk-banner"><span class="dx-st dx-st-real">Real</span> uploaded standings and your own entries <span class="dx-st dx-st-sim">Simulated</span> our own model's field and the random-lineup proxy</div>
+    {% elif sec.id.startswith("lineups") %}
+    <div class="dx-wk-banner"><span class="dx-st dx-st-sim">Paper results</span> built and scored after the games, never entered</div>
+    {% endif %}
+    {% if sec.lede %}<p class="dx-wk-lede">{{ sec.lede }}</p>{% endif %}
+    <div class="dx-wk-tables">
+    {% for t in sec.tables %}
+      <div class="dx-wk-t">
+        <div class="dx-wk-t-h"><b>{{ t.title }}</b>{% if t.note %}<span class="note">{{ t.note }}</span>{% endif %}</div>
+        <div class="scroll dx-scroll">
+        <table class="dx-wk-table" data-sortable>
+          <caption class="sr">{{ t.title }}</caption>
+          <thead><tr>{% for c in t.columns %}<th scope="col"{% if not t.num[loop.index0] %} class="l"{% endif %}>{{ c }}</th>{% endfor %}</tr></thead>
+          <tbody>
+          {% for row in t.rows %}
+            <tr>{% for c in row %}{% if loop.first %}<th scope="row">{{ c }}</th>{% else %}<td class="{{ 'num' if t.num[loop.index0] else 'l' }}">{{ c }}</td>{% endif %}{% endfor %}</tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        </div>
+      </div>
+    {% endfor %}
+    </div>
+    {% if sec.lines %}
+    <ul class="dx-wk-lines dx-wk-after">
+      {% for ln in sec.lines %}<li>{{ ln }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+  {% endfor %}
+
+  <p class="note dx-foot">Standard errors cluster by NBA date. They appear from {{ r.thresholds.min_nights }} nights; a difference is a result only at 2 standard errors or more. Report version {{ r.version }}, built {{ r.generated }}. Same numbers as <code>courtside proj weekly-report</code>.</p>
 {% endif %}
+</div>
 {% endblock %}

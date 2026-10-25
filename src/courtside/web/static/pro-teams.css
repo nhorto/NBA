@@ -1,0 +1,58 @@
+/* Teams + Leaders pages (stats_teams.html, stats_team.html, stats_leaders.html).
+   Loaded after pro.css; everything is scoped under body.tm-page. */
+
+.tm-page .pro .tm-sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 7px; vertical-align: -1px; }
+.tm-page .pro .tm-foot { margin: 10px 2px 0; }
+.tm-page .pro .tm-pad { margin: 0; padding: 8px 14px 12px; }
+.tm-page .pro .filters + .filters { margin-top: -4px; }
+
+/* league table: chip after every value, keep it compact */
+.tm-page .pro .tm-league th, .tm-page .pro .tm-league td { padding: 5px 5px; }
+.tm-page .pro .tm-league td .rk { margin-left: 3px; }
+.tm-page .pro .tm-league .rk { min-width: 27px; padding: 1px 3px; }
+.tm-page .pro .tm-league td.rownum { width: 28px; }
+
+/* defense vs position */
+.tm-page .pro .tm-dvp th, .tm-page .pro .tm-dvp td { padding: 7px 6px; }
+.tm-page .pro .tm-dvp th:first-child, .tm-page .pro .tm-dvp td:first-child { padding-left: 0; }
+.tm-page .pro .tm-dvp tbody td:first-child b { display: inline-block; min-width: 24px; color: var(--text-primary); }
+.tm-page .pro .tm-dv { font: 700 17px/1.2 var(--sans); }
+.tm-page .pro .tm-dv.sm { font-size: 14px; color: var(--text-secondary); font-weight: 600; }
+.tm-page .pro .tm-dvp td.note { white-space: normal; font-size: 11px; }
+.tm-page .pro .tm-dvp-note { margin: 10px 0 0; line-height: 1.5; }
+.tm-page .pro .tm-dvp-note b { color: var(--text-secondary); }
+
+/* on/off */
+.tm-page .pro .tm-onoff .diverge { width: 90px; }
+.tm-page .pro .tm-dnum { display: inline-block; min-width: 42px; text-align: right; }
+
+/* lineups: five last names */
+.tm-page .pro .tm-five { font-weight: 600; white-space: nowrap; }
+
+/* results */
+.tm-page .pro .tm-w { color: #6da7ec; }
+.tm-page .pro .tm-l { color: #f08a8a; }
+
+/* leaders */
+.tm-page .pro .tm-lead { min-width: 170px; }
+.tm-page .pro .tm-lead b { display: inline-block; min-width: 50px; text-align: right; }
+.tm-page .pro .tm-lead-h { color: var(--text-primary); }
+.tm-page .pro .tm-tleaders td.l, .tm-page .pro .tm-tleaders td.name { white-space: nowrap; }
+
+@media (max-width: 1000px) {
+  .tm-page .pro .tm-lead { min-width: 130px; }
+  .tm-page .pro .tm-lead .track { min-width: 30px; }
+}
+@media (max-width: 600px) {
+  .tm-page .pro .tm-hide-sm { display: none; }
+  .tm-page .pro .tm-lead { min-width: 0; }
+  .tm-page .pro .tm-lead .track { display: none; }
+  .tm-page .pro .tm-leaders td.name { white-space: normal; min-width: 120px; }
+}
+
+/* standings (/teams?view=conf|div) */
+.tm-page .pro .tm-stand td, .tm-page .pro .tm-stand th { padding: 6px 7px; }
+.tm-page .pro .tm-stand tr.tm-cut td { border-bottom: 1px solid var(--accent); }
+.tm-page .pro .tm-stand tr.tm-cut2 td { border-bottom: 1px dashed var(--line-2); }
+.tm-page .pro .tm-place { color: var(--text-secondary); }
+.tm-page .pro .hero .meta .note { white-space: nowrap; }

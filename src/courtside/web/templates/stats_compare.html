@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% import "_stats.html" as s %}
+{# Compare 2-4 players or 2 teams (web/stats_compare.py, queries stats/compare.py).
+   The leader of every row is bold with a ▲ marker (and "best" for screen readers), so colour
+   is never the only signal. #}
+{% block title %}Compare{% if chips %} · {{ chips|map(attribute="label")|join(" vs ") }}{% endif %} &middot; Courtside{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/pro-compare.css?v={{ asset_v }}">
+<script src="/static/pro-compare.js?v={{ asset_v }}" defer></script>{% endblock %}
+{% block body_class %}pro-page cmp-page{% endblock %}
+
+{% macro fmtv(v, kind, nd=1) -%}
+{%- if v is none %}{{ DASH }}
+{%- elif kind == "pct" %}{{ v|pct(nd) }}
+{%- elif kind == "signed" %}{{ v|signed(nd) }}
+{%- elif kind == "int" %}{{ v|int }}
+{%- elif kind == "dollars" %}{{ v|dollars }}
+{%- else %}{{ v|num(nd) }}{% endif -%}
+{%- endmacro %}
+{% macro mark(lead) -%}
+{%- if lead %}<span class="cmp-mk" aria-hidden="true">▲</span><span class="sr">best: </span>{% endif -%}
+{%- endmacro %}
+{#- Percentile bar: fill length = percentile, the number is printed next to it. -#}
+{% macro pbar(p, pool) -%}
+{%- if p is not none %}{% set q = p|round(0) %}{% set qs = "%d"|format(q) %}
+<div class="cmp-pb" data-tip="League percentile: better than {{ qs }}% of {{ pool }} qualified players"><span class="cmp-tr"><i style="width:{{ [q, 2]|max }}%;background:{{ (101 - q)|rank_color(100) }}"></i></span><span class="cmp-pn">{{ qs }}<span class="sr"> percentile</span></span></div>
+{%- endif -%}
+{%- endmacro %}
+{% macro badge(code, text) -%}
+{%- set t = team(code) if code else None -%}
+<span class="cmp-badge"{% if t %} style="--c1:{{ t.primary }};--c2:{{ t.secondary }};--bi:{{ t.ink }}"{% endif %} aria-hidden="true">{{ text }}</span>
+{%- endmacro %}
+
+{% block content %}
+<div class="pro">
+  <div class="crumbs">{% if mode == "t" %}<a href="/teams">Teams</a>{% else %}<a href="/players">Players</a>{% endif %} &rsaquo; <span>Compare</span></div>
+
+  {# ---------------------------------------------------------------- hero + picker #}
+  <div class="card cmp-hero">
+    {% set title = "Compare players" if mode == "p" else ("Compare teams" if mode == "t" else "Compare") %}
+    {% set meta = (season ~ " · " ~ type_label|lower) if mode else "Up to 4 players, or 2 teams, side by side" %}
+    {% call s.hero(title, meta=meta, badge="VS") %}
+      {{ s.seg("season", season_opts, season, label="Season") }}
+      {{ s.seg("stype", type_opts, stype, label="Season type") }}
+    {% endcall %}
+    <div class="cmp-pick">
+      {% for c in chips %}
+      <span class="cmp-chip">{{ badge(c.team, c.team or "?") }}<a class="link" href="{{ c.href }}">{{ c.label }}</a><a class="cmp-x" href="{{ c.remove }}" aria-label="Remove {{ c.label }}" title="Remove {{ c.label }}">&times;</a></span>
+      {% endfor %}
+      {% if can_add %}
+      <form class="cmp-add" action="/compare" method="get" autocomplete="off" data-mode="{{ mode or '' }}" data-have="{% for c in cols or tcols or [] %}{{ c.player_id or c.code }} {% endfor %}">
+        {% for k, v in hidden %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        <label class="sr" for="cmp-q">{{ "Add a player" if mode == "p" else ("Add a team" if mode == "t" else "Add a player or team") }}</label>
+        <input id="cmp-q" name="add" type="search" spellcheck="false" placeholder="{{ '+ Add a player' if mode == 'p' else ('+ Add a team' if mode == 't' else '+ Add a player or team') }}"
+               role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cmp-list">
+        <ul id="cmp-list" class="cmp-list" role="listbox" aria-label="Matches" hidden></ul>
+        <button type="submit" class="cmp-btn">Add</button>
+      </form>
+      {% endif %}
+    </div>
+    {% if notices %}<div class="cmp-notes" role="status">{% for n in notices %}<div>{{ n }}</div>{% endfor %}</div>{% endif %}
+  </div>
+  <div class="gap"></div>
+
+  {% if not mode %}
+  {# ---------------------------------------------------------------- empty #}
+  {% call s.card("Nothing picked yet") %}
+    {{ s.empty("Pick two to four players, or two teams.", " Type a name above, or open a player or team page and press Compare. Examples: ") }}
+    <p class="cmp-ex"><a class="link" href="/compare?p=203999&amp;p=1628983">Jokić vs Gilgeous-Alexander</a> · <a class="link" href="/compare?t=DEN&amp;t=OKC">Nuggets vs Thunder</a></p>
+  {% endcall %}
+
+  {% elif mode == "p" %}
+  {# ================================================================ players #}
+  {% set n = cols|length %}
+  {% call s.card("Side by side", sub=season ~ " · " ~ type_label|lower ~ " · bar = league percentile (" ~ pool_n ~ " qualified players)", flush=True, id="stats") %}
+    <table class="cmp-t cmp-n{{ n }}">
+      <thead><tr>
+        <th class="l cmp-stat" scope="col"><span class="sr">Stat</span></th>
+        {% for c in cols %}
+        <th scope="col" class="cmp-head">
+          <div class="cmp-who">{{ badge(c.ident.team, c.ident.initials) }}<div><a class="link" href="/player/{{ c.player_id }}?season={{ season }}">{{ c.ident.name }}</a>
+          <div class="note">{{ c.team or c.ident.team or "" }}{% if c.position or c.ident.position %} · {{ c.position or c.ident.position }}{% endif %}{% if not c.played %} · no games{% elif not c.qualified %} · not qualified{% endif %}</div></div></div>
+        </th>
+        {% endfor %}
+      </tr></thead>
+      {% for sec in sections %}
+      <tbody>
+        <tr class="cmp-sec"><th class="l" colspan="{{ n + 1 }}" scope="colgroup">{{ sec.title }}</th></tr>
+        {% for r in sec.rows %}
+        <tr>
+          <th class="l cmp-stat" scope="row"{% if r.tip %} data-tip="{{ r.tip }}"{% endif %}>{{ r.label }}</th>
+          {% for c in r.cells %}
+          <td class="cmp-c{% if c.lead %} cmp-lead{% endif %}"><div class="cmp-v">{{ mark(c.lead) }}{{ fmtv(c.v, r.kind, r.nd) }}</div>{{ pbar(c.pct, pool_n) }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% endfor %}
+    </table>
+    <div class="note cmp-foot">▲ bold = best of the {{ n }} in that row (fewest for turnovers). Percentile = share of qualified players he beats ({{ "40% of the most games played; per-36 and rate stats also need 15+ min a game" }}). DK value = DK points per $1,000 of salary{% if season < "2026-27" and season > "2020-21" %}; there is no DK salary for 2021-22 to 2025-26{% endif %}.</div>
+    {% if n < 2 %}<div class="note cmp-foot">Add another player above to compare.</div>{% endif %}
+  {% endcall %}
+
+  <div class="grid g-12">
+    {# -------------------------------------------------------------- last 10 #}
+    {% call s.card("Last 10 games", sub=season ~ " · " ~ type_label|lower ~ " · average, change vs his season", cls="span-6", flush=True, id="form") %}
+      {% if cols|selectattr("form.n")|list %}
+      <table class="cmp-t cmp-n{{ n }}">
+        <thead><tr><th class="l cmp-stat" scope="col"><span class="sr">Stat</span></th>{% for c in cols %}<th scope="col">{{ c.ident.name|last_name }}</th>{% endfor %}</tr></thead>
+        <tbody>
+          <tr>
+            <th class="l cmp-stat" scope="row" data-tip="DK points in each of his last 10 games, oldest to newest">DK by game</th>
+            {% for c in cols %}
+            <td>{% if c.form.n %}
+              {%- set tip = [] -%}{% for g in c.form.dk %}{% set _ = tip.append((g.date|short_date) ~ " " ~ ("vs " if g.home else "@ ") ~ (g.opp or "") ~ ": " ~ (g.v|num(1))) %}{% endfor %}
+              <svg class="cmp-spark" viewBox="0 0 100 28" preserveAspectRatio="none" role="img" aria-label="DK points, last {{ c.form.n }} games: {{ c.form.dk|map(attribute='v')|map('round', 1)|join(', ') }}" data-tip="{{ tip|join('\n') }}">
+                {%- set w = 100 / 10 -%}
+                {% for g in c.form.dk %}{% set h = [(g.v / dk_max * 26)|round(1), 1]|max %}<rect x="{{ (loop.index0 * w + 1)|round(1) }}" y="{{ (28 - h)|round(1) }}" width="{{ (w - 2)|round(1) }}" height="{{ h }}"></rect>{% endfor %}
+              </svg>
+              <div class="note">{{ c.form.first|short_date }} – {{ c.form.last|short_date }}</div>
+            {% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+            {% endfor %}
+          </tr>
+          {% for r in form_rows %}
+          <tr>
+            <th class="l cmp-stat" scope="row">{{ r.label }}</th>
+            {% for c in r.cells %}
+            <td class="{% if c.lead %}cmp-lead{% endif %}"><div class="cmp-v">{{ mark(c.lead) }}{{ fmtv(c.v, "num", 1) }}</div>
+              {%- if c.diff is not none %}{% set d = c.diff %}<div class="cmp-d {{ 'up' if d > 0.05 else ('dn' if d < -0.05 else 'dim') }}">{{ "▲" if d > 0.05 else ("▼" if d < -0.05 else "=") }} {{ d|signed(1) }}<span class="sr"> vs season average</span></div>{% endif %}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}{{ s.empty("No " ~ type_label|lower ~ " games in " ~ season ~ " for any of them.") }}{% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- head to head #}
+    {% call s.card("Head-to-head", sub="every game they faced each other · any season", cls="span-6", flush=True, id="h2h") %}
+      {% if n < 2 %}
+      {{ s.empty("Add a second player to see their games against each other.") }}
+      {% elif h2h_rows %}
+      <table class="cmp-t cmp-n{{ n }}">
+        <thead><tr><th class="l cmp-stat" scope="col"><span class="sr">Stat</span></th>{% for c in cols %}<th scope="col">{{ c.ident.name|last_name }}</th>{% endfor %}</tr></thead>
+        <tbody>
+        {% for r in h2h_rows %}
+          <tr><th class="l cmp-stat" scope="row">{{ r.label }}{% if r.key not in ("games", "rec") %} <span class="note">/ game</span>{% endif %}</th>
+          {% for c in r.cells %}
+            <td class="{% if c.lead %}cmp-lead{% endif %}">{% if not c.s %}<span class="dim">{{ DASH }}</span>{% elif r.kind == "rec" %}<div class="cmp-v">{{ mark(c.lead) }}{{ c.s.w }}&ndash;{{ c.s.l }}</div>{% else %}<div class="cmp-v">{{ mark(c.lead) }}{{ fmtv(c.v, r.kind, 1) }}</div>{% endif %}</td>
+          {% endfor %}</tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="cmp-subh">Games{% if h2h.games|length > h2h_games|length %} <span class="note">(latest {{ h2h_games|length }} of {{ h2h.games|length }})</span>{% endif %}</div>
+      <div class="scroll cmp-h2h-scroll">
+      <table class="cmp-games">
+        <thead><tr><th class="l">Date</th><th class="l">Game</th>{% for c in cols %}<th data-tip="Pts / Reb / Ast · DK pts">{{ c.ident.name|last_name }}</th>{% endfor %}</tr></thead>
+        <tbody>
+        {% for g in h2h_games %}
+          <tr>
+            <td class="l">{{ g.date|short_date }}{% if g.season_type != "Regular Season" %} <span class="note">{{ "PO" if g.season_type == "Playoffs" else "PI" }}</span>{% endif %}<div class="note">{{ g.season }}</div></td>
+            <td class="l">{{ g.away }} {{ g.away_pts|int }} @ {{ g.home }} {{ g.home_pts|int }}</td>
+            {% for c in cols %}{% set ln = g.lines.get(c.player_id) %}
+            <td>{% if ln %}{{ ln.pts|int }}/{{ ln.reb|int }}/{{ ln.ast|int }} · <b>{{ ln.dk|num(1) }}</b><div class="note">{{ ln.team }} {{ ln.wl or "" }}</div>{% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}
+      {{ s.empty("They have never played against each other.", " Only games where both played on opposite teams count (box scores since 2000-01).") }}
+      {% endif %}
+    {% endcall %}
+
+    {# -------------------------------------------------------------- shot zones #}
+    {% call s.card("Shot zones", sub=season ~ " · " ~ type_label|lower ~ " · FG% and share of his shots", cls="span-12", flush=True, id="zones") %}
+      {% if shots_any and zones %}
+      <table class="cmp-t cmp-zones cmp-n{{ n }}">
+        <thead><tr><th class="l cmp-stat" scope="col">Zone</th>{% for c in cols %}<th scope="col">{{ c.ident.name|last_name }}{% if c.shots_n %} <span class="note">{{ "{:,}".format(c.shots_n) }} FGA</span>{% endif %}</th>{% endfor %}<th scope="col" data-tip="League FG% in that zone">League</th></tr></thead>
+        <tbody>
+        {% for r in zones %}
+          <tr>
+            <th class="l cmp-stat" scope="row">{{ r.zone }}</th>
+            {% for c in r.cells %}{% set z = c.z %}
+            <td class="cmp-c{% if c.lead %} cmp-lead{% endif %}">{% if z %}
+              <div class="cmp-v">{{ mark(c.lead) }}{{ z.fg_pct|pct(1) }} <span class="note">{{ z.fgm }}/{{ z.fga }}</span></div>
+              <div class="cmp-pb cmp-share" data-tip="{{ z.share|pct(1) }} of his shots"><span class="cmp-tr"><i style="width:{{ (100 * z.share / share_max)|round(1) }}%"></i></span><span class="cmp-pn">{{ z.share|pct(0) }}</span></div>
+            {% else %}<span class="dim">{{ DASH }}</span>{% endif %}</td>
+            {% endfor %}
+            <td class="dim">{{ r.league|pct(1) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <div class="note cmp-foot">Bar = share of his field-goal attempts from that zone. ▲ = best FG% with 10+ attempts. From the archived play-by-play (2019-20 on).</div>
+      {% else %}
+      {{ s.empty("No shots collected for " ~ season ~ " " ~ type_label|lower ~ ".", " Shot zones come from the archived play-by-play (2019-20 on).") }}
+      {% endif %}
+    {% endcall %}
+  </div>
+
+  {% else %}
+  {# ================================================================ teams #}
+  {% set n = tcols|length %}
+  {% call s.card("Ratings and league ranks", sub=season ~ " · " ~ type_label|lower ~ " · chip = rank among " ~ league_n ~ " teams", flush=True, id="ratings") %}
+    <table class="cmp-t cmp-n{{ n }}">
+      <thead><tr>
+        <th class="l cmp-stat" scope="col"><span class="sr">Stat</span></th>
+        {% for c in tcols %}
+        <th scope="col" class="cmp-head"><div class="cmp-who">{{ badge(c.code, c.code) }}<div><a class="link" href="/team/{{ c.code }}?season={{ season }}">{{ c.t.name }}</a>
+          <div class="note">{% if c.row %}{{ c.row.w }}&ndash;{{ c.row.l }}{% if c.place and c.place.conf %} · {{ c.place.conf|ordinal }} in the {{ c.place.conference }}{% endif %}{% else %}no games{% endif %}</div></div></div></th>
+        {% endfor %}
+      </tr></thead>
+      <tbody>
+      {% for r in trows %}
+        <tr>
+          <th class="l cmp-stat" scope="row"{% if r.tip %} data-tip="{{ r.tip }}"{% endif %}>{{ r.label }}</th>
+          {% for c in r.cells %}
+          <td class="cmp-c{% if c.lead %} cmp-lead{% endif %}"><span class="cmp-v">{{ mark(c.lead) }}{{ fmtv(c.v, r.kind, 1) }}</span>{{ s.rank_chip(c.rk, league_n) }}</td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="note cmp-foot">▲ bold = the better league rank (lower is better for points allowed, DRtg and TOV%; pace and 3PA have no leader). Ratings are per 100 possessions.{% if n < 2 %} Add another team above to compare.{% endif %}</div>
+  {% endcall %}
+
+  <div class="grid g-12">
+    {% call s.card("Four factors", sub=season ~ " · " ~ type_label|lower, cls="span-6", flush=True, id="factors") %}
+      {% if any_row %}
+      <table class="cmp-t cmp-n{{ n }}">
+        <thead><tr><th class="l cmp-stat" scope="col"><span class="sr">Factor</span></th>{% for c in tcols %}<th scope="col">{{ c.code }}</th>{% endfor %}</tr></thead>
+        {% for sec in ff %}
+        <tbody>
+          <tr class="cmp-sec"><th class="l" colspan="{{ n + 1 }}" scope="colgroup">{{ sec.title }}</th></tr>
+          {% for r in sec.rows %}
+          <tr><th class="l cmp-stat" scope="row">{{ r.label }}</th>
+            {% for c in r.cells %}<td class="cmp-c{% if c.lead %} cmp-lead{% endif %}"><span class="cmp-v">{{ mark(c.lead) }}{{ c.v|pct(1) if c.v is not none else DASH }}</span>{{ s.rank_chip(c.rk, ff_n) }}</td>{% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% endfor %}
+      </table>
+      <div class="note cmp-foot">eFG% = (FG + 0.5 &times; 3P) / FGA; TOV% = TOV / (FGA + 0.44 FTA + TOV); FT rate = FTA / FGA; DREB% = 1 &minus; opponent OREB%.</div>
+      {% else %}{{ s.empty("No " ~ type_label|lower ~ " games in " ~ season ~ " yet.") }}{% endif %}
+    {% endcall %}
+
+    {% call s.card("Head-to-head", sub=season ~ " and " ~ prev_season ~ " · regular season + playoffs", cls="span-6", id="h2h") %}
+      {% if n < 2 %}
+      {{ s.empty("Add a second team to see their games against each other.") }}
+      {% else %}
+      {% set a, b = tcols[0].code, tcols[1].code %}
+      {% for blk in th2h %}
+      <div class="cmp-h2h-season">
+        <div class="cmp-subh bare">{{ blk.season }}{% if blk.games %} <span class="cmp-series">{{ a }} <b>{{ blk.a_w }}</b>&ndash;<b>{{ blk.b_w }}</b> {{ b }}</span>{% endif %}</div>
+        {% if blk.games %}
+        <table class="cmp-games">
+          <tbody>
+          {% for g in blk.games %}
+            {%- set home = a if g.a_home else b -%}{%- set away = b if g.a_home else a -%}
+            {%- set hp = g.a_pts if g.a_home else g.b_pts -%}{%- set ap = g.b_pts if g.a_home else g.a_pts -%}
+            <tr>
+              <td class="l">{{ g.date|short_date }}{% if g.season_type == "Playoffs" %} <span class="note">PO</span>{% endif %}</td>
+              <td class="l">{% if away == g.winner %}<b>{{ away }} {{ ap }}</b>{% else %}{{ away }} {{ ap }}{% endif %} @ {% if home == g.winner %}<b>{{ home }} {{ hp }}</b>{% else %}{{ home }} {{ hp }}{% endif %}</td>
+              <td class="l"><span class="cmp-mk" aria-hidden="true">▲</span>{{ g.winner }} won</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<div class="note">No games between them{{ " yet" if blk.season == window[0] else "" }}.</div>{% endif %}
+      </div>
+      {% endfor %}
+      {% endif %}
+    {% endcall %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

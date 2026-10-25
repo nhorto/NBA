@@ -1,5 +1,24 @@
-{% macro badge(t, size="") -%}
+{#- Links into the stats pages: a player name links to /player/<id> only when the Brief carries
+    his id (never guessed from the name); a team links to /team/<ABBR>. -#}
+{% macro plink(pid, name) -%}
+{%- if pid %}<a class="plink" href="/player/{{ pid }}">{{ name }}</a>{% else %}{{ name }}{% endif -%}
+{%- endmacro %}
+
+{% macro tlink(t, label=None) -%}
+{%- if t and t.code %}<a class="tlink" href="/team/{{ t.code }}" title="{{ t.name }}">{{ label or t.code }}</a>{% else %}{{ label or (t.code if t else "") }}{% endif -%}
+{%- endmacro %}
+
+{#- Power rank as a league-rank chip (blue best, gray middle, red worst; the rank is printed). -#}
+{% macro rank_chip(rank, n=30, what="Power rank") -%}
+{%- if rank -%}<span class="rk" style="background:{{ rank|rank_color(n) }}" title="{{ what }} {{ rank }} of {{ n }}">{{ rank|ordinal }}</span>{%- endif -%}
+{%- endmacro %}
+
+{% macro badge(t, size="", link=False) -%}
+{%- if link and t.code -%}
+<a class="badge{% if size %} badge-{{ size }}{% endif %}" href="/team/{{ t.code }}" style="--c1:{{ t.primary }};--c2:{{ t.secondary }};--bi:{{ t.ink }}" title="{{ t.name }}">{{ t.code }}</a>
+{%- else -%}
 <span class="badge{% if size %} badge-{{ size }}{% endif %}" style="--c1:{{ t.primary }};--c2:{{ t.secondary }};--bi:{{ t.ink }}" title="{{ t.name }}">{{ t.code }}</span>
+{%- endif -%}
 {%- endmacro %}
 
 {% macro dot(t) -%}
@@ -50,7 +69,7 @@
   {% for s in [c.away, c.home] %}
   <div class="sl-row{% if c.winner and s.winner %} is-win{% elif c.winner %} is-loss{% endif %}">
     {{ badge(s, "lg" if big else "") }}
-    <span class="sl-name"><span class="sl-city">{{ s.city }}</span> <span class="sl-nick">{{ s.nickname }}</span></span>
+    <span class="sl-name"><span class="sl-city">{{ s.city }}</span> <span class="sl-nick">{{ tlink(s, s.nickname) }}</span></span>
     {% if s.score is not none %}<span class="sl-score">{{ s.score }}</span>{% endif %}
     {% if c.winner and s.winner %}<span class="sl-caret" aria-label="winner"></span>{% endif %}
   </div>
@@ -105,7 +124,7 @@
 <div class="beat beat-hero">
   <dt>{{ label }}</dt>
   <dd>
-    <p class="beat-main"><strong>{{ h.name }}</strong> <span class="team-tag">{{ dot(h.team) }}{{ h.team.code }}{% if h.bench %} &middot; bench{% endif %}</span></p>
+    <p class="beat-main"><strong>{{ plink(h.player_id, h.name) }}</strong> <span class="team-tag">{{ dot(h.team) }}{{ tlink(h.team) }}{% if h.bench %} &middot; bench{% endif %}</span></p>
     <p class="beat-sub">{{ h.short_line }}{% if h.minutes is not none %} &middot; {{ h.minutes|num(0) }} min{% endif %}</p>
     {% if h.why %}
     <ul class="why">{% for w in h.why[:4] %}<li>{{ w }}</li>{% endfor %}</ul>
@@ -123,7 +142,7 @@
     <p class="beat-main"><strong>{{ cl.decisive.player }}</strong> <span class="team-tag">{{ dot(cl.decisive.team) }}{{ cl.decisive.team.code }}</span> &middot; decisive {{ cl.decisive.kind|lower }} score</p>
     <p class="beat-sub">{{ cl.decisive.label }} {{ cl.decisive.clock }} &middot; <span class="tabnum">{{ cl.decisive.score }}</span></p>
     {% elif cl.top %}
-    <p class="beat-main"><strong>{{ cl.top.name }}</strong> <span class="team-tag">{{ dot(team(cl.top.team)) }}{{ cl.top.team }}</span> &middot; {{ cl.top.pts }} clutch pts{% if cl.top.fg %} ({{ cl.top.fg }} FG){% endif %}</p>
+    <p class="beat-main"><strong>{{ plink(cl.top.id, cl.top.name) }}</strong> <span class="team-tag">{{ dot(team(cl.top.team)) }}{{ tlink(team(cl.top.team)) }}</span> &middot; {{ cl.top.pts }} clutch pts{% if cl.top.fg %} ({{ cl.top.fg }} FG){% endif %}</p>
     <p class="beat-sub">{{ cl.seconds|seconds_clock }} of clutch time{% if cl.points_text %} &middot; {{ cl.points_text }}{% endif %}</p>
     {% endif %}
   </dd>
@@ -138,7 +157,7 @@
   <dd>
     <ul class="lines{% if compact %} lines-compact{% endif %}">
     {% for n in items[:limit] %}
-      <li><span class="ln-who"><strong>{{ n.name }}</strong> <span class="team-tag">{{ dot(n.team) }}{{ n.team.code }}</span></span>
+      <li><span class="ln-who"><strong>{{ plink(n.player_id, n.name) }}</strong> <span class="team-tag">{{ dot(n.team) }}{{ tlink(n.team) }}</span></span>
         {% if not compact %}<span class="ln-line">{{ n.line }}</span>{% endif %}
         {% if n.flags %}<span class="flags">{% for f in n.flags %}<span class="flag{% if f.neg %} flag-neg{% endif %}">{{ f.label }}</span>{% endfor %}</span>{% endif %}
       </li>
@@ -164,7 +183,7 @@
 {% if c.turning_beat or c.featured %}
 <dl class="gc-beats">
   {% if c.turning_beat %}<div><dt>Turning point</dt><dd>{{ c.turning_beat }}</dd></div>{% endif %}
-  {% if c.featured %}<div><dt>{{ "Unsung" if c.featured.kind == "unsung" else "Top line" }}</dt><dd><strong>{{ c.featured.name }}</strong> <span class="team-tag">{{ c.featured.team.code }}</span>{% if c.featured_beat %} <span class="gc-beat-sub">{{ c.featured_beat }}</span>{% endif %}</dd></div>{% endif %}
+  {% if c.featured %}<div><dt>{{ "Unsung" if c.featured.kind == "unsung" else "Top line" }}</dt><dd><strong>{{ plink(c.featured.player_id, c.featured.name) }}</strong> <span class="team-tag">{{ tlink(c.featured.team) }}</span>{% if c.featured_beat %} <span class="gc-beat-sub">{{ c.featured_beat }}</span>{% endif %}</dd></div>{% endif %}
 </dl>
 {% endif %}
 {%- endmacro %}
@@ -265,7 +284,7 @@
     </span>
   </summary>
   <div class="tn-body">
-    <p class="tn-form">{% for s in [t.away, t.home] %}<span>{{ dot(s) }}<b>{{ s.code }}</b>{% if s.record %} {{ s.record|record }}{% endif %}{% if s.last10 %}, {{ s.last10|record }} last 10{% endif %}{% if s.streak %}, {{ s.streak }}{% endif %}{% if s.power_rank %} &middot; #{{ s.power_rank }}{% endif %}</span>{% endfor %}{% if t.pred and t.pred.confidence %}<span class="tag tag-conf">{{ t.pred.confidence }}</span>{% endif %}</p>
+    <p class="tn-form">{% for s in [t.away, t.home] %}<span>{{ dot(s) }}<b>{{ tlink(s) }}</b>{% if s.record %} {{ s.record|record }}{% endif %}{% if s.last10 %}, {{ s.last10|record }} last 10{% endif %}{% if s.streak %}, {{ s.streak }}{% endif %}{% if s.power_rank %} {{ rank_chip(s.power_rank) }}{% endif %}</span>{% endfor %}{% if t.pred and t.pred.confidence %}<span class="tag tag-conf">{{ t.pred.confidence }}</span>{% endif %}</p>
     {% if t.pred or t.market %}
     <table class="mu-nums">
       <thead><tr><th scope="col"><span class="sr">Measure</span></th><th scope="col">Us</th><th scope="col">Market</th></tr></thead>
@@ -297,7 +316,7 @@
   <summary>
     {{ badge(t.team, "sm") }}
     <span class="trow-main">
-      <span class="trow-name"><b>{{ t.team.nickname }}</b> <span class="dir dir-{{ t.direction }}">{{ icon(t.direction) }}{{ "Rising" if t.direction == "up" else "Sliding" }}</span></span>
+      <span class="trow-name"><b>{{ tlink(t.team, t.team.nickname) }}</b> <span class="dir dir-{{ t.direction }}">{{ icon(t.direction) }}{{ "Rising" if t.direction == "up" else "Sliding" }}</span></span>
       <span class="trow-form tabnum">{{ t.record|record }}{% if t.last10 %} &middot; {{ t.last10|record }} L10{% endif %}{% if t.streak %} &middot; {{ t.streak }}{% endif %}</span>
     </span>
     <span class="trow-val"><b class="{{ 'pos' if t.direction == 'up' else 'neg' }}">{{ t.net.last10_adj|signed }}</b><small>net L10</small></span>
@@ -323,7 +342,7 @@
 <details class="row-d prw">
   <summary>
     <span class="prw-main">
-      <span class="prw-name"><b>{{ p.player }}</b> <span class="team-tag">{{ dot(p.team) }}{{ p.team.code }}</span></span>
+      <span class="prw-name"><b>{{ plink(p.player_id, p.player) }}</b> <span class="team-tag">{{ dot(p.team) }}{{ tlink(p.team) }}</span></span>
       <span class="prw-line tabnum">{% if p.recent.pts is not none %}{{ p.recent.pts|num }} pts{% if p.d_pts is not none %} <i class="{{ 'pos' if p.d_pts >= 0 else 'neg' }}">{{ p.d_pts|signed }}</i>{% endif %}{% endif %}{% if p.window %} &middot; {{ p.window }}{% endif %}</span>
     </span>
     <span class="prw-val tabnum"><span class="muted">{{ p.impact_baseline|num }}</span> {{ icon("arrow") }} <b class="{{ 'pos' if p.hot else 'neg' }}">{{ p.impact_recent|num }}</b><small>impact</small></span>
@@ -344,15 +363,15 @@
 
 {% macro out_row(i) -%}
 <li class="inj-row">
-  {{ badge(i.team, "sm") }}
-  <div class="inj-main"><p><strong>{{ i.player }}</strong></p>
+  {{ badge(i.team, "sm", link=True) }}
+  <div class="inj-main"><p><strong>{{ plink(i.player_id, i.player) }}</strong></p>
     {% if i.reason or i.opponent %}<p class="inj-reason">{% if i.opponent %}vs {{ i.opponent }}{% if i.reason %} &middot; {% endif %}{% endif %}{{ i.reason }}</p>{% endif %}</div>
   <div class="inj-side">{{ status_pill(i.status) }}{% if i.mpg is not none %}<span class="inj-mpg tabnum">{{ i.mpg|num }} mpg</span>{% endif %}</div>
 </li>
 {%- endmacro %}
 
 {% macro chg_row(i) -%}
-<li class="chg"><span class="chg-who">{{ dot(i.team) }}<span class="chg-team">{{ i.team.code }}</span> <strong>{{ i.player }}</strong>{% if i.tonight %} <span class="chg-tn">plays tonight</span>{% endif %}</span>
+<li class="chg"><span class="chg-who">{{ dot(i.team) }}<span class="chg-team">{{ tlink(i.team) }}</span> <strong>{{ plink(i.player_id, i.player) }}</strong>{% if i.tonight %} <span class="chg-tn">plays tonight</span>{% endif %}</span>
   <span class="chg-st">{% if i.from_status %}<span class="muted">{{ i.from_status }}</span> {{ icon("arrow") }} {% endif %}{{ status_pill(i.to_status) }}</span></li>
 {%- endmacro %}
 
@@ -381,10 +400,10 @@
 
 {% macro matchup_team(s, side) -%}
 <div class="mu-team mu-{{ side }}">
-  {{ badge(s, "lg") }}
+  {{ badge(s, "lg", link=True) }}
   <div class="mu-tn">
-    <p class="mu-nick">{{ s.nickname }}</p>
-    <p class="mu-form">{% if s.record %}{{ s.record|record }}{% endif %}{% if s.streak %} &middot; {{ s.streak }}{% endif %}{% if s.power_rank %} &middot; #{{ s.power_rank }}{% endif %}</p>
+    <p class="mu-nick">{{ tlink(s, s.nickname) }}</p>
+    <p class="mu-form">{% if s.record %}{{ s.record|record }}{% endif %}{% if s.streak %} &middot; {{ s.streak }}{% endif %}{% if s.power_rank %} {{ rank_chip(s.power_rank) }}{% endif %}</p>
   </div>
 </div>
 {%- endmacro %}
@@ -440,7 +459,7 @@
         <p class="mini-head">{{ dot(s) }}{{ s.nickname }}</p>
         <ul class="inj-mini">
           {% for i in t.injuries[side] %}
-          <li><span>{{ i.player }}</span>{{ status_pill(i.status) }}{% if i.mpg is not none %}<span class="muted tabnum">{{ i.mpg|num }} mpg</span>{% endif %}</li>
+          <li><span>{{ plink(i.player_id, i.player) }}</span>{{ status_pill(i.status) }}{% if i.mpg is not none %}<span class="muted tabnum">{{ i.mpg|num }} mpg</span>{% endif %}</li>
           {% endfor %}
         </ul>
       </div>

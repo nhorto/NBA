@@ -292,7 +292,7 @@ def test_page_shows_the_curve_table_and_json(client):
     wait_done(client)
     pfid = r.headers["location"].split("p=")[1]
     page = client.get(r.headers["location"]).text
-    assert 'class="table dfc-curve"' not in page               # older builds: no curve, no table
+    assert 'class="dx-c-curve"' not in page               # older builds: no curve, no table
     conn = db.connect(client.app_.state.store.db_path)
     row = conn.execute("SELECT summary_json FROM dfs_portfolios WHERE portfolio_id=?",
                        (pfid,)).fetchone()
@@ -303,8 +303,8 @@ def test_page_shows_the_curve_table_and_json(client):
     conn.commit()
     conn.close()
     page = client.get(r.headers["location"]).text
-    assert 'class="table dfc-curve"' in page
-    sec = page.split('id="curve-title"')[1].split('class="dfs-actions dfc-dl"')[0]
+    assert 'class="dx-c-curve"' in page
+    sec = page.split('id="curve-title"')[1].split('id="exp-title"')[0]
     t = text_of(sec)
     for want in ("Chances by number of entries", "In the money", "Top 0.1%", "1st",
                  "~15–25%", "~25–35%", "~65–80%", "~1 in 900", "~1 in 3,000", "~1 in 300",
