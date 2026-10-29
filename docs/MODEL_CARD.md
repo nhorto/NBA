@@ -1,6 +1,6 @@
 # Courtside model card
 
-_Generated 2026-10-19 11:54 UTC by `courtside mlops card` from the model registry (`model_versions`). Do not edit by hand; see docs/MODEL.md for the methodology and docs/MLOPS.md for how versions change._
+_Generated 2026-10-26 09:00 UTC by `courtside mlops card` from the model registry (`model_versions`). Do not edit by hand; see docs/MODEL.md for the methodology and docs/MLOPS.md for how versions change._
 
 ## Intended use
 
@@ -10,16 +10,16 @@ Pre-game win probabilities, expected margins and totals for NBA games, shown in 
 
 | model | role in the product | version | champion since | code | spec hash |
 |---|---|---|---|---|---|
-| gbm_market | headline win probability, margin and total shown in the Brief | `gbm_market@v1-7edd944e` | 2026-10-19 | `2aa9a898aa0e-dirty-0531ff20` | `7edd944e44db` |
-| gbm_opinion | "our number": independent of the market, used for the edge vs the line | `gbm_opinion@v1-6e19e8ab` | 2026-10-19 | `2aa9a898aa0e-dirty-0531ff20` | `6e19e8ab7f57` |
+| gbm_market | headline win probability, margin and total shown in the Brief | `gbm_market@v1-1d8aa7da` | 2026-10-19 | `99d093c3c599` | `1d8aa7da90b8` |
+| gbm_opinion | "our number": independent of the market, used for the edge vs the line | `gbm_opinion@v1-8b7ad87b` | 2026-10-19 | `99d093c3c599` | `8b7ad87ba35b` |
 
 ## Training data
 
-- 2000-01 → 2025-26: 33,448 games (2000-10-31 to 2026-06-13) in `team_games`; the first 3 seasons are burn-in for the player engine and the GBM heads.
+- 2000-01 → 2026-27: 33,491 games (2000-10-31 to 2026-10-25) in `team_games`; the first 3 seasons are burn-in for the player engine and the GBM heads.
 - Production refits every model every morning on **all games strictly before the day** (continuous training; a refit is not a new version). Hyperparameters are fixed per version; recency weighting comes from the version's half-life.
 - Inputs: player-strength engine (box scores), Elo, schedule/travel, rolling team form and four factors, league environment, home-court drift terms; `gbm_market` also the closing (backtest) or latest pre-tip (live) spread and total; injury reports priced into expected lineups when available.
 
-## gbm_market (`gbm_market@v1-7edd944e`)
+## gbm_market (`gbm_market@v1-1d8aa7da`)
 
 Market input: yes. Search grid the fixed values come from: 4 configs (inner time-ordered validation over the last 3 training seasons).
 
@@ -60,7 +60,7 @@ Market input: yes. Search grid the fixed values come from: 4 configs (inner time
 | 0.8-0.9 | 2,208 | 0.845 | 0.835 |
 | 0.9-1.0 | 455 | 0.925 | 0.941 |
 
-## gbm_opinion (`gbm_opinion@v1-6e19e8ab`)
+## gbm_opinion (`gbm_opinion@v1-8b7ad87b`)
 
 Market input: no. Search grid the fixed values come from: 4 configs (inner time-ordered validation over the last 3 training seasons).
 
@@ -105,10 +105,10 @@ Market input: no. Search grid the fixed values come from: 4 configs (inner time-
 
 | model | window | n | log-loss | vs market (SE) | ECE |
 |---|---|---|---|---|---|
-| gbm_market | last300 | 300 | 0.6133 | +0.0059 ± 0.0043 | 0.078 |
-| gbm_market | season | 838 | 0.6216 | +0.0053 ± 0.0026 | 0.040 |
-| gbm_opinion | last300 | 300 | 0.6250 | +0.0193 ± 0.0089 | 0.073 |
-| gbm_opinion | season | 838 | 0.6258 | +0.0109 ± 0.0055 | 0.035 |
+| gbm_market | last300 | 43 | 0.5552 | -0.0021 ± 0.0120 | 0.138 |
+| gbm_market | season | 43 | 0.5552 | -0.0021 ± 0.0120 | 0.138 |
+| gbm_opinion | last300 | 43 | 0.6045 | +0.0472 ± 0.0328 | 0.186 |
+| gbm_opinion | season | 43 | 0.6045 | +0.0472 ± 0.0328 | 0.186 |
 
 ## Versions in evaluation
 
@@ -118,10 +118,18 @@ None.
 
 | time | version | action | reason |
 |---|---|---|---|
-| 2026-10-19 11:54 | `gbm_opinion@v1-6e19e8ab` | promote | bootstrap: current production spec |
-| 2026-10-19 11:54 | `gbm_opinion@v1-6e19e8ab` | register | bootstrap: current production spec |
-| 2026-10-19 11:54 | `gbm_market@v1-7edd944e` | promote | bootstrap: current production spec |
-| 2026-10-19 11:54 | `gbm_market@v1-7edd944e` | register | bootstrap: current production spec |
+| 2026-10-26 07:02 | `dfs_engine@v8-e0f16e1a` | promote | newest DFS pipeline version pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `dfs_engine@v7-adb358e9` | retire | replaced by dfs_engine@v8-e0f16e1a: newest DFS pipeline version pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `dfs_engine@v8-e0f16e1a` | register | first dfs_engine run with pipeline pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_dist@v8-faba2471` | promote | newest DFS pipeline version pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_dist@v7-1fb30f93` | retire | replaced by player_dist@v8-faba2471: newest DFS pipeline version pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_dist@v8-faba2471` | register | first player_dist run with pipeline pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_rates@v8-656bfefd` | promote | newest DFS pipeline version pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_rates@v7-b9f26a89` | retire | replaced by player_rates@v8-656bfefd: newest DFS pipeline version pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_rates@v8-656bfefd` | register | first player_rates run with pipeline pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_minutes@v8-70069014` | promote | newest DFS pipeline version pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_minutes@v7-1549e62e` | retire | replaced by player_minutes@v8-70069014: newest DFS pipeline version pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
+| 2026-10-26 07:02 | `player_minutes@v8-70069014` | register | first player_minutes run with pipeline pathA-v0.3+mf+ep+ms+c1r+p2+pq+rx+rb+tr |
 
 ## Known limitations
 
