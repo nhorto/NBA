@@ -38,7 +38,8 @@ case "$1" in
       NUMEXPR_NUM_THREADS=1
     export COURTSIDE_DATA=$PWD/data PYTHONPATH=$PWD/code/src COURTSIDE_NO_WRITER=1
     export COURTSIDE_CONTEXT_B=1
-    for S in ${@:-2023-24 2024-25 2025-26}; do
+    seasons=(2023-24 2024-25 2025-26); if [ $# -gt 0 ]; then seasons=($@); fi
+    for S in $seasons; do
       nice -n 10 ~/Developer/NBA/.venv/bin/python -u code/research/reeval_b_ablation.py $S \
         --stage all --db data/courtside.db --out out > logs/reeval_b_$S.log 2>&1
       echo "done $S $(date)"
